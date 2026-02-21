@@ -36,3 +36,4 @@ Thumbs.db
 # Outputs (regenerable)
 outputs/*.csv
 outputs/*.log
+__pycache__/
