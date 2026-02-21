@@ -17,6 +17,8 @@ node_modules/
 target/
 dist/
 *.so
+.anchor/
+test-ledger/
 
 # Python
 __pycache__/
@@ -37,3 +39,4 @@ Thumbs.db
 outputs/*.csv
 outputs/*.log
 __pycache__/
+target/
