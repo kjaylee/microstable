@@ -1,0 +1,38 @@
+# Secrets & Keys
+.env
+.env.*
+*.pem
+*.key
+keypair.json
+*-keypair.json
+wallet-seed.txt
+
+# Deployment configs with infra details
+deploy.sh
+ecosystem.config.js
+infrastructure/
+
+# Node / Rust build artifacts
+node_modules/
+target/
+dist/
+*.so
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs (regenerable)
+outputs/*.csv
+outputs/*.log
