@@ -91,7 +91,8 @@ async fn main() -> Result<()> {
 
     utils::verify_program_deployed(&rpc, &cfg.program_id)?;
 
-    if let Some(secondary) = active_secondary_rpc(secondary_rpc.as_ref()) {
+    let secondary_runtime_for_boot = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
+    if let Some(secondary) = secondary_runtime_for_boot.active_secondary_rpc {
         if let Err(err) = utils::verify_program_deployed(secondary, &cfg.program_id) {
             let entered_degraded = utils::register_secondary_rpc_failure();
             warn!(
@@ -119,10 +120,11 @@ async fn main() -> Result<()> {
     let mut watchdog_memory = WatchdogMemory::default();
 
     if cli.once {
-        let secondary_for_cycle = active_secondary_rpc(secondary_rpc.as_ref());
+        let secondary_runtime = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
         run_cycle(
             &rpc,
-            secondary_for_cycle,
+            secondary_runtime.active_secondary_rpc,
+            secondary_runtime.mode,
             &cfg,
             &keypairs,
             &derived,
@@ -148,9 +150,11 @@ async fn main() -> Result<()> {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    let secondary_runtime = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
                     match run_cycle(
                         &rpc,
-                        active_secondary_rpc(secondary_rpc.as_ref()),
+                        secondary_runtime.active_secondary_rpc,
+                        secondary_runtime.mode,
                         &cfg,
                         &keypairs,
                         &derived,
@@ -198,9 +202,11 @@ async fn main() -> Result<()> {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    let secondary_runtime = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
                     match run_cycle(
                         &rpc,
-                        active_secondary_rpc(secondary_rpc.as_ref()),
+                        secondary_runtime.active_secondary_rpc,
+                        secondary_runtime.mode,
                         &cfg,
                         &keypairs,
                         &derived,
@@ -243,14 +249,28 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn active_secondary_rpc<'a>(secondary_rpc: Option<&'a RpcClient>) -> Option<&'a RpcClient> {
-    let secondary = secondary_rpc?;
-    utils::maybe_probe_secondary_rpc_recovery(secondary);
+struct SecondaryRpcRuntime<'a> {
+    active_secondary_rpc: Option<&'a RpcClient>,
+    mode: utils::SecondaryRpcMode,
+}
 
-    if utils::secondary_rpc_is_degraded() {
-        None
+fn resolve_secondary_rpc_runtime<'a>(
+    secondary_rpc: Option<&'a RpcClient>,
+) -> SecondaryRpcRuntime<'a> {
+    if let Some(secondary) = secondary_rpc {
+        utils::maybe_probe_secondary_rpc_recovery(secondary);
+    }
+
+    let mode = utils::secondary_rpc_mode(secondary_rpc.is_some());
+    let active_secondary_rpc = if mode.uses_secondary_reads() {
+        secondary_rpc
     } else {
-        Some(secondary)
+        None
+    };
+
+    SecondaryRpcRuntime {
+        active_secondary_rpc,
+        mode,
     }
 }
 
@@ -258,6 +278,7 @@ fn active_secondary_rpc<'a>(secondary_rpc: Option<&'a RpcClient>) -> Option<&'a 
 fn run_cycle(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
     cfg: &KeeperConfig,
     keepers: &[solana_sdk::signature::Keypair],
     derived: &utils::DerivedAccounts,
@@ -265,11 +286,11 @@ fn run_cycle(
     rebalance_memory: &mut RebalanceMemory,
     watchdog_memory: &mut WatchdogMemory,
 ) -> Result<()> {
-    info!("cycle start");
+    info!(secondary_mode = ?secondary_mode, "cycle start");
 
     let mut failed_steps = Vec::new();
 
-    match oracle::run_oracle_cycle(rpc, secondary_rpc, cfg, keepers, derived) {
+    match oracle::run_oracle_cycle(rpc, secondary_rpc, secondary_mode, cfg, keepers, derived) {
         Ok(updates) => info!(count = updates.len(), "oracle step complete"),
         Err(err) => {
             failed_steps.push("oracle");
@@ -280,6 +301,7 @@ fn run_cycle(
     match rebalance::run_rebalance_cycle(
         rpc,
         secondary_rpc,
+        secondary_mode,
         cfg,
         keepers,
         derived,
@@ -302,7 +324,15 @@ fn run_cycle(
         }
     }
 
-    match monitor::run_monitor_cycle(rpc, secondary_rpc, cfg, keepers, derived, monitor_memory) {
+    match monitor::run_monitor_cycle(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        cfg,
+        keepers,
+        derived,
+        monitor_memory,
+    ) {
         Ok(outcome) => {
             if outcome.circuit_breaker_triggered {
                 warn!("circuit breaker active");
@@ -320,7 +350,15 @@ fn run_cycle(
         }
     }
 
-    match watchdog::run_watchdog_cycle(rpc, secondary_rpc, cfg, keepers, derived, watchdog_memory) {
+    match watchdog::run_watchdog_cycle(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        cfg,
+        keepers,
+        derived,
+        watchdog_memory,
+    ) {
         Ok(outcome) => {
             if !outcome.anomalies.is_empty() {
                 warn!(anomalies = ?outcome.anomalies, "watchdog anomalies");

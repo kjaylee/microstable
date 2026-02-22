@@ -42,18 +42,31 @@ struct PendingReveal {
 pub fn run_rebalance_cycle(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
     memory: &mut RebalanceMemory,
 ) -> Result<RebalanceOutcome> {
-    let (protocol, vaults) = if let Some(secondary) = secondary_rpc {
-        utils::retry_with_backoff(
+    let secondary_for_reads = if secondary_mode.uses_secondary_reads() {
+        secondary_rpc
+    } else {
+        None
+    };
+
+    let (protocol, vaults) = if let Some(secondary) = secondary_for_reads {
+        match utils::retry_with_backoff(
             utils::CROSS_RPC_MAX_ATTEMPTS,
             utils::CROSS_RPC_BACKOFF_BASE_MS,
             |attempt| {
                 let primary_snapshot = fetch_rebalance_snapshot(rpc, derived)?;
-                let secondary_snapshot = fetch_rebalance_snapshot(secondary, derived)?;
+                let secondary_snapshot = fetch_rebalance_snapshot(secondary, derived).map_err(|err| {
+                    let entered_degraded = utils::register_secondary_rpc_failure();
+                    anyhow!(
+                        "secondary rebalance snapshot read failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    )
+                })?;
 
                 validate_rebalance_cross_rpc(
                     &primary_snapshot.0,
@@ -70,8 +83,25 @@ pub fn run_rebalance_cycle(
 
                 Ok(primary_snapshot)
             },
-        )
-        .map_err(|err| anyhow!("rebalance cycle failed after cross-RPC retries: {err}"))?
+        ) {
+            Ok(snapshot) => {
+                let _ = utils::register_secondary_rpc_success();
+                snapshot
+            }
+            Err(err) => {
+                if utils::secondary_rpc_is_degraded() {
+                    warn!(
+                        error = %err,
+                        "secondary RPC degraded during rebalance read-path checks; falling back to primary-only mode"
+                    );
+                    fetch_rebalance_snapshot(rpc, derived)?
+                } else {
+                    return Err(anyhow!(
+                        "rebalance cycle failed after cross-RPC retries: {err}"
+                    ));
+                }
+            }
+        }
     } else {
         fetch_rebalance_snapshot(rpc, derived)?
     };
@@ -143,7 +173,14 @@ pub fn run_rebalance_cycle(
                 local_pending.reveal_salt,
             )?;
 
-            match utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![rebalance_ix]) {
+            match utils::send_instructions(
+                rpc,
+                secondary_rpc,
+                secondary_mode,
+                k1,
+                &[k1, k2],
+                vec![rebalance_ix],
+            ) {
                 Ok(sig) => {
                     info!(
                         signature = %sig,
@@ -209,7 +246,14 @@ pub fn run_rebalance_cycle(
         cfg.commit_valid_for_slots,
     )?;
 
-    let commit_sig = utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![commit_ix])?;
+    let commit_sig = utils::send_instructions(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        k1,
+        &[k1, k2],
+        vec![commit_ix],
+    )?;
     info!(
         deviation_bps,
         signature = %commit_sig,
@@ -256,7 +300,14 @@ pub fn run_rebalance_cycle(
         reveal_salt,
     )?;
 
-    match utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![rebalance_ix]) {
+    match utils::send_instructions(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        k1,
+        &[k1, k2],
+        vec![rebalance_ix],
+    ) {
         Ok(sig) => {
             info!(
                 signature = %sig,

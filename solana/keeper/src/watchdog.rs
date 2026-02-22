@@ -40,18 +40,33 @@ pub struct WatchdogOutcome {
 pub fn run_watchdog_cycle(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
     memory: &mut WatchdogMemory,
 ) -> Result<WatchdogOutcome> {
-    let (protocol, _vaults, current_slot, global_cr_bps) = if let Some(secondary) = secondary_rpc {
-        utils::retry_with_backoff(
+    let secondary_for_reads = if secondary_mode.uses_secondary_reads() {
+        secondary_rpc
+    } else {
+        None
+    };
+
+    let (protocol, _vaults, current_slot, global_cr_bps) = if let Some(secondary) =
+        secondary_for_reads
+    {
+        match utils::retry_with_backoff(
             utils::CROSS_RPC_MAX_ATTEMPTS,
             utils::CROSS_RPC_BACKOFF_BASE_MS,
             |attempt| {
                 let primary_snapshot = fetch_watchdog_snapshot(rpc, derived)?;
-                let secondary_snapshot = fetch_watchdog_snapshot(secondary, derived)?;
+                let secondary_snapshot = fetch_watchdog_snapshot(secondary, derived).map_err(|err| {
+                    let entered_degraded = utils::register_secondary_rpc_failure();
+                    anyhow!(
+                        "secondary watchdog snapshot read failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    )
+                })?;
 
                 validate_watchdog_cross_rpc(
                     &primary_snapshot.0,
@@ -70,8 +85,25 @@ pub fn run_watchdog_cycle(
 
                 Ok(primary_snapshot)
             },
-        )
-        .map_err(|err| anyhow!("watchdog cycle failed after cross-RPC retries: {err}"))?
+        ) {
+            Ok(snapshot) => {
+                let _ = utils::register_secondary_rpc_success();
+                snapshot
+            }
+            Err(err) => {
+                if utils::secondary_rpc_is_degraded() {
+                    warn!(
+                        error = %err,
+                        "secondary RPC degraded during watchdog read-path checks; falling back to primary-only mode"
+                    );
+                    fetch_watchdog_snapshot(rpc, derived)?
+                } else {
+                    return Err(anyhow!(
+                        "watchdog cycle failed after cross-RPC retries: {err}"
+                    ));
+                }
+            }
+        }
     } else {
         fetch_watchdog_snapshot(rpc, derived)?
     };
@@ -199,6 +231,7 @@ pub fn run_watchdog_cycle(
         Some(utils::send_instructions(
             rpc,
             secondary_rpc,
+            secondary_mode,
             k1,
             &[k1],
             vec![memo_ix],

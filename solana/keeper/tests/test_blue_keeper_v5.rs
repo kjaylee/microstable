@@ -63,17 +63,21 @@ fn tc_pkv4_002_adaptive_confirm_window_extends_to_sixty_seconds() {
 }
 
 #[test]
-fn tc_pkv4_002_primary_only_confirmation_is_accepted() {
-    utils::assess_tx_confirmation_outcome(true, false, true)
-        .expect("primary confirmation must be accepted when secondary is unavailable");
+fn tc_pkv4_002_primary_only_confirmation_is_accepted_in_degraded_mode() {
+    let decision =
+        utils::assess_tx_confirmation_outcome(true, false, utils::SecondaryRpcMode::Degraded, true)
+            .expect("primary confirmation must be accepted in degraded mode");
+
+    assert_eq!(decision, utils::TxConfirmationDisposition::Confirmed);
 }
 
 #[test]
 fn tc_pkv4_002_reject_when_both_confirmations_missing() {
-    let err = utils::assess_tx_confirmation_outcome(false, false, true)
-        .expect_err("both-side unconfirmed transaction must be rejected");
+    let err =
+        utils::assess_tx_confirmation_outcome(false, false, utils::SecondaryRpcMode::Normal, true)
+            .expect_err("both-side unconfirmed transaction must be rejected");
     assert!(
-        format!("{err:#}").contains("adaptive confirmation window"),
+        format!("{err:#}").contains("dual-RPC confirmation"),
         "unexpected error: {err:#}"
     );
 }

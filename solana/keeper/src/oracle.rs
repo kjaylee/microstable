@@ -90,17 +90,30 @@ struct RawPythPriceUpdateV2 {
 pub fn run_oracle_cycle(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
 ) -> Result<Vec<OracleUpdateResult>> {
-    let (protocol, vaults) = if let Some(secondary) = secondary_rpc {
-        utils::retry_with_backoff(
+    let secondary_for_reads = if secondary_mode.uses_secondary_reads() {
+        secondary_rpc
+    } else {
+        None
+    };
+
+    let (protocol, vaults) = if let Some(secondary) = secondary_for_reads {
+        match utils::retry_with_backoff(
             utils::CROSS_RPC_MAX_ATTEMPTS,
             utils::CROSS_RPC_BACKOFF_BASE_MS,
             |attempt| {
                 let primary_snapshot = fetch_oracle_snapshot(rpc, derived)?;
-                let secondary_snapshot = fetch_oracle_snapshot(secondary, derived)?;
+                let secondary_snapshot = fetch_oracle_snapshot(secondary, derived).map_err(|err| {
+                    let entered_degraded = utils::register_secondary_rpc_failure();
+                    anyhow!(
+                        "secondary oracle snapshot read failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    )
+                })?;
 
                 validate_oracle_cross_rpc(
                     &primary_snapshot.0,
@@ -117,8 +130,25 @@ pub fn run_oracle_cycle(
 
                 Ok(primary_snapshot)
             },
-        )
-        .map_err(|err| anyhow!("oracle cycle failed after cross-RPC retries: {err}"))?
+        ) {
+            Ok(snapshot) => {
+                let _ = utils::register_secondary_rpc_success();
+                snapshot
+            }
+            Err(err) => {
+                if utils::secondary_rpc_is_degraded() {
+                    warn!(
+                        error = %err,
+                        "secondary RPC degraded during oracle read-path checks; falling back to primary-only mode"
+                    );
+                    fetch_oracle_snapshot(rpc, derived)?
+                } else {
+                    return Err(anyhow!(
+                        "oracle cycle failed after cross-RPC retries: {err}"
+                    ));
+                }
+            }
+        }
     } else {
         fetch_oracle_snapshot(rpc, derived)?
     };
@@ -172,46 +202,66 @@ pub fn run_oracle_cycle(
             }
         };
 
-        let observation = if let Some(secondary) = secondary_rpc {
-            utils::retry_with_backoff(
-                utils::CROSS_RPC_MAX_ATTEMPTS,
-                utils::CROSS_RPC_BACKOFF_BASE_MS,
-                |attempt| {
-                    let primary_observation = if attempt == 1 {
-                        initial_observation.clone()
-                    } else {
-                        fetch_pyth_observation(rpc, feed, pyth_account)?
-                    };
+        let observation = if let Some(secondary) = secondary_for_reads {
+            if utils::secondary_rpc_is_degraded() {
+                initial_observation
+            } else {
+                match utils::retry_with_backoff(
+                    utils::CROSS_RPC_MAX_ATTEMPTS,
+                    utils::CROSS_RPC_BACKOFF_BASE_MS,
+                    |attempt| {
+                        let primary_observation = if attempt == 1 {
+                            initial_observation.clone()
+                        } else {
+                            fetch_pyth_observation(rpc, feed, pyth_account)?
+                        };
 
-                    let secondary_observation =
-                        fetch_pyth_observation(secondary, feed, pyth_account).map_err(|err| {
+                        let secondary_observation =
+                            fetch_pyth_observation(secondary, feed, pyth_account).map_err(|err| {
+                                let entered_degraded = utils::register_secondary_rpc_failure();
+                                anyhow!(
+                                    "secondary observation fetch failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
+                                    utils::CROSS_RPC_MAX_ATTEMPTS
+                                )
+                            })?;
+
+                        validate_oracle_observation_consistency(
+                            &primary_observation,
+                            &secondary_observation,
+                        )
+                        .map_err(|err| {
                             anyhow!(
-                                "secondary observation fetch failed (attempt {attempt}/{}): {err}",
+                                "oracle observation mismatch for {} (attempt {attempt}/{}): {err}",
+                                feed.symbol,
                                 utils::CROSS_RPC_MAX_ATTEMPTS
                             )
                         })?;
 
-                    validate_oracle_observation_consistency(
-                        &primary_observation,
-                        &secondary_observation,
-                    )
-                    .map_err(|err| {
-                        anyhow!(
-                            "oracle observation mismatch for {} (attempt {attempt}/{}): {err}",
-                            feed.symbol,
-                            utils::CROSS_RPC_MAX_ATTEMPTS
-                        )
-                    })?;
-
-                    Ok(primary_observation)
-                },
-            )
-            .map_err(|err| {
-                anyhow!(
-                    "oracle cycle failed after observation cross-RPC retries for {}: {err}",
-                    feed.symbol
-                )
-            })?
+                        Ok(primary_observation)
+                    },
+                ) {
+                    Ok(observation) => {
+                        let _ = utils::register_secondary_rpc_success();
+                        observation
+                    }
+                    Err(err) => {
+                        if utils::secondary_rpc_is_degraded() {
+                            warn!(
+                                symbol = %feed.symbol,
+                                collateral_index = feed.collateral_index,
+                                error = %err,
+                                "secondary RPC degraded during oracle observation checks; using primary-only observation"
+                            );
+                            initial_observation
+                        } else {
+                            return Err(anyhow!(
+                                "oracle cycle failed after observation cross-RPC retries for {}: {err}",
+                                feed.symbol
+                            ));
+                        }
+                    }
+                }
+            }
         } else {
             initial_observation
         };
@@ -267,7 +317,8 @@ pub fn run_oracle_cycle(
             prepared.collateral_index,
         )?;
 
-        match utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![ix]) {
+        match utils::send_instructions(rpc, secondary_rpc, secondary_mode, k1, &[k1, k2], vec![ix])
+        {
             Ok(sig) => {
                 info!(
                     symbol = %prepared.symbol,

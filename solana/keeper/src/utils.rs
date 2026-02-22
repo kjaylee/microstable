@@ -35,6 +35,25 @@ pub const SECONDARY_RPC_DEGRADE_THRESHOLD: u64 = 3;
 pub const SECONDARY_RPC_RECOVERY_PROBE_INTERVAL_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecondaryRpcMode {
+    NoSecondaryConfigured,
+    Normal,
+    Degraded,
+}
+
+impl SecondaryRpcMode {
+    pub fn uses_secondary_reads(self) -> bool {
+        matches!(self, Self::Normal)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxConfirmationDisposition {
+    Confirmed,
+    RetrySecondaryOnce,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SecondaryRpcHealthSnapshot {
     pub degraded: bool,
     pub consecutive_failures: u64,
@@ -75,6 +94,16 @@ pub fn secondary_rpc_health_snapshot() -> SecondaryRpcHealthSnapshot {
 
 pub fn secondary_rpc_is_degraded() -> bool {
     secondary_rpc_health_snapshot().degraded
+}
+
+pub fn secondary_rpc_mode(has_secondary_rpc_configured: bool) -> SecondaryRpcMode {
+    if !has_secondary_rpc_configured {
+        SecondaryRpcMode::NoSecondaryConfigured
+    } else if secondary_rpc_is_degraded() {
+        SecondaryRpcMode::Degraded
+    } else {
+        SecondaryRpcMode::Normal
+    }
 }
 
 pub fn reset_secondary_rpc_health_for_tests() {
@@ -125,20 +154,44 @@ pub fn adaptive_secondary_confirm_window_secs(
 pub fn assess_tx_confirmation_outcome(
     primary_confirmed: bool,
     secondary_confirmed: bool,
-    has_secondary_rpc: bool,
-) -> Result<()> {
-    if primary_confirmed || secondary_confirmed {
-        return Ok(());
-    }
+    mode: SecondaryRpcMode,
+    retry_exhausted: bool,
+) -> Result<TxConfirmationDisposition> {
+    match mode {
+        SecondaryRpcMode::NoSecondaryConfigured => {
+            if primary_confirmed {
+                Ok(TxConfirmationDisposition::Confirmed)
+            } else {
+                Err(anyhow!("transaction failed primary confirmation"))
+            }
+        }
+        SecondaryRpcMode::Degraded => {
+            if primary_confirmed || secondary_confirmed {
+                Ok(TxConfirmationDisposition::Confirmed)
+            } else {
+                Err(anyhow!(
+                    "transaction was not confirmed while running in degraded mode (primary_confirmed={}, secondary_confirmed={})",
+                    primary_confirmed,
+                    secondary_confirmed
+                ))
+            }
+        }
+        SecondaryRpcMode::Normal => {
+            if primary_confirmed && secondary_confirmed {
+                return Ok(TxConfirmationDisposition::Confirmed);
+            }
 
-    if has_secondary_rpc {
-        Err(anyhow!(
-            "transaction was not confirmed within adaptive confirmation window (primary_confirmed={}, secondary_confirmed={})",
-            primary_confirmed,
-            secondary_confirmed
-        ))
-    } else {
-        Err(anyhow!("transaction failed primary confirmation"))
+            if primary_confirmed && !secondary_confirmed && !retry_exhausted {
+                return Ok(TxConfirmationDisposition::RetrySecondaryOnce);
+            }
+
+            Err(anyhow!(
+                "transaction did not reach dual-RPC confirmation in normal mode (primary_confirmed={}, secondary_confirmed={}, retry_exhausted={})",
+                primary_confirmed,
+                secondary_confirmed,
+                retry_exhausted
+            ))
+        }
     }
 }
 
@@ -771,6 +824,7 @@ pub fn assess_dual_rpc_confirmation(
 pub fn send_instructions(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
+    secondary_mode: SecondaryRpcMode,
     payer: &Keypair,
     signers: &[&Keypair],
     instructions: Vec<Instruction>,
@@ -783,10 +837,12 @@ pub fn send_instructions(
         maybe_probe_secondary_rpc_recovery(secondary);
     }
 
-    let active_secondary = if secondary_rpc_is_degraded() {
-        None
-    } else {
+    let secondary_configured = !matches!(secondary_mode, SecondaryRpcMode::NoSecondaryConfigured);
+    let mut confirmation_mode = secondary_rpc_mode(secondary_configured);
+    let active_secondary = if confirmation_mode.uses_secondary_reads() {
         secondary_rpc
+    } else {
+        None
     };
 
     let blockhash = rpc
@@ -922,6 +978,40 @@ pub fn send_instructions(
             }
         }
 
+        if matches!(
+            assess_tx_confirmation_outcome(
+                primary_confirmed,
+                secondary_confirmed,
+                confirmation_mode,
+                false
+            ),
+            Ok(TxConfirmationDisposition::RetrySecondaryOnce)
+        ) {
+            warn!(
+                signature = %sig,
+                "secondary confirmation missing in normal mode; soft-failing and retrying once"
+            );
+
+            match confirm_signature_with_window(
+                secondary,
+                &sig,
+                Duration::from_secs(TX_CONFIRM_WINDOW_BASE_SECS),
+            ) {
+                Ok(true) => {
+                    secondary_confirmed = true;
+                    secondary_failure_detail = None;
+                }
+                Ok(false) => {
+                    secondary_failure_detail =
+                        Some("secondary RPC timeout on soft-fail retry".to_string());
+                }
+                Err(err) => {
+                    secondary_failure_detail =
+                        Some(format!("secondary RPC confirmation retry error: {err}"));
+                }
+            }
+        }
+
         if secondary_confirmed {
             if register_secondary_rpc_success() {
                 info!("secondary RPC recovered from degraded mode after successful confirmation");
@@ -933,7 +1023,7 @@ pub fn send_instructions(
                 failures = secondary_rpc_health_snapshot().consecutive_failures,
                 threshold = SECONDARY_RPC_DEGRADE_THRESHOLD,
                 detail = %secondary_failure_detail.as_deref().unwrap_or("unknown"),
-                "secondary RPC confirmation failed; proceeding with primary-only validity"
+                "secondary RPC confirmation failed"
             );
 
             if entered_degraded {
@@ -945,18 +1035,26 @@ pub fn send_instructions(
         }
     }
 
+    confirmation_mode = secondary_rpc_mode(secondary_configured);
     assess_tx_confirmation_outcome(
         primary_confirmed,
         secondary_confirmed,
-        active_secondary.is_some(),
+        confirmation_mode,
+        true,
     )
     .map_err(|err| anyhow!("transaction {}: {err}", sig))?;
 
-    if primary_confirmed && !secondary_confirmed && active_secondary.is_some() {
-        warn!(
-            signature = %sig,
-            "transaction confirmed on primary RPC; secondary confirmation missing (warning only)"
-        );
+    if primary_confirmed && !secondary_confirmed {
+        match confirmation_mode {
+            SecondaryRpcMode::Degraded => {
+                warn!(
+                    signature = %sig,
+                    "transaction confirmed on primary RPC while secondary is degraded"
+                );
+            }
+            SecondaryRpcMode::Normal => {}
+            SecondaryRpcMode::NoSecondaryConfigured => {}
+        }
     }
 
     if !primary_confirmed && secondary_confirmed {

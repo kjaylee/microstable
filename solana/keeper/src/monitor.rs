@@ -144,18 +144,32 @@ pub fn validate_monitor_cross_rpc(
 pub fn run_monitor_cycle(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
     memory: &mut MonitorMemory,
 ) -> Result<MonitorOutcome> {
-    let snapshot = if let Some(secondary) = secondary_rpc {
-        utils::retry_with_backoff(
+    let secondary_for_reads = if secondary_mode.uses_secondary_reads() {
+        secondary_rpc
+    } else {
+        None
+    };
+
+    let snapshot = if let Some(secondary) = secondary_for_reads {
+        match utils::retry_with_backoff(
             utils::CROSS_RPC_MAX_ATTEMPTS,
             utils::CROSS_RPC_BACKOFF_BASE_MS,
             |attempt| {
                 let primary_snapshot = fetch_monitor_snapshot(rpc, derived)?;
-                let secondary_snapshot = fetch_monitor_snapshot(secondary, derived)?;
+                let secondary_snapshot =
+                    fetch_monitor_snapshot(secondary, derived).map_err(|err| {
+                        let entered_degraded = utils::register_secondary_rpc_failure();
+                        anyhow!(
+                            "secondary monitor snapshot read failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
+                            utils::CROSS_RPC_MAX_ATTEMPTS
+                        )
+                    })?;
 
                 let primary_view = MonitorCrossRpcView::from_state(
                     &primary_snapshot.0,
@@ -179,19 +193,35 @@ pub fn run_monitor_cycle(
 
                 Ok(primary_snapshot)
             },
-        )
-        .map_err(|err| {
-            if memory.consecutive_emergency_cycles > 0 {
-                info!(
-                    previous_consecutive_observations = memory.consecutive_emergency_cycles,
-                    "debounce counter reset due to skipped cycle"
-                );
-            } else {
-                info!("debounce counter reset due to skipped cycle");
+        ) {
+            Ok(snapshot) => {
+                let _ = utils::register_secondary_rpc_success();
+                snapshot
             }
-            memory.consecutive_emergency_cycles = 0;
-            anyhow!("monitor cycle failed after cross-RPC retries: {err}")
-        })?
+            Err(err) => {
+                if memory.consecutive_emergency_cycles > 0 {
+                    info!(
+                        previous_consecutive_observations = memory.consecutive_emergency_cycles,
+                        "debounce counter reset due to skipped cycle"
+                    );
+                } else {
+                    info!("debounce counter reset due to skipped cycle");
+                }
+                memory.consecutive_emergency_cycles = 0;
+
+                if utils::secondary_rpc_is_degraded() {
+                    warn!(
+                        error = %err,
+                        "secondary RPC degraded during monitor read-path checks; falling back to primary-only mode"
+                    );
+                    fetch_monitor_snapshot(rpc, derived)?
+                } else {
+                    return Err(anyhow!(
+                        "monitor cycle failed after cross-RPC retries: {err}"
+                    ));
+                }
+            }
+        }
     } else {
         fetch_monitor_snapshot(rpc, derived)?
     };
@@ -252,7 +282,14 @@ pub fn run_monitor_cycle(
                 k2.pubkey(),
             )?;
 
-            let sig = utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![ix])?;
+            let sig = utils::send_instructions(
+                rpc,
+                secondary_rpc,
+                secondary_mode,
+                k1,
+                &[k1, k2],
+                vec![ix],
+            )?;
             warn!(
                 signature = %sig,
                 global_cr_bps,
