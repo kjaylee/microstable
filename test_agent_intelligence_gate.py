@@ -577,5 +577,15 @@ def main() -> None:
     print("FINAL RESULT:", "PASS" if passed == len(cases) else "FAIL")
 
 
+def test_all_cases_pytest() -> None:
+    """Pytest bridge so `pytest -q test_agent_intelligence_gate.py` reports pass/fail."""
+    failures: List[str] = []
+    for case in build_cases():
+        ok, detail = run_case(case)
+        if not ok:
+            failures.append(f"{case.cid}: {detail}")
+    assert not failures, "\n".join(failures)
+
+
 if __name__ == "__main__":
     main()

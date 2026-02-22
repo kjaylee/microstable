@@ -47,6 +47,12 @@ MAX_AUTOGRAD_DEPTH = 256
 ORACLE_FRESHNESS_MAX_SECONDS = 120
 MIN_COLLATERAL_QUALITY = 0.85
 
+# FIX PT-014: hard cap redemption discount input range.
+MAX_REDEMPTION_DISCOUNT_PPM = 1_000_000
+
+# FIX PT-019: deny mint on overly risky collateral unless policy raises CR target.
+RISK_SCORE_REJECT_THRESHOLD = 0.80
+
 # // BLUE-TEAM: F9/G17 - reserved protocol lanes under congestion.
 DEFAULT_RESERVED_TX_SLOTS = 3
 DEFAULT_RESERVED_COMPUTE_UNITS = 2_400_000
@@ -446,9 +452,15 @@ class ProtocolState:
     optimizer_enabled: bool = True
     conservative_mode: bool = False
     oracle_degraded: bool = False
+    # FIX PT-020: isolate degradation scope to per-vault mask when possible.
+    oracle_degraded_vaults: Set[int] = field(default_factory=set)
 
     nav_prev: float = 1.0
     nav_deltas: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+    # FIX PT-018: track cumulative turnover window, not only per-tx delta.
+    rebalance_turnover_window: List[float] = field(default_factory=list)
+    rebalance_window_size: int = 5
+    rebalance_commit_threshold: float = 0.05
 
     # // BLUE-TEAM: G16 - bind keeper proposals to epoch + state hash to block replay.
     market_epoch: int = 0
@@ -479,8 +491,12 @@ class ProtocolState:
             optimizer_enabled=self.optimizer_enabled,
             conservative_mode=self.conservative_mode,
             oracle_degraded=self.oracle_degraded,
+            oracle_degraded_vaults=set(self.oracle_degraded_vaults),
             nav_prev=self.nav_prev,
             nav_deltas=self.nav_deltas[:],
+            rebalance_turnover_window=self.rebalance_turnover_window[:],
+            rebalance_window_size=self.rebalance_window_size,
+            rebalance_commit_threshold=self.rebalance_commit_threshold,
             market_epoch=self.market_epoch,
             market_state_hash=self.market_state_hash,
             position_supply_sum=self.position_supply_sum,
@@ -498,6 +514,7 @@ class ProtocolState:
         self.optimizer_enabled = True
         self.conservative_mode = False
         self.oracle_degraded = False
+        self.oracle_degraded_vaults.clear()
 
     def _compute_state_hash(
         self,
@@ -541,6 +558,10 @@ class ProtocolState:
         self.weights = [float(w) for w in weights]
         if mint_fee is not None:
             self.mint_fee = float(mint_fee)
+
+    def mint_enabled_assets(self) -> List[bool]:
+        # FIX PT-020: block only degraded vaults instead of global mint shutdown.
+        return [i not in self.oracle_degraded_vaults for i in range(len(self.assets))]
 
     def update_from_market(self, prices: Sequence[float], oracle_q: float, peg_noise: float = 0.0) -> float:
         nav = self.effective_collateral_value(prices)
@@ -1138,8 +1159,18 @@ class CircuitBreaker:
             state.optimizer_enabled = False
             state.conservative_mode = True
             state.oracle_degraded = True
-            state.mint_limit = 0.0
-            state.mint_paused_reason = "MINT_PAUSED_BY_CB3"
+            degraded = {i for i, p in enumerate(market.prices) if abs(float(p) - 1.0) > 0.02}
+            if not degraded and (market.stale_seconds > 120 or market.divergence > 0.02):
+                degraded = set(range(len(state.assets)))
+            state.oracle_degraded_vaults = degraded
+
+            # FIX PT-020: only fully pause mint when all vaults are degraded.
+            if len(degraded) >= len(state.assets):
+                state.mint_limit = 0.0
+                state.mint_paused_reason = "MINT_PAUSED_BY_CB3"
+            else:
+                state.mint_limit = min(state.mint_limit, 0.10)
+                state.mint_paused_reason = "MINT_PARTIAL_BY_CB3"
             state.cr_target = max(state.cr_target, 1.35)
 
         rollback = self.machines[4].is_active()
@@ -1194,6 +1225,8 @@ class Keeper:
             "proposal_epoch": state.market_epoch,
             "state_hash": state.market_state_hash,
             "expiry_epoch": state.market_epoch + 2,
+            # FIX PT-018: cumulative large rebalance requires bound commit-reveal proof.
+            "commit_proof": f"{state.market_epoch}:{state.market_state_hash}",
         }
 
     def submit_update_proposal(self, state: ProtocolState, proposal: Dict[str, object]) -> Dict[str, object]:
@@ -1224,7 +1257,17 @@ class Keeper:
         if abs(fee - state.mint_fee) > DELTA_FEE_MAX + 1e-12:
             return {"status": "REJECTED", "reason": "fee_delta_violation"}
 
+        # FIX PT-018: guard against split large rebalances via cumulative turnover window.
+        delta_mag = sum(abs(w[i] - state.weights[i]) for i in range(len(w)))
+        window = (state.rebalance_turnover_window + [delta_mag])[-max(1, int(state.rebalance_window_size)):]
+        cumulative = sum(window)
+        if cumulative > float(state.rebalance_commit_threshold) + 1e-12:
+            expected_commit = f"{state.market_epoch}:{state.market_state_hash}"
+            if str(proposal.get("commit_proof", "")) != expected_commit:
+                return {"status": "REJECTED", "reason": "missing_commit_reveal_proof"}
+
         state.apply_params(w, fee)
+        state.rebalance_turnover_window = window
         return {"status": "APPLIED", "weights": state.weights[:], "mint_fee": state.mint_fee}
 
 
@@ -1459,12 +1502,21 @@ def secure_mint_amount(
     *,
     cr_target_ppm: int = 1_200_000,
     fee_rate_ppm: int = 2_000,
+    risk_score: float = 0.0,
+    risk_reject_threshold: float = RISK_SCORE_REJECT_THRESHOLD,
+    risk_cr_penalty_ppm: int = 100_000,
 ) -> int:
     price = validated_oracle_price(oracle_samples, stale_seconds)
     if not collateral_quality_ok(quality_score):
         return 0
+
+    # FIX PT-019: apply explicit risk-gate so toxic collateral cannot mint at baseline CR.
+    effective_cr_target = int(cr_target_ppm)
+    if float(risk_score) > float(risk_reject_threshold):
+        effective_cr_target += int(risk_cr_penalty_ppm)
+
     gross = mul_div_floor(collateral_units, int(price * 1_000_000), 1_000_000)
-    max_mint = mul_div_floor(gross, 1_000_000, cr_target_ppm)
+    max_mint = mul_div_floor(gross, 1_000_000, max(1, effective_cr_target))
     fee = mul_div_ceil(max_mint, fee_rate_ppm, 1_000_000)
     minted = max_mint - fee
     return max(0, minted)
@@ -1477,6 +1529,8 @@ def redeem_by_value(
     total_supply: int,
     *,
     payout_discount_ppm: int = 1_000_000,
+    max_discount_ppm: int = MAX_REDEMPTION_DISCOUNT_PPM,
+    enabled_assets: Optional[Sequence[bool]] = None,
 ) -> List[int]:
     if total_supply <= 0:
         raise ValueError("total_supply must be positive")
@@ -1485,26 +1539,42 @@ def redeem_by_value(
     if len(vault_units) != len(oracle_prices):
         raise ValueError("vault_units/prices length mismatch")
 
-    values = [max(0.0, float(u) * float(p)) for u, p in zip(vault_units, oracle_prices)]
+    if enabled_assets is None:
+        enabled_assets = [True] * len(vault_units)
+    if len(enabled_assets) != len(vault_units):
+        raise ValueError("enabled_assets length mismatch")
+
+    active_units = [int(u) if bool(enabled_assets[i]) else 0 for i, u in enumerate(vault_units)]
+    values = [max(0.0, float(u) * float(p)) for u, p in zip(active_units, oracle_prices)]
     total_value = sum(values)
     if total_value <= 0.0:
         return [0] * len(vault_units)
 
-    discount = max(0.0, min(1.0, payout_discount_ppm / 1_000_000.0))
+    # FIX PT-014: clamp discount into [0, max_discount].
+    max_discount_ppm = max(0, int(max_discount_ppm))
+    clamped_discount_ppm = max(0, min(int(payout_discount_ppm), max_discount_ppm))
+    discount = max(0.0, min(1.0, clamped_discount_ppm / 1_000_000.0))
     target_value = total_value * (burn_amount / float(total_supply)) * discount
 
     payouts: List[int] = []
     allocated_value = 0.0
-    for i, (units, price, asset_value) in enumerate(zip(vault_units, oracle_prices, values)):
+    for i, (units, price, asset_value, enabled) in enumerate(zip(active_units, oracle_prices, values, enabled_assets)):
+        if not enabled:
+            payouts.append(0)
+            continue
         if i == len(vault_units) - 1:
             residual = max(0.0, target_value - allocated_value)
             out = int(residual / max(float(price), EPS))
         else:
-            share = asset_value / total_value
+            share = asset_value / total_value if total_value > 0.0 else 0.0
             value_out = target_value * share
             out = int(value_out / max(float(price), EPS))
             allocated_value += out * float(price)
         payouts.append(max(0, min(int(units), out)))
+
+    # preserve original length and ordering
+    if len(payouts) < len(vault_units):
+        payouts.extend([0] * (len(vault_units) - len(payouts)))
     return payouts
 
 
@@ -1516,16 +1586,21 @@ class RedemptionRequest:
 
 
 class RedemptionQueue:
-    def __init__(self, smoothing_window: int = 8):
+    def __init__(self, smoothing_window: int = 8, max_discount_ppm: int = MAX_REDEMPTION_DISCOUNT_PPM):
         self._pending: Deque[RedemptionRequest] = deque()
         self._smoothing_window = max(1, int(smoothing_window))
+        self.max_discount_ppm = max(0, int(max_discount_ppm))
+        # FIX PT-015: rounding residual is captured by treasury, not last queue entry.
+        self.treasury_residual_units: List[int] = []
 
     def enqueue(self, account: str, burn_amount: int, requested_discount_ppm: int) -> None:
+        clamped_discount = max(0, min(int(requested_discount_ppm), self.max_discount_ppm))
         self._pending.append(
             RedemptionRequest(
                 account=str(account),
                 burn_amount=max(0, int(burn_amount)),
-                requested_discount_ppm=int(requested_discount_ppm),
+                # FIX PT-014: clamp request discount at enqueue boundary.
+                requested_discount_ppm=clamped_discount,
             )
         )
 
@@ -1542,29 +1617,44 @@ class RedemptionQueue:
         while self._pending and len(batch) < self._smoothing_window:
             batch.append(self._pending.popleft())
 
-        avg_discount = int(sum(r.requested_discount_ppm for r in batch) / len(batch))
         total_burn = sum(r.burn_amount for r in batch)
+        if total_burn <= 0:
+            return {r.account: [0 for _ in vault_units] for r in batch}
+
+        # FIX PT-014: burn-weighted discount average to prevent poisoning by tiny orders.
+        weighted_discount = sum(int(r.requested_discount_ppm) * int(r.burn_amount) for r in batch)
+        avg_discount = int(weighted_discount / total_burn)
+        avg_discount = max(0, min(avg_discount, self.max_discount_ppm))
+
         aggregate = redeem_by_value(
             vault_units=vault_units,
             oracle_prices=oracle_prices,
             burn_amount=total_burn,
             total_supply=total_supply,
             payout_discount_ppm=avg_discount,
+            max_discount_ppm=self.max_discount_ppm,
         )
 
         out: Dict[str, List[int]] = {}
-        allocated = [[0 for _ in aggregate] for _ in batch]
         running = [0 for _ in aggregate]
-        for idx, req in enumerate(batch):
-            ratio = (req.burn_amount / total_burn) if total_burn > 0 else 0.0
+        for req in batch:
+            ratio = req.burn_amount / total_burn
+            allocs: List[int] = []
             for j, total_units in enumerate(aggregate):
-                if idx == len(batch) - 1:
-                    alloc = total_units - running[j]
-                else:
-                    alloc = int(total_units * ratio)
-                    running[j] += alloc
-                allocated[idx][j] = max(0, alloc)
-            out[req.account] = allocated[idx]
+                alloc = int(total_units * ratio)
+                alloc = max(0, alloc)
+                running[j] += alloc
+                allocs.append(alloc)
+            out[req.account] = allocs
+
+        residuals = [max(0, aggregate[j] - running[j]) for j in range(len(aggregate))]
+        if not self.treasury_residual_units:
+            self.treasury_residual_units = [0 for _ in residuals]
+        if len(self.treasury_residual_units) < len(residuals):
+            self.treasury_residual_units.extend([0] * (len(residuals) - len(self.treasury_residual_units)))
+        for j, dust in enumerate(residuals):
+            self.treasury_residual_units[j] += dust
+
         return out
 
 
@@ -1823,7 +1913,17 @@ def run_scenario(
                 state.optimizer_enabled = False
                 state.conservative_mode = True
                 state.oracle_degraded = True
-                state.mint_limit = min(state.mint_limit, 0.10)
+                # FIX PT-016: keep CB3/CB4 rollback mint policy consistent with active-path CB3 freeze.
+                degraded = {i for i, p in enumerate(market.prices) if abs(float(p) - 1.0) > 0.02}
+                if not degraded and (market.stale_seconds > 120 or market.divergence > 0.02):
+                    degraded = set(range(len(state.assets)))
+                state.oracle_degraded_vaults = degraded
+                if len(degraded) >= len(state.assets):
+                    state.mint_limit = 0.0
+                    state.mint_paused_reason = "MINT_PAUSED_BY_CB3"
+                else:
+                    state.mint_limit = min(state.mint_limit, 0.10)
+                    state.mint_paused_reason = "MINT_PARTIAL_BY_CB3"
                 state.cr_target = max(state.cr_target, 1.35)
             if action["cb2"]:
                 state.mint_limit = 0.0
@@ -2010,16 +2110,44 @@ def percentile(values: Sequence[float], p: float) -> float:
     return s[lo] * (1.0 - frac) + s[hi] * frac
 
 
-def summarize_stats(values: Sequence[float]) -> Dict[str, float]:
+def summarize_stats(values: Sequence[float], lower_is_worse: bool = False) -> Dict[str, float]:
+    """
+    Summarize a sequence with robust percentiles and directional worst/best.
+
+    Args:
+        values: Numeric samples.
+        lower_is_worse:
+            - False (default): larger value is worse (e.g., MAE, deviation).
+            - True: smaller value is worse (e.g., CR_min).
+
+    Backward compatibility:
+        Existing callers that only read `worst` continue to work unchanged.
+    """
     if not values:
-        return {"mean": 0.0, "median": 0.0, "p5": 0.0, "p95": 0.0, "worst": 0.0}
+        return {
+            "mean": 0.0,
+            "median": 0.0,
+            "p5": 0.0,
+            "p95": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "best": 0.0,
+            "worst": 0.0,
+        }
     vals = list(values)
+    lo = min(vals)
+    hi = max(vals)
+    worst = lo if lower_is_worse else hi
+    best = hi if lower_is_worse else lo
     return {
         "mean": sum(vals) / len(vals),
         "median": percentile(vals, 50),
         "p5": percentile(vals, 5),
         "p95": percentile(vals, 95),
-        "worst": max(vals),
+        "min": lo,
+        "max": hi,
+        "best": best,
+        "worst": worst,
     }
 
 

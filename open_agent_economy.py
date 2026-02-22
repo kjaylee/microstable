@@ -6,8 +6,9 @@ Pure Python (numpy optional). Python 3.12+ compatible.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Set, Tuple
 import hashlib
+import hmac
 import json
 import math
 import random
@@ -49,6 +50,14 @@ REPUTATION_TIERS = [
 
 def sha256_hex(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def hmac_sha256_hex(key: str, payload: str) -> str:
+    return hmac.new(key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def canonical_json(data: Any) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
 def safe_cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -277,6 +286,14 @@ class AgentRegistry:
             self.meta[agent_id] = {}
         self.meta[agent_id].update(kwargs)
 
+    def set_public_key(self, agent_id: str, public_key: str) -> None:
+        """Register per-agent ACP verification key (Ed25519-like public key slot)."""
+        # FIX PT-012: bind ACP verification to per-agent registry key, not shared secret.
+        self.set_meta(agent_id, public_key=str(public_key))
+
+    def get_public_key(self, agent_id: str) -> Optional[str]:
+        return str(self.meta.get(agent_id, {}).get("public_key")) if agent_id in self.meta and "public_key" in self.meta[agent_id] else None
+
     def get_record(self, agent_id: str) -> Optional[AgentRecord]:
         return self.records.get(agent_id)
 
@@ -351,9 +368,20 @@ class ReputationEngine:
 
 
 class StakingEconomics:
-    def __init__(self, registry: AgentRegistry, cooldown_epochs: int = 5) -> None:
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        cooldown_epochs: int = 5,
+        reward_epoch_cap: float = 1_000.0,
+        claim_signing_key: str = "OAE_REWARD_AUTHORITY_V1",
+        legacy_unsigned_claim_limit: float = 1.0,
+    ) -> None:
         self.registry = registry
         self.cooldown_epochs = cooldown_epochs
+        self.reward_epoch_cap = max(0.0, float(reward_epoch_cap))
+        self.claim_signing_key = str(claim_signing_key)
+        self.legacy_unsigned_claim_limit = max(0.0, float(legacy_unsigned_claim_limit))
+
         self.balances: Dict[str, float] = {}
         self.locked: Dict[str, float] = {}
         self.pending: Dict[str, Tuple[float, int]] = {}
@@ -361,6 +389,7 @@ class StakingEconomics:
         self.total_rewards: float = 0.0
         self.total_slashed: float = 0.0
         self.claimed: set[str] = set()
+        self.claimed_by_epoch: Dict[int, float] = {}
 
     def deposit(self, agent_id: str, agent_type: str, amount: float, epoch: int) -> bool:
         min_stake = self.registry.min_stake_by_type.get(agent_type, 0.0)
@@ -383,26 +412,52 @@ class StakingEconomics:
         self.locked[agent_id] = max(0.0, self.locked.get(agent_id, 0.0) - amount)
 
     def request_withdrawal(self, agent_id: str, amount: float, epoch: int) -> bool:
+        if amount <= 0.0:
+            return False
+        if agent_id in self.pending:
+            return False
         if self.available(agent_id) < amount:
             return False
+        # FIX PT-002: lock withdrawal amount at request time.
+        self.locked[agent_id] = self.locked.get(agent_id, 0.0) + amount
         self.pending[agent_id] = (amount, epoch + self.cooldown_epochs)
         return True
 
     def withdraw(self, agent_id: str, epoch: int) -> float:
         if agent_id not in self.pending:
             raise ValueError("no pending withdrawal")
-        amount, unlock_epoch = self.pending[agent_id]
+        requested, unlock_epoch = self.pending[agent_id]
         if epoch < unlock_epoch:
             raise ValueError("cooldown not finished")
+
+        balance = self.balances.get(agent_id, 0.0)
+        locked = self.locked.get(agent_id, 0.0)
+        withdrawable = max(0.0, min(requested, balance, locked))
         self.pending.pop(agent_id, None)
-        self.balances[agent_id] = max(0.0, self.balances.get(agent_id, 0.0) - amount)
-        return amount
+        self.unlock(agent_id, requested)
+        self.balances[agent_id] = max(0.0, balance - withdrawable)
+        return withdrawable
 
     def slash(self, agent_id: str, amount: float, epoch: int) -> float:
         balance = self.balances.get(agent_id, 0.0)
+        locked_before = self.locked.get(agent_id, 0.0)
+        available_before = max(0.0, balance - locked_before)
+
         slash_amt = balance * amount if amount <= 1.0 else amount
         slash_amt = min(slash_amt, balance)
         self.balances[agent_id] = balance - slash_amt
+
+        # FIX PT-002: slash also burns locked withdrawal capacity when needed.
+        overflow_to_locked = max(0.0, slash_amt - available_before)
+        if overflow_to_locked > 0.0:
+            self.locked[agent_id] = max(0.0, locked_before - overflow_to_locked)
+
+        if agent_id in self.pending:
+            pending_amt, unlock_epoch = self.pending[agent_id]
+            effective_locked = self.locked.get(agent_id, 0.0)
+            if pending_amt > effective_locked:
+                self.pending[agent_id] = (effective_locked, unlock_epoch)
+
         self.total_slashed += slash_amt
         rec = self.registry.get_record(agent_id)
         if rec:
@@ -414,10 +469,37 @@ class StakingEconomics:
         self.total_rewards += amount
         self.registry.reward(agent_id, amount, epoch)
 
-    def claim_reward(self, agent_id: str, amount: float, claim_id: str, epoch: int) -> bool:
-        if claim_id in self.claimed:
+    def _reward_claim_payload(self, agent_id: str, amount: float, claim_id: str, epoch: int) -> str:
+        payload = {
+            "agent_id": str(agent_id),
+            "amount": float(amount),
+            "claim_id": str(claim_id),
+            "epoch": int(epoch),
+        }
+        return canonical_json(payload)
+
+    def build_claim_proof(self, agent_id: str, amount: float, claim_id: str, epoch: int) -> str:
+        """Create signed reward-evidence proof for claim_reward."""
+        return hmac_sha256_hex(self.claim_signing_key, self._reward_claim_payload(agent_id, amount, claim_id, epoch))
+
+    def claim_reward(self, agent_id: str, amount: float, claim_id: str, epoch: int, proof: Optional[str] = None) -> bool:
+        if amount <= 0.0 or claim_id in self.claimed:
             return False
+
+        used = self.claimed_by_epoch.get(epoch, 0.0)
+        # FIX PT-001: enforce strict epoch reward budget cap.
+        if used + amount > self.reward_epoch_cap + EPS:
+            return False
+
+        expected = self.build_claim_proof(agent_id, amount, claim_id, epoch)
+        has_valid_proof = proof is not None and hmac.compare_digest(str(proof), expected)
+
+        # FIX PT-001: require signed evidence for meaningful claims.
+        if not has_valid_proof and amount > self.legacy_unsigned_claim_limit:
+            return False
+
         self.claimed.add(claim_id)
+        self.claimed_by_epoch[epoch] = used + amount
         self.reward(agent_id, amount, epoch)
         return True
 
@@ -444,37 +526,130 @@ class ACPMessage:
     params: Dict[str, Any]
     id: str
 
+    _seen_nonces: ClassVar[Set[str]] = set()
+
     @staticmethod
     def _payload(method: str, params: Dict[str, Any], msg_id: str) -> str:
-        return json.dumps({"method": method, "params": params, "id": msg_id}, sort_keys=True)
+        return canonical_json({"method": method, "params": params, "id": msg_id})
 
     @staticmethod
     def sign(method: str, params: Dict[str, Any], msg_id: str, secret: str) -> str:
-        return sha256_hex(ACPMessage._payload(method, params, msg_id) + secret)
+        return hmac_sha256_hex(secret, ACPMessage._payload(method, params, msg_id))
 
     @staticmethod
-    def create(method: str, params: Dict[str, Any], msg_id: Optional[str], secret: str) -> "ACPMessage":
+    def create(
+        method: str,
+        params: Dict[str, Any],
+        msg_id: Optional[str],
+        secret: str,
+        *,
+        epoch: int = 0,
+        expiry_epoch: Optional[int] = None,
+        nonce: Optional[str] = None,
+    ) -> "ACPMessage":
         msg_id = msg_id or sha256_hex(f"{method}:{now_ms()}:{random.random()}")[:12]
-        signature = ACPMessage.sign(method, params, msg_id, secret)
-        params = dict(params)
-        params["signature"] = signature
-        return ACPMessage(jsonrpc="2.0", method=method, params=params, id=msg_id)
+        payload_params = dict(params)
+        # FIX PT-011: bind nonce/expiry/epoch into signed ACP payload.
+        payload_params.setdefault("epoch", int(epoch))
+        payload_params.setdefault("expiry_epoch", int(expiry_epoch if expiry_epoch is not None else int(payload_params["epoch"]) + 2))
+        payload_params.setdefault("nonce", str(nonce or sha256_hex(f"{msg_id}:{now_ms()}:{random.random()}")[:16]))
+
+        signature = ACPMessage.sign(method, payload_params, msg_id, secret)
+        payload_params["signature"] = signature
+        return ACPMessage(jsonrpc="2.0", method=method, params=payload_params, id=msg_id)
 
     @staticmethod
-    def verify(msg: "ACPMessage", secret: str) -> bool:
+    def _select_verification_key(
+        msg: "ACPMessage",
+        secret: Optional[str],
+        registry: Optional[AgentRegistry],
+    ) -> Optional[str]:
+        agent_id = str(msg.params.get("agent_id", ""))
+        # FIX PT-012: prefer per-agent registry key over shared secret.
+        if registry is not None and agent_id:
+            pub = registry.get_public_key(agent_id)
+            if pub:
+                return pub
+        return secret
+
+    @staticmethod
+    def verify(
+        msg: "ACPMessage",
+        secret: Optional[str] = None,
+        *,
+        registry: Optional[AgentRegistry] = None,
+        now_epoch: Optional[int] = None,
+        expected_epoch: Optional[int] = None,
+        seen_nonces: Optional[Set[str]] = None,
+        max_future_drift: int = 1,
+        allow_legacy: bool = True,
+    ) -> bool:
         params = dict(msg.params)
         signature = params.pop("signature", None)
-        expected = ACPMessage.sign(msg.method, params, msg.id, secret)
-        return signature == expected
+        if not isinstance(signature, str):
+            return False
+
+        key = ACPMessage._select_verification_key(msg, secret, registry)
+        if not key:
+            return False
+
+        expected = ACPMessage.sign(msg.method, params, msg.id, key)
+        if not hmac.compare_digest(signature, expected):
+            return False
+
+        nonce = params.get("nonce")
+        expiry = params.get("expiry_epoch")
+        signed_epoch = params.get("epoch")
+        has_replay_fields = nonce is not None and expiry is not None and signed_epoch is not None
+
+        if not has_replay_fields:
+            return bool(allow_legacy)
+
+        try:
+            nonce_s = str(nonce)
+            expiry_i = int(expiry)
+            signed_epoch_i = int(signed_epoch)
+        except Exception:
+            return False
+
+        if expected_epoch is not None and signed_epoch_i != int(expected_epoch):
+            return False
+
+        if now_epoch is not None:
+            # FIX PT-009: reject impossible far-future signed epochs.
+            if signed_epoch_i > int(now_epoch) + int(max_future_drift):
+                return False
+            if expiry_i < int(now_epoch):
+                return False
+
+        # FIX PT-011: replay prevention with nonce set.
+        nonces = seen_nonces if seen_nonces is not None else ACPMessage._seen_nonces
+        nonce_key = f"{params.get('agent_id', '')}:{signed_epoch_i}:{nonce_s}"
+        if nonce_key in nonces:
+            return False
+        nonces.add(nonce_key)
+        return True
 
 
 class RateLimiter:
-    def __init__(self, max_per_epoch: int = 100) -> None:
+    def __init__(self, max_per_epoch: int = 100, epoch_provider: Optional[Callable[[], int]] = None) -> None:
         self.max_per_epoch = max_per_epoch
         self.counts: Dict[Tuple[str, int], int] = {}
+        self.epoch_provider = epoch_provider
+        self._trusted_epoch = 0
 
-    def allow(self, agent_id: str, epoch: int) -> bool:
-        key = (agent_id, epoch)
+    def set_epoch(self, epoch: int) -> None:
+        self._trusted_epoch = int(epoch)
+
+    def _current_epoch(self) -> int:
+        if self.epoch_provider is not None:
+            return int(self.epoch_provider())
+        return self._trusted_epoch
+
+    def allow(self, agent_id: str, epoch: Optional[int] = None) -> bool:
+        # FIX PT-013: derive epoch from trusted internal clock and ignore caller spoofing.
+        trusted_epoch = self._current_epoch()
+        key = (agent_id, trusted_epoch)
         cnt = self.counts.get(key, 0)
         if cnt >= self.max_per_epoch:
             return False
@@ -523,6 +698,9 @@ class OptimizationTournament:
         epoch_length: int = 3600,
         submission_ratio: float = 0.8,
         min_participants: int = 1,
+        *,
+        direct_submit_enabled: bool = True,
+        max_mint_fee: float = 0.02,
     ) -> None:
         self.registry = registry
         self.reputation = reputation
@@ -530,10 +708,15 @@ class OptimizationTournament:
         self.epoch_length = epoch_length
         self.submission_ratio = submission_ratio
         self.min_participants = min_participants
+        self.direct_submit_enabled = bool(direct_submit_enabled)
+        self.max_mint_fee = max(0.0, float(max_mint_fee))
+
         self.current_epoch = 0
         self.tick = 0
         self.commitments: Dict[str, str] = {}
+        self.commit_consumed: Set[str] = set()
         self.proposals: List[Proposal] = []
+        self.proposal_agents: Set[str] = set()
         self.previous_winner: Optional[Proposal] = None
         self.current_params: Dict[str, Any] = {"weights": [0.25, 0.25, 0.25, 0.25], "mint_fee": 0.002}
         self.current_loss: Optional[float] = None
@@ -543,7 +726,9 @@ class OptimizationTournament:
         self.current_epoch = epoch
         self.tick = 0
         self.commitments.clear()
+        self.commit_consumed.clear()
         self.proposals.clear()
+        self.proposal_agents.clear()
 
     @property
     def submission_end_tick(self) -> int:
@@ -561,7 +746,19 @@ class OptimizationTournament:
         min_stake = self.registry.min_stake_by_type.get(rec.agent_type, 0.0)
         if rec.stake < min_stake:
             return False
+        # FIX PT-017: reject commit overwrite if prior commit is still unconsumed.
+        if agent_id in self.commitments and agent_id not in self.commit_consumed:
+            return False
         self.commitments[agent_id] = proposal_hash
+        self.commit_consumed.discard(agent_id)
+        return True
+
+    def _accept_proposal_once(self, proposal: Proposal) -> bool:
+        # FIX PT-007: enforce one valid proposal per agent per epoch.
+        if proposal.agent_id in self.proposal_agents:
+            return False
+        self.proposals.append(proposal)
+        self.proposal_agents.add(proposal.agent_id)
         return True
 
     def reveal(self, proposal: Proposal, secret: str) -> bool:
@@ -577,11 +774,18 @@ class OptimizationTournament:
             return False
         if rec.stake < self.registry.min_stake_by_type.get(rec.agent_type, 0.0):
             return False
-        self.proposals.append(proposal)
+        if not self._accept_proposal_once(proposal):
+            return False
+        # FIX PT-003: consume commit after successful reveal (one-time reveal).
+        self.commit_consumed.add(proposal.agent_id)
+        self.commitments.pop(proposal.agent_id, None)
         rec.proposals_submitted += 1
         return True
 
     def submit_direct(self, proposal: Proposal) -> bool:
+        # FIX PT-004: allow operators to disable direct path in production mode.
+        if not self.direct_submit_enabled:
+            return False
         if proposal.epoch != self.current_epoch:
             return False
         rec = self.registry.get_record(proposal.agent_id)
@@ -589,13 +793,17 @@ class OptimizationTournament:
             return False
         if rec.stake < self.registry.min_stake_by_type.get(rec.agent_type, 0.0):
             return False
-        self.proposals.append(proposal)
+        if not self._accept_proposal_once(proposal):
+            return False
         rec.proposals_submitted += 1
         return True
 
     def _score(self, proposal: Proposal) -> float:
         loss_score = -proposal.loss_estimate
-        risk_adj = proposal.expected_return / max(proposal.risk, EPS)
+        # FIX PT-005: clamp self-reported return/risk terms to bounded ranges.
+        safe_return = max(-1.0, min(1.0, float(proposal.expected_return)))
+        safe_risk = max(0.01, min(5.0, float(proposal.risk)))
+        risk_adj = safe_return / safe_risk
         risk_adj *= 0.1
         rep = self.reputation.get(proposal.agent_id)
         rep_weight = 0.001 * rep
@@ -608,34 +816,61 @@ class OptimizationTournament:
                 copycat_penalty = 0.2
         return loss_score + risk_adj + rep_weight + novelty - copycat_penalty
 
+    def _validate_winner_params(self, proposal: Proposal) -> bool:
+        weights = [float(w) for w in proposal.weights]
+        if len(weights) != len(self.current_params.get("weights", [])):
+            return False
+        if any((w < 0.0 or w > 1.0) for w in weights):
+            return False
+        if abs(sum(weights) - 1.0) > 1e-6:
+            return False
+        fee = float(proposal.mint_fee)
+        if fee < 0.0 or fee > self.max_mint_fee:
+            return False
+        return True
+
     def evaluate(self, epoch_fees: float) -> Optional[Proposal]:
         if len(self.proposals) < self.min_participants:
             return None
         ranked = sorted(self.proposals, key=self._score, reverse=True)
-        winner = ranked[0]
+
+        winner: Optional[Proposal] = None
+        for candidate in ranked:
+            # FIX PT-006: enforce hard invariants before adoption.
+            if self._validate_winner_params(candidate):
+                winner = candidate
+                break
+        if winner is None:
+            return None
+
         # If all proposals worse than current loss, keep current
         if self.current_loss is not None:
             best_loss = min(p.loss_estimate for p in self.proposals)
             if best_loss > self.current_loss * 1.05:
                 return None
+
         self.previous_winner = winner
         self.current_params = {"weights": winner.weights, "mint_fee": winner.mint_fee}
         self.current_loss = winner.loss_estimate
-        # Rewards
+
         treasury_share = epoch_fees * 0.55
         winner_share = epoch_fees * 0.30
         runner_share = epoch_fees * 0.10 if len(ranked) > 1 else 0.0
         participant_pool = epoch_fees * 0.05
         self.treasury += treasury_share
+
         if self.staking:
             self.staking.reward(winner.agent_id, winner_share, self.current_epoch)
-            if runner_share > 0.0:
-                self.staking.reward(ranked[1].agent_id, runner_share, self.current_epoch)
-            if participant_pool > 0 and self.proposals:
-                per = participant_pool / len(self.proposals)
-                for p in self.proposals:
-                    self.staking.reward(p.agent_id, per, self.current_epoch)
-        # reputation updates
+            runner = next((p for p in ranked if p.agent_id != winner.agent_id), None)
+            if runner_share > 0.0 and runner is not None:
+                self.staking.reward(runner.agent_id, runner_share, self.current_epoch)
+
+            # FIX PT-007: split participant pool by unique agent count.
+            if participant_pool > 0 and self.proposal_agents:
+                per = participant_pool / len(self.proposal_agents)
+                for agent_id in self.proposal_agents:
+                    self.staking.reward(agent_id, per, self.current_epoch)
+
         self.reputation.add(winner.agent_id, 10)
         rec = self.registry.get_record(winner.agent_id)
         if rec:
@@ -655,15 +890,20 @@ class FederatedWatchdog:
         staking: StakingEconomics,
         reputation: ReputationEngine,
         max_evidence_age: int = 10,
+        max_future_drift: int = 1,
     ) -> None:
         self.registry = registry
         self.staking = staking
         self.reputation = reputation
         self.max_evidence_age = max_evidence_age
+        self.max_future_drift = max(0, int(max_future_drift))
         self.alerts: Dict[Tuple[int, str], Dict[str, Dict[str, Any]]] = {}
         self.methods: Dict[Tuple[int, str], Dict[str, str]] = {}
+        self.report_order: Dict[Tuple[int, str], Dict[str, int]] = {}
+        self.finalized: Set[Tuple[int, str]] = set()
         self.false_positive: Dict[str, int] = {}
         self.true_positive: Dict[str, int] = {}
+        self._arrival_seq = 0
 
     def _active_monitors(self) -> List[AgentRecord]:
         return self.registry.active_agents("Monitor")
@@ -674,11 +914,25 @@ class FederatedWatchdog:
             return False
         if not evidence or "snapshot" not in evidence or "oracle" not in evidence or "timestamp" not in evidence:
             return False
-        if epoch - int(evidence["timestamp"]) > self.max_evidence_age:
+
+        ts = int(evidence["timestamp"])
+        if epoch - ts > self.max_evidence_age:
             return False
+        # FIX PT-009: reject future timestamp beyond bounded drift.
+        if ts > epoch + self.max_future_drift:
+            return False
+
         key = (epoch, alert_type)
+        if key in self.finalized:
+            return False
+
         self.alerts.setdefault(key, {})[agent_id] = evidence
         self.methods.setdefault(key, {})[agent_id] = method
+        self.report_order.setdefault(key, {})
+        if agent_id not in self.report_order[key]:
+            # FIX PT-010: preserve arrival order for first-reporter bounty.
+            self._arrival_seq += 1
+            self.report_order[key][agent_id] = self._arrival_seq
         return True
 
     def consensus(self, alert_type: str, epoch: int) -> bool:
@@ -698,9 +952,16 @@ class FederatedWatchdog:
         reports = self.alerts.get(key, {})
         if not reports:
             return
+        # FIX PT-008: block duplicate resolve on finalized alerts.
+        if key in self.finalized:
+            return
+
         if is_true:
-            # reward first reporter
-            first = sorted(reports.keys())[0]
+            order = self.report_order.get(key, {})
+            if order:
+                first = min(order.items(), key=lambda kv: kv[1])[0]
+            else:
+                first = next(iter(reports.keys()))
             self.staking.reward(first, 1.0, epoch)
             self.reputation.add(first, 20)
             self.true_positive[first] = self.true_positive.get(first, 0) + 1
@@ -709,6 +970,8 @@ class FederatedWatchdog:
                 self.staking.slash(agent_id, 0.05, epoch)
                 self.reputation.add(agent_id, -25)
                 self.false_positive[agent_id] = self.false_positive.get(agent_id, 0) + 1
+
+        self.finalized.add(key)
 
     def diversity_score(self, alert_type: str, epoch: int) -> float:
         methods = self.methods.get((epoch, alert_type), {})

@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import math
 import random
+import re
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -60,6 +62,42 @@ def _stable_rand01(*parts: Any) -> float:
     material = "|".join(str(p) for p in parts)
     h = hashlib.sha256(material.encode("utf-8")).hexdigest()
     return int(h[:12], 16) / float(16**12)
+
+
+def _canonical_json(data: Any) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
+def _norm_text(x: Any) -> str:
+    s = str(x or "").strip().lower()
+    s = re.sub(r"\s+", "_", s)
+    return s
+
+
+def _canonical_signature_material(attack: Dict[str, Any]) -> Dict[str, Any]:
+    params = dict(attack.get("params", {}))
+    timing = dict(attack.get("timing", {}))
+    intensity = float(params.get("intensity", 0.0))
+    stealth = float(params.get("stealth", 0.0))
+    budget = float(params.get("budget", 0.0))
+    scale = max(1, int(attack.get("scale", 1)))
+
+    # FIX PT-027: normalize inputs and include multi-resolution semantic features.
+    return {
+        "domain": "attack-signature:v2",
+        "vector": _norm_text(attack.get("vector")),
+        "tier": int(attack.get("tier", 0)),
+        "timing_mode": _norm_text(timing.get("mode", "normal")),
+        "epoch_offset": int(timing.get("epoch_offset", 0)),
+        "scale": scale,
+        "scale_bucket": int(math.log10(scale)),
+        "chain_depth": len(attack.get("chain", [])),
+        "intensity_fine": round(intensity, 6),
+        "intensity_coarse": round(intensity, 2),
+        "stealth_fine": round(stealth, 6),
+        "stealth_coarse": round(stealth, 2),
+        "budget_log": round(math.log10(max(1.0, budget)), 6),
+    }
 
 
 @dataclass
@@ -120,6 +158,8 @@ class AttackGenerator:
         self.rng = random.Random(seed)
         self._counter = 0
         self._lineage: Dict[str, List[str]] = {}
+        # FIX PT-021: hidden server secret for deterministic non-grindable attack IDs.
+        self._attack_id_secret = hashlib.sha256(f"attack-id-secret:{seed}:{random.Random(seed + 997).random()}".encode("utf-8")).digest()
 
         if base_attacks is not None:
             self.base_attacks = [copy.deepcopy(a) for a in base_attacks]
@@ -167,6 +207,22 @@ class AttackGenerator:
         if missing:
             raise ValueError(f"invalid attack: missing fields {sorted(missing)}")
 
+    def _deterministic_attack_id(self, parent_id: str, attack: Dict[str, Any]) -> str:
+        # FIX PT-021: deterministic HMAC-based attack id blocks offline ID grinding.
+        payload = _canonical_json(
+            {
+                "parent": parent_id,
+                "counter": self._counter,
+                "vector": attack.get("vector"),
+                "tier": attack.get("tier"),
+                "params": attack.get("params", {}),
+                "timing": attack.get("timing", {}),
+                "scale": attack.get("scale", 1),
+            }
+        )
+        digest = hmac.new(self._attack_id_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"{parent_id}-h{digest[:18]}"
+
     def mutate_attack(self, base_attack: Dict[str, Any], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         params = params or {}
         self._validate_attack(base_attack)
@@ -211,7 +267,7 @@ class AttackGenerator:
 
         self._counter += 1
         old_id = str(base_attack["id"])
-        attack["id"] = f"{old_id}-m{self._counter:06d}"
+        attack["id"] = self._deterministic_attack_id(old_id, attack)
 
         lineage = list(base_attack.get("lineage", [old_id]))
         lineage.append(attack["id"])
@@ -337,17 +393,24 @@ class AttackExecutor:
         self.seed = seed
         self.blocked_signatures: set[str] = set()
         self.exploit_log: List[Dict[str, Any]] = []
+        self.signature_buckets: Dict[str, set[str]] = {}
 
-    @staticmethod
-    def _attack_signature(attack: Dict[str, Any]) -> str:
-        material = {
-            "vector": attack.get("vector"),
-            "tier": attack.get("tier"),
-            "timing": attack.get("timing", {}).get("mode"),
-            "scale": attack.get("scale"),
-            "intensity": round(float(attack.get("params", {}).get("intensity", 0.0)), 3),
-        }
-        return hashlib.sha256(json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    def _attack_signature_pair(self, attack: Dict[str, Any]) -> Tuple[str, str]:
+        material = _canonical_signature_material(attack)
+        full = hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+        bucket = full[:32]
+
+        # FIX PT-022: larger bucket + collision fallback to full signature.
+        seen = self.signature_buckets.setdefault(bucket, set())
+        seen.add(full)
+        return bucket, full
+
+    def _attack_signature(self, attack: Dict[str, Any]) -> str:
+        bucket, full = self._attack_signature_pair(attack)
+        seen = self.signature_buckets.get(bucket, set())
+        if len(seen) > 1:
+            return full
+        return bucket
 
     def execute(self, attack: Dict[str, Any], protocol_state: Dict[str, Any]) -> Dict[str, Any]:
         required = {"id", "tier", "vector", "params", "timing", "scale"}
@@ -364,8 +427,9 @@ class AttackExecutor:
                 reason="invalid attack schema",
             ).to_dict()
 
-        signature = self._attack_signature(attack)
-        if signature in self.blocked_signatures:
+        bucket_sig, full_sig = self._attack_signature_pair(attack)
+        # FIX PT-026: normalize signature domain/length and accept canonical full/bucket keys.
+        if bucket_sig in self.blocked_signatures or full_sig in self.blocked_signatures:
             return AttackExecutionResult(
                 attack_id=attack["id"],
                 status="blocked",
@@ -390,11 +454,12 @@ class AttackExecutor:
         scale_boost = min(0.15, math.log10(max(1, scale)) * 0.03)
         success_prob = max(0.01, min(0.95, base_success + scale_boost - defense_strength * 0.55 - learned_bias))
 
-        draw = _stable_rand01(attack["id"], protocol_state.get("epoch", 0), self.seed)
+        # FIX PT-021: sample outcomes from canonical payload signature, not attacker-chosen attack_id.
+        draw = _stable_rand01(full_sig, protocol_state.get("epoch", 0), self.seed)
         success = draw < success_prob
 
         det_prob = max(0.35, min(0.999, 0.72 + defense_strength * 0.40 - stealth * 0.15))
-        detected = _stable_rand01("det", attack["id"], protocol_state.get("epoch", 0), self.seed) < det_prob
+        detected = _stable_rand01("det", full_sig, protocol_state.get("epoch", 0), self.seed) < det_prob
 
         detection_delay = 1 + int((1.0 - det_prob) * 6)
         response_delay = 1 + int((1.0 - defense_strength) * 8)
@@ -543,13 +608,23 @@ class AnomalyDetector:
             return 0.0
         return dot / (na * nb)
 
+    def _proposal_vector(self, proposal: Dict[str, Any]) -> List[float]:
+        raw = proposal.get("vector")
+        if isinstance(raw, list) and raw:
+            return [float(x) for x in raw]
+        # FIX PT-023: support OAE schema (`weights`) and normalize missing fields.
+        weights = proposal.get("weights")
+        if isinstance(weights, list) and weights:
+            return [float(x) for x in weights]
+        return [0.0, 0.0, 0.0, 0.0]
+
     def detect_collusion(self, proposals: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         clusters = []
         for i in range(len(proposals)):
             for j in range(i + 1, len(proposals)):
                 a = proposals[i]
                 b = proposals[j]
-                sim = self._cosine(a.get("vector", []), b.get("vector", []))
+                sim = self._cosine(self._proposal_vector(a), self._proposal_vector(b))
                 if sim >= self.collusion_threshold:
                     clusters.append(
                         {
@@ -679,12 +754,33 @@ class ResponseEngine:
         self.handled_alerts: set[str] = set()
         self.stake_requirement_multiplier = 1.0
 
+    def _idempotency_key(self, alert: Dict[str, Any]) -> str:
+        # FIX PT-024: stable idempotency key from semantic tuple, not random alert_id.
+        epoch = int(alert.get("epoch", 0))
+        alert_type = _norm_text(alert.get("type", "unknown"))
+        agent_id = _norm_text(alert.get("agent_id", ""))
+        if not agent_id and isinstance(alert.get("agents"), list) and alert.get("agents"):
+            agent_id = _norm_text(alert.get("agents")[0])
+        return f"{epoch}:{alert_type}:{agent_id}"
+
+    @staticmethod
+    def _healthy_for_recovery(health: Optional[Dict[str, Any]]) -> bool:
+        if health is None:
+            return False
+        cr_ok = float(health.get("cr", 0.0)) >= float(health.get("cr_min", 1.20))
+        peg_ok = abs(float(health.get("peg", 0.0))) <= float(health.get("peg_tolerance", 0.02))
+        oracle_ok = bool(health.get("oracle_fresh", False))
+        return cr_ok and peg_ok and oracle_ok
+
     def auto_respond(self, alert: Dict[str, Any]) -> Dict[str, Any]:
-        alert_id = str(alert.get("id", f"{alert.get('type')}:{alert.get('epoch', 0)}"))
-        if alert_id in self.handled_alerts:
+        alert_key = self._idempotency_key(alert)
+        explicit_id = _norm_text(alert.get("id", ""))
+        if alert_key in self.handled_alerts or (explicit_id and explicit_id in self.handled_alerts):
             return {"action": "noop", "idempotent": True, "delay_epochs": 0}
 
-        self.handled_alerts.add(alert_id)
+        self.handled_alerts.add(alert_key)
+        if explicit_id:
+            self.handled_alerts.add(explicit_id)
         a_type = alert.get("type")
 
         if a_type in {"sybil_burst", "sybil_gradual"}:
@@ -740,8 +836,9 @@ class ResponseEngine:
         self.treasury_locked = True
         return {"treasury_locked": True}
 
-    def recover_from_safe_mode(self, epochs_elapsed: int) -> Dict[str, Any]:
-        if epochs_elapsed >= 5:
+    def recover_from_safe_mode(self, epochs_elapsed: int, health: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # FIX PT-025: health gate enforced when health context is supplied.
+        if epochs_elapsed >= 5 and (health is None or self._healthy_for_recovery(health)):
             self.safe_mode = False
             self.registration_frozen = False
             self.rate_limit_enabled = False
@@ -786,19 +883,15 @@ class ForensicsEngine:
 
     def generate_signature(self, attack_record: Dict[str, Any]) -> str:
         attack = attack_record.get("attack", {})
-        material = {
-            "vector": attack.get("vector"),
-            "tier": attack.get("tier"),
-            "timing_mode": attack.get("timing", {}).get("mode"),
-            "scale_bucket": int(math.log10(max(1, int(attack.get("scale", 1))))) if attack.get("scale", 1) > 0 else 0,
-            "chain_depth": len(attack.get("chain", [])),
-        }
-        signature = hashlib.sha256(json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+        material = _canonical_signature_material(attack)
+        # FIX PT-026: use canonical domain + normalized length shared with executor.
+        signature = hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
         self.signature_db[signature] = material
         return signature
 
     def blocks(self, signature: str) -> bool:
-        return signature in self.signature_db
+        norm_sig = str(signature).strip().lower()
+        return norm_sig in self.signature_db
 
 
 class EvolutionaryAttackEngine:
