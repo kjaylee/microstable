@@ -10,6 +10,8 @@ use solana_sdk::{
 pub struct ProtocolState {
     pub weights: [u64; 4],
     pub fee_rate: u64,
+    pub mint_fee_rate: u64,
+    pub redeem_fee_rate: u64,
     pub cr_target: u64,
     pub total_supply: u64,
     pub last_update_slot: u64,
@@ -55,6 +57,38 @@ pub struct CircuitBreakerState {
     pub bump: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshDeserialize)]
+pub enum AgentRole {
+    Optimizer,
+    Monitor,
+    Auditor,
+    Liquidator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshDeserialize)]
+pub enum AgentStatus {
+    Active,
+    Cooldown,
+    Slashed,
+    Deregistered,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]
+pub struct AgentRecord {
+    pub agent: Pubkey,
+    pub stake: u64,
+    pub reputation: u64,
+    pub role: AgentRole,
+    pub tier: u8,
+    pub status: AgentStatus,
+    pub proposals_submitted: u64,
+    pub proposals_accepted: u64,
+    pub registered_at: i64,
+    pub last_active_at: i64,
+    pub agent_score: u64,
+    pub bump: u8,
+}
+
 #[derive(BorshSerialize)]
 struct UpdateOraclePythArgs {
     collateral_index: u8,
@@ -72,6 +106,31 @@ struct RebalanceArgs {
     max_slippage_bps: u64,
     batch_slot: u64,
     reveal_salt: [u8; 32],
+}
+
+#[derive(BorshSerialize)]
+pub struct UpdateProtocolParamsArgs {
+    pub new_cr_target: u64,
+    pub new_mint_fee: u64,
+    pub new_redeem_fee: u64,
+}
+
+#[derive(BorshSerialize)]
+struct UpdateAgentScoreArgs {
+    agent: Pubkey,
+    new_score: u64,
+}
+
+#[derive(BorshSerialize)]
+struct PromoteAgentArgs {
+    agent: Pubkey,
+    new_tier: u8,
+}
+
+#[derive(BorshSerialize)]
+struct DemoteAgentArgs {
+    agent: Pubkey,
+    new_tier: u8,
 }
 
 pub fn decode_account<T: BorshDeserialize>(data: &[u8], account_name: &str) -> Result<T> {
@@ -200,6 +259,84 @@ pub fn ix_rebalance(
                 reveal_salt,
             },
         )?,
+    })
+}
+
+pub fn ix_update_protocol_params(
+    program_id: Pubkey,
+    protocol_state: Pubkey,
+    keeper_one: Pubkey,
+    keeper_two: Pubkey,
+    args: UpdateProtocolParamsArgs,
+) -> Result<Instruction> {
+    Ok(Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(protocol_state, false),
+            AccountMeta::new_readonly(keeper_one, true),
+            AccountMeta::new_readonly(keeper_two, true),
+        ],
+        data: instruction_data("update_protocol_params", &args)?,
+    })
+}
+
+pub fn ix_update_agent_score(
+    program_id: Pubkey,
+    protocol_state: Pubkey,
+    keeper: Pubkey,
+    agent_record: Pubkey,
+    agent: Pubkey,
+    new_score: u64,
+) -> Result<Instruction> {
+    Ok(Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(protocol_state, false),
+            AccountMeta::new_readonly(keeper, true),
+            AccountMeta::new(agent_record, false),
+        ],
+        data: instruction_data(
+            "update_agent_score",
+            &UpdateAgentScoreArgs { agent, new_score },
+        )?,
+    })
+}
+
+pub fn ix_promote_agent(
+    program_id: Pubkey,
+    protocol_state: Pubkey,
+    keeper: Pubkey,
+    agent_record: Pubkey,
+    agent: Pubkey,
+    new_tier: u8,
+) -> Result<Instruction> {
+    Ok(Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(protocol_state, false),
+            AccountMeta::new_readonly(keeper, true),
+            AccountMeta::new(agent_record, false),
+        ],
+        data: instruction_data("promote_agent", &PromoteAgentArgs { agent, new_tier })?,
+    })
+}
+
+pub fn ix_demote_agent(
+    program_id: Pubkey,
+    protocol_state: Pubkey,
+    keeper: Pubkey,
+    agent_record: Pubkey,
+    agent: Pubkey,
+    new_tier: u8,
+) -> Result<Instruction> {
+    Ok(Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(protocol_state, false),
+            AccountMeta::new_readonly(keeper, true),
+            AccountMeta::new(agent_record, false),
+        ],
+        data: instruction_data("demote_agent", &DemoteAgentArgs { agent, new_tier })?,
     })
 }
 

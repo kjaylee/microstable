@@ -9,16 +9,23 @@ use serde_json::{json, Value};
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 fn unique_temp_path(name: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
     let mut p = std::env::temp_dir();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
-    p.push(format!("microstable_blue_keeper_v2_{name}_{nanos}.json"));
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    p.push(format!(
+        "microstable_blue_keeper_v2_{name}_{nanos}_{seq}_{}.json",
+        std::process::id()
+    ));
     p
 }
 

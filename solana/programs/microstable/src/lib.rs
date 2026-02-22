@@ -8,6 +8,9 @@ use anchor_spl::token::{
 declare_id!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3");
 
 const SCALE: u64 = 1_000_000;
+const CR_TARGET_MIN: u64 = 1_000_000; // 100%
+const CR_TARGET_MAX: u64 = 2_000_000; // 200%
+const FEE_RATE_MAX: u64 = 10_000; // 1%
 const WEIGHT_STEP_LIMIT: u64 = 20_000; // 2%
 const TURNOVER_LIMIT: u64 = 150_000; // 15%
 const ORACLE_STALENESS_MAX: u64 = 120;
@@ -104,6 +107,8 @@ pub mod microstable {
         let protocol = &mut ctx.accounts.protocol_state;
         protocol.weights = [400_000, 300_000, 200_000, 100_000];
         protocol.fee_rate = 2_000; // 0.2%
+        protocol.mint_fee_rate = 2_000; // 0.2%
+        protocol.redeem_fee_rate = 2_000; // 0.2%
         protocol.cr_target = 1_200_000; // 120%
         protocol.total_supply = 0;
         protocol.last_update_slot = slot;
@@ -242,6 +247,8 @@ pub mod microstable {
         let protocol = ProtocolState {
             weights: [400_000, 300_000, 200_000, 100_000],
             fee_rate: 2_000,
+            mint_fee_rate: 2_000,
+            redeem_fee_rate: 2_000,
             cr_target: 1_200_000,
             // FIX PTV2-008: guarded one-shot migration is restricted to pre-launch state.
             total_supply: 0,
@@ -1320,6 +1327,24 @@ pub mod microstable {
         Ok(())
     }
 
+    pub fn update_protocol_params(
+        ctx: Context<UpdateProtocolParams>,
+        new_cr_target: u64,
+        new_mint_fee: u64,
+        new_redeem_fee: u64,
+    ) -> Result<()> {
+        let slot = Clock::get()?.slot;
+        apply_protocol_param_update(
+            &mut ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+            new_cr_target,
+            new_mint_fee,
+            new_redeem_fee,
+            slot,
+        )
+    }
+
     pub fn activate_circuit_breaker(
         ctx: Context<ManageCircuitBreaker>,
         cb_index: u8,
@@ -2030,6 +2055,14 @@ pub struct ClaimStake<'info> {
 }
 
 #[derive(Accounts)]
+pub struct UpdateProtocolParams<'info> {
+    #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct CommitRebalance<'info> {
     #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
@@ -2108,6 +2141,8 @@ pub struct EmergencyShutdown<'info> {
 pub struct ProtocolState {
     pub weights: [u64; 4],
     pub fee_rate: u64,
+    pub mint_fee_rate: u64,
+    pub redeem_fee_rate: u64,
     pub cr_target: u64,
     pub total_supply: u64,
     pub last_update_slot: u64,
@@ -2277,8 +2312,10 @@ pub enum ErrorCode {
     WeightSumInvariant,
     #[msg("Weight exceeds collateral cap")]
     WeightCapExceeded,
-    #[msg("CR target must be > 0")]
+    #[msg("CR target is out of allowed bounds")]
     InvalidCrTarget,
+    #[msg("Fee rate is out of allowed bounds")]
+    InvalidFeeRate,
     #[msg("Oracle input is stale")]
     OracleStale,
     #[msg("Oracle confidence too high")]
@@ -2761,6 +2798,34 @@ fn require_keeper_quorum(
     let ok_a = keeper_member(protocol, signer_a);
     let ok_b = keeper_member(protocol, signer_b);
     require!(ok_a && ok_b, ErrorCode::KeeperQuorumNotMet);
+    Ok(())
+}
+
+fn apply_protocol_param_update(
+    protocol: &mut ProtocolState,
+    keeper_one: Pubkey,
+    keeper_two: Pubkey,
+    new_cr_target: u64,
+    new_mint_fee: u64,
+    new_redeem_fee: u64,
+    slot: u64,
+) -> Result<()> {
+    require_keeper_quorum(protocol, keeper_one, keeper_two)?;
+    require!(
+        !protocol.emergency_shutdown,
+        ErrorCode::EmergencyShutdownActive
+    );
+    require!(
+        (CR_TARGET_MIN..=CR_TARGET_MAX).contains(&new_cr_target),
+        ErrorCode::InvalidCrTarget
+    );
+    require!(new_mint_fee <= FEE_RATE_MAX, ErrorCode::InvalidFeeRate);
+    require!(new_redeem_fee <= FEE_RATE_MAX, ErrorCode::InvalidFeeRate);
+
+    protocol.cr_target = new_cr_target;
+    protocol.mint_fee_rate = new_mint_fee;
+    protocol.redeem_fee_rate = new_redeem_fee;
+    protocol.last_update_slot = slot;
     Ok(())
 }
 
@@ -3253,6 +3318,8 @@ mod tests {
         ProtocolState {
             weights: [400_000, 300_000, 200_000, 100_000],
             fee_rate: 2_000,
+            mint_fee_rate: 2_000,
+            redeem_fee_rate: 2_000,
             cr_target: 1_200_000,
             total_supply: 0,
             last_update_slot: 0,
@@ -3410,5 +3477,110 @@ mod tests {
             pyth_account,
             &[trusted]
         ));
+    }
+
+    #[test]
+    fn tc_update_protocol_params_1_valid_values_succeeds() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        apply_protocol_param_update(&mut protocol, k1, k2, 1_200_000, 1_000, 1_000, 777).unwrap();
+    }
+
+    #[test]
+    fn tc_update_protocol_params_2_cr_below_min_fails() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, k2, 999_999, 1_000, 1_000, 777),
+            "InvalidCrTarget",
+        );
+    }
+
+    #[test]
+    fn tc_update_protocol_params_3_cr_above_max_fails() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, k2, 2_000_001, 1_000, 1_000, 777),
+            "InvalidCrTarget",
+        );
+    }
+
+    #[test]
+    fn tc_update_protocol_params_4_mint_fee_above_max_fails() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, k2, 1_200_000, 10_001, 1_000, 777),
+            "InvalidFeeRate",
+        );
+    }
+
+    #[test]
+    fn tc_update_protocol_params_5_redeem_fee_above_max_fails() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, k2, 1_200_000, 1_000, 10_001, 777),
+            "InvalidFeeRate",
+        );
+    }
+
+    #[test]
+    fn tc_update_protocol_params_6_emergency_shutdown_fails() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+        protocol.emergency_shutdown = true;
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, k2, 1_200_000, 1_000, 1_000, 777),
+            "EmergencyShutdownActive",
+        );
+    }
+
+    #[test]
+    fn tc_update_protocol_params_7_keeper_quorum_required() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let outsider = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, outsider, 1_200_000, 1_000, 1_000, 777),
+            "KeeperQuorumNotMet",
+        );
+    }
+
+    #[test]
+    fn tc_update_protocol_params_8_updates_all_fields() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        apply_protocol_param_update(&mut protocol, k1, k2, 1_500_000, 900, 700, 999).unwrap();
+
+        assert_eq!(protocol.cr_target, 1_500_000);
+        assert_eq!(protocol.mint_fee_rate, 900);
+        assert_eq!(protocol.redeem_fee_rate, 700);
+        assert_eq!(protocol.last_update_slot, 999);
     }
 }

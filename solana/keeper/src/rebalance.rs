@@ -537,8 +537,8 @@ fn compute_rebalance_targets(
             let new_redeem_fee = (optimized.redeem_fee * WEIGHT_SCALE as f64).round() as u64;
 
             let cr_changed = new_cr != protocol.cr_target;
-            let fee_changed =
-                new_mint_fee != protocol.mint_fee_rate || new_redeem_fee != protocol.redeem_fee_rate;
+            let fee_changed = new_mint_fee != protocol.mint_fee_rate
+                || new_redeem_fee != protocol.redeem_fee_rate;
 
             let pending_params = if cr_changed || fee_changed {
                 Some(ProtocolParamUpdate {
@@ -574,24 +574,67 @@ fn compute_rebalance_targets(
 
 /// Submit CR / fee parameter update on-chain after a successful rebalance.
 fn maybe_submit_protocol_params_update(
-    _rpc: &RpcClient,
-    _secondary_rpc: Option<&RpcClient>,
-    _secondary_mode: utils::SecondaryRpcMode,
-    _cfg: &KeeperConfig,
-    _derived: &DerivedAccounts,
-    _k1: &Keypair,
-    _k2: &Keypair,
-    _protocol: &wire::ProtocolState,
+    rpc: &RpcClient,
+    secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
+    cfg: &KeeperConfig,
+    derived: &DerivedAccounts,
+    k1: &Keypair,
+    k2: &Keypair,
+    protocol: &wire::ProtocolState,
     params: ProtocolParamUpdate,
 ) {
-    // NOTE: on-chain `update_protocol_params` instruction is not yet deployed.
-    // When available, build + submit the ix here.  For now, log the intended update.
-    info!(
-        target_cr = params.target_cr,
-        mint_fee = params.mint_fee,
-        redeem_fee = params.redeem_fee,
-        "protocol param update deferred (on-chain instruction pending)"
-    );
+    if params.target_cr == protocol.cr_target
+        && params.mint_fee == protocol.mint_fee_rate
+        && params.redeem_fee == protocol.redeem_fee_rate
+    {
+        return;
+    }
+
+    let ix = match wire::ix_update_protocol_params(
+        cfg.program_id,
+        derived.protocol_state,
+        k1.pubkey(),
+        k2.pubkey(),
+        wire::UpdateProtocolParamsArgs {
+            new_cr_target: params.target_cr,
+            new_mint_fee: params.mint_fee,
+            new_redeem_fee: params.redeem_fee,
+        },
+    ) {
+        Ok(ix) => ix,
+        Err(err) => {
+            warn!(
+                error = %err,
+                target_cr = params.target_cr,
+                mint_fee = params.mint_fee,
+                redeem_fee = params.redeem_fee,
+                "failed to build update_protocol_params instruction"
+            );
+            return;
+        }
+    };
+
+    match utils::send_instructions(rpc, secondary_rpc, secondary_mode, k1, &[k1, k2], vec![ix]) {
+        Ok(sig) => {
+            info!(
+                signature = %sig,
+                target_cr = params.target_cr,
+                mint_fee = params.mint_fee,
+                redeem_fee = params.redeem_fee,
+                "update_protocol_params sent"
+            );
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                target_cr = params.target_cr,
+                mint_fee = params.mint_fee,
+                redeem_fee = params.redeem_fee,
+                "update_protocol_params submission failed"
+            );
+        }
+    }
 }
 
 fn compute_target_weights(vaults: &[wire::CollateralVault; 4]) -> [u64; 4] {
