@@ -142,8 +142,13 @@ pub fn run_rebalance_cycle(
     let (k1, k2) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
     let mut current_slot = rpc.get_slot()?;
 
-    let (target_weights, pending_params) =
-        compute_rebalance_targets(&vaults, &protocol, &circuit_breaker, memory);
+    let (target_weights, pending_params) = compute_target_weights(
+        &vaults,
+        &protocol,
+        &circuit_breaker,
+        memory,
+        cfg.optimizer_enabled,
+    );
     let deviation_bps = weight_deviation_bps(protocol.weights, target_weights);
 
     outcome.deviation_bps = deviation_bps;
@@ -448,10 +453,18 @@ fn build_protocol_snapshot(
 ) -> optimizer::ProtocolSnapshot {
     let mut current_weights = [0.0f64; 4];
     for (i, w) in protocol.weights.iter().enumerate() {
-        current_weights[i] = *w as f64 / WEIGHT_SCALE as f64;
+        current_weights[i] = (*w as f64 / WEIGHT_SCALE as f64).max(0.0);
     }
 
-    let total_deposits: u128 = vaults.iter().map(|v| v.total_deposits as u128).sum();
+    let weight_sum: f64 = current_weights.iter().sum();
+    if weight_sum > 0.0 {
+        for w in &mut current_weights {
+            *w /= weight_sum;
+        }
+    } else {
+        current_weights = [0.25; 4];
+    }
+
     let total_value: u128 = vaults
         .iter()
         .map(|v| {
@@ -460,6 +473,7 @@ fn build_protocol_snapshot(
                 .saturating_div(WEIGHT_SCALE as u128)
         })
         .sum();
+
     let supply = protocol.total_supply.max(1) as f64;
     let collateral_ratio = total_value as f64 / supply;
 
@@ -476,7 +490,7 @@ fn build_protocol_snapshot(
     optimizer::ProtocolSnapshot {
         peg_price: 1.0,
         collateral_ratio,
-        nav_history: vec![],
+        nav_history: vec![collateral_ratio, collateral_ratio],
         current_weights,
         previous_weights: current_weights,
         oracle_quality_scores: oracle_quality,
@@ -488,27 +502,57 @@ fn build_protocol_snapshot(
 }
 
 /// Convert optimizer f64 weights [0..1] → on-chain PPM [0..1_000_000].
-fn f64_weights_to_ppm(weights: [f64; 4]) -> [u64; 4] {
-    let mut ppm = [0u64; 4];
-    let mut assigned = 0u64;
-    for i in 0..3 {
-        let w = (weights[i] * WEIGHT_SCALE as f64).round() as u64;
-        ppm[i] = w.min(WEIGHT_SCALE);
-        assigned = assigned.saturating_add(ppm[i]);
+fn f64_weights_to_ppm(weights: [f64; 4]) -> [u32; 4] {
+    let mut sanitized = [0.0f64; 4];
+    for i in 0..4 {
+        sanitized[i] = if weights[i].is_finite() {
+            weights[i].max(0.0)
+        } else {
+            0.0
+        };
     }
-    ppm[3] = WEIGHT_SCALE.saturating_sub(assigned);
-    ppm
+
+    let sum: f64 = sanitized.iter().sum();
+    if sum <= 0.0 {
+        return [250_000, 250_000, 250_000, 250_000];
+    }
+
+    let mut base = [0u32; 4];
+    let mut remainders = [(0usize, 0.0f64); 4];
+    let mut assigned = 0u64;
+
+    for i in 0..4 {
+        let scaled = sanitized[i] / sum * WEIGHT_SCALE as f64;
+        let floored = scaled.floor();
+        base[i] = floored as u32;
+        remainders[i] = (i, scaled - floored);
+        assigned = assigned.saturating_add(base[i] as u64);
+    }
+
+    let mut remaining = WEIGHT_SCALE.saturating_sub(assigned);
+    remainders.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut cursor = 0usize;
+    while remaining > 0 {
+        let idx = remainders[cursor % 4].0;
+        base[idx] = base[idx].saturating_add(1);
+        remaining -= 1;
+        cursor += 1;
+    }
+
+    base
 }
 
 /// Decide target weights (and optional CR/fee update) — optimizer path or static fallback.
-fn compute_rebalance_targets(
+fn compute_target_weights(
     vaults: &[wire::CollateralVault; 4],
     protocol: &wire::ProtocolState,
     circuit_breaker: &wire::CircuitBreakerState,
     memory: &mut RebalanceMemory,
+    optimizer_enabled: bool,
 ) -> ([u64; 4], Option<ProtocolParamUpdate>) {
-    if !circuit_breaker.optimizer_enabled {
-        return (compute_target_weights(vaults), None);
+    if !(optimizer_enabled && circuit_breaker.optimizer_enabled) {
+        return (compute_static_target_weights(vaults), None);
     }
 
     let snapshot = build_protocol_snapshot(vaults, protocol);
@@ -530,7 +574,8 @@ fn compute_rebalance_targets(
 
     match optimizer::optimize_step(&snapshot, &current_params, adam, bounds, checkpoint) {
         Ok(optimized) => {
-            let target_weights = f64_weights_to_ppm(optimized.weights);
+            let target_weights_ppm = f64_weights_to_ppm(optimized.weights);
+            let target_weights = target_weights_ppm.map(|value| value as u64);
 
             let new_cr = (optimized.target_cr * WEIGHT_SCALE as f64).round() as u64;
             let new_mint_fee = (optimized.mint_fee * WEIGHT_SCALE as f64).round() as u64;
@@ -567,7 +612,7 @@ fn compute_rebalance_targets(
                 error = %err,
                 "optimizer failed, falling back to static weights"
             );
-            (compute_target_weights(vaults), None)
+            (compute_static_target_weights(vaults), None)
         }
     }
 }
@@ -637,7 +682,7 @@ fn maybe_submit_protocol_params_update(
     }
 }
 
-fn compute_target_weights(vaults: &[wire::CollateralVault; 4]) -> [u64; 4] {
+fn compute_static_target_weights(vaults: &[wire::CollateralVault; 4]) -> [u64; 4] {
     let mut collateral_values = [0u128; 4];
     for (i, vault) in vaults.iter().enumerate() {
         let value = (vault.total_deposits as u128)
@@ -801,4 +846,182 @@ fn compute_rebalance_commit(
         &reveal_salt,
     ])
     .to_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solana_sdk::pubkey::Pubkey;
+
+    fn mock_protocol(weights: [u64; 4]) -> wire::ProtocolState {
+        wire::ProtocolState {
+            weights,
+            fee_rate: 2_000,
+            mint_fee_rate: 2_000,
+            redeem_fee_rate: 2_000,
+            cr_target: 1_200_000,
+            total_supply: 1_000_000,
+            last_update_slot: 0,
+            keeper_set: [
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+            ],
+            emergency_shutdown: false,
+            pending_rebalance_commit: [0u8; 32],
+            pending_rebalance_slot: 0,
+            pending_rebalance_expiry: 0,
+            bump: 255,
+        }
+    }
+
+    fn mock_circuit(optimizer_enabled: bool) -> wire::CircuitBreakerState {
+        wire::CircuitBreakerState {
+            status: [0; 4],
+            activation_tick: [0; 4],
+            trigger_count: [0; 4],
+            cooldown_until: [0; 4],
+            last_trigger_tick: [0; 4],
+            recent_trigger_count: [0; 4],
+            recovery_tick: [0; 4],
+            cb1_collateral_index: 0,
+            mint_rate_limit: 0,
+            optimizer_enabled,
+            learning_rate_scale: 1_000_000,
+            max_activation_duration: 0,
+            bump: 255,
+        }
+    }
+
+    fn mock_vault(index: u8, deposits: u64, price: u64, confidence: u64) -> wire::CollateralVault {
+        wire::CollateralVault {
+            index,
+            mint: Pubkey::new_unique(),
+            vault: Pubkey::new_unique(),
+            oracle: Pubkey::new_unique(),
+            risk_score: 100_000,
+            weight_cap: 900_000,
+            base_weight_cap: 900_000,
+            price,
+            confidence,
+            last_oracle_slot: 0,
+            total_deposits: deposits,
+            bump: 255,
+            pyth_price_feed: Pubkey::new_unique(),
+        }
+    }
+
+    fn mock_vaults() -> [wire::CollateralVault; 4] {
+        [
+            mock_vault(0, 1_000_000, 1_000_000, 1_000),
+            mock_vault(1, 2_000_000, 1_000_000, 2_000),
+            mock_vault(2, 1_000_000, 2_000_000, 500),
+            mock_vault(3, 500_000, 1_000_000, 1_500),
+        ]
+    }
+
+    #[test]
+    fn tc_ow_01_build_protocol_snapshot_from_mock_data() {
+        let protocol = mock_protocol([400_000, 300_000, 200_000, 100_000]);
+        let vaults = mock_vaults();
+
+        let snapshot = build_protocol_snapshot(&vaults, &protocol);
+
+        snapshot.validate().expect("snapshot should be valid");
+        let expected = [0.4, 0.3, 0.2, 0.1];
+        for (idx, expected_w) in expected.iter().enumerate() {
+            assert!((snapshot.current_weights[idx] - expected_w).abs() < 1e-9);
+            assert!((snapshot.previous_weights[idx] - expected_w).abs() < 1e-9);
+        }
+        assert!((snapshot.collateral_ratio - 5.5).abs() < 1e-9);
+        assert!((snapshot.target_cr - 1.2).abs() < 1e-9);
+        assert!((snapshot.mint_fee - 0.002).abs() < 1e-9);
+        assert!((snapshot.redeem_fee - 0.002).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tc_ow_02_f64_weights_to_ppm_sum_is_one_million() {
+        let out = f64_weights_to_ppm([0.1, 0.2, 0.3, 0.4]);
+        let sum: u64 = out.iter().map(|x| *x as u64).sum();
+        assert_eq!(sum, WEIGHT_SCALE);
+        assert_eq!(out, [100_000, 200_000, 300_000, 400_000]);
+    }
+
+    #[test]
+    fn tc_ow_03_f64_weights_to_ppm_edge_cases() {
+        assert_eq!(
+            f64_weights_to_ppm([1.0, 0.0, 0.0, 0.0]),
+            [1_000_000, 0, 0, 0]
+        );
+
+        let out = f64_weights_to_ppm([0.0, 0.0, 0.5, 0.5]);
+        assert_eq!(out[0], 0);
+        assert_eq!(out[1], 0);
+        let sum: u64 = out.iter().map(|x| *x as u64).sum();
+        assert_eq!(sum, WEIGHT_SCALE);
+    }
+
+    #[test]
+    fn tc_ow_04_compute_target_weights_optimizer_disabled_uses_static_formula() {
+        let protocol = mock_protocol([700_000, 100_000, 100_000, 100_000]);
+        let vaults = mock_vaults();
+        let circuit = mock_circuit(true);
+        let mut memory = RebalanceMemory::default();
+
+        let expected = compute_static_target_weights(&vaults);
+        let (target, pending_params) =
+            compute_target_weights(&vaults, &protocol, &circuit, &mut memory, false);
+
+        assert_eq!(target, expected);
+        assert!(pending_params.is_none());
+        assert!(memory.optimizer_checkpoint.is_none());
+    }
+
+    #[test]
+    fn tc_ow_05_compute_target_weights_optimizer_enabled_calls_optimizer() {
+        let protocol = mock_protocol([900_000, 100_000, 0, 0]);
+        let vaults = mock_vaults();
+        let circuit = mock_circuit(true);
+        let mut memory = RebalanceMemory {
+            adam_optimizer: Some(AdamOptimizer {
+                learning_rate: 0.5,
+                warmup_steps: 0,
+                decay_steps: 0,
+                min_learning_rate: 0.5,
+                ..AdamOptimizer::default()
+            }),
+            ..RebalanceMemory::default()
+        };
+
+        let expected_static = compute_static_target_weights(&vaults);
+        let (target, _pending_params) =
+            compute_target_weights(&vaults, &protocol, &circuit, &mut memory, true);
+
+        assert!(memory.optimizer_checkpoint.is_some());
+        assert_ne!(
+            target, expected_static,
+            "optimizer path should differ from static"
+        );
+    }
+
+    #[test]
+    fn tc_ow_06_optimizer_failure_falls_back_to_static_formula() {
+        let protocol = mock_protocol([900_000, 100_000, 0, 0]);
+        let vaults = mock_vaults();
+        let circuit = mock_circuit(true);
+        let mut memory = RebalanceMemory {
+            safety_bounds: Some(SafetyBounds {
+                weight_caps: [0.2, 0.2, 0.2, 0.2],
+                ..SafetyBounds::default()
+            }),
+            ..RebalanceMemory::default()
+        };
+
+        let expected_static = compute_static_target_weights(&vaults);
+        let (target, pending_params) =
+            compute_target_weights(&vaults, &protocol, &circuit, &mut memory, true);
+
+        assert_eq!(target, expected_static);
+        assert!(pending_params.is_none());
+    }
 }

@@ -19,6 +19,11 @@ const DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS: u64 = 120;
 const DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS: u64 = 600;
 const DEFAULT_WATCHDOG_HISTORY_LIMIT: usize = 64;
 const DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 5;
+const DEFAULT_OPTIMIZER_ENABLED: bool = true;
+const DEFAULT_AIG_ENABLED: bool = false;
+const DEFAULT_TOURNAMENT_ENABLED: bool = false;
+const DEFAULT_AIG_INTERVAL_SECS: u64 = 3_600;
+const DEFAULT_TOURNAMENT_INTERVAL_SECS: u64 = 86_400;
 
 const MAX_WATCHDOG_HISTORY_LIMIT: usize = 4_096;
 const MIN_TICK_INTERVAL_SECS: u64 = 5;
@@ -53,6 +58,11 @@ pub struct KeeperConfig {
     pub auto_emergency_shutdown: bool,
     pub send_watchdog_alert_tx: bool,
     pub execute_rebalance_immediately: bool,
+    pub optimizer_enabled: bool,
+    pub aig_enabled: bool,
+    pub tournament_enabled: bool,
+    pub aig_interval_secs: u64,
+    pub tournament_interval_secs: u64,
     pub watchdog_supply_spike_bps: u64,
     pub watchdog_cr_drop_bps: u64,
     pub watchdog_oracle_stale_slots: u64,
@@ -90,6 +100,11 @@ struct KeeperConfigFile {
     auto_emergency_shutdown: bool,
     send_watchdog_alert_tx: bool,
     execute_rebalance_immediately: bool,
+    optimizer_enabled: Option<bool>,
+    aig_enabled: Option<bool>,
+    tournament_enabled: Option<bool>,
+    aig_interval_secs: Option<u64>,
+    tournament_interval_secs: Option<u64>,
     watchdog_supply_spike_bps: u64,
     watchdog_cr_drop_bps: u64,
     watchdog_oracle_stale_slots: Option<u64>,
@@ -172,6 +187,11 @@ impl KeeperConfig {
             auto_emergency_shutdown: false,
             send_watchdog_alert_tx: false,
             execute_rebalance_immediately: false,
+            optimizer_enabled: DEFAULT_OPTIMIZER_ENABLED,
+            aig_enabled: DEFAULT_AIG_ENABLED,
+            tournament_enabled: DEFAULT_TOURNAMENT_ENABLED,
+            aig_interval_secs: DEFAULT_AIG_INTERVAL_SECS,
+            tournament_interval_secs: DEFAULT_TOURNAMENT_INTERVAL_SECS,
             watchdog_supply_spike_bps: 2_500,
             watchdog_cr_drop_bps: 1_500,
             watchdog_oracle_stale_slots: DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS,
@@ -231,6 +251,15 @@ impl KeeperConfig {
             auto_emergency_shutdown: file.auto_emergency_shutdown,
             send_watchdog_alert_tx: file.send_watchdog_alert_tx,
             execute_rebalance_immediately: file.execute_rebalance_immediately,
+            optimizer_enabled: file.optimizer_enabled.unwrap_or(DEFAULT_OPTIMIZER_ENABLED),
+            aig_enabled: file.aig_enabled.unwrap_or(DEFAULT_AIG_ENABLED),
+            tournament_enabled: file
+                .tournament_enabled
+                .unwrap_or(DEFAULT_TOURNAMENT_ENABLED),
+            aig_interval_secs: file.aig_interval_secs.unwrap_or(DEFAULT_AIG_INTERVAL_SECS),
+            tournament_interval_secs: file
+                .tournament_interval_secs
+                .unwrap_or(DEFAULT_TOURNAMENT_INTERVAL_SECS),
             watchdog_supply_spike_bps: file.watchdog_supply_spike_bps,
             watchdog_cr_drop_bps: file.watchdog_cr_drop_bps,
             watchdog_oracle_stale_slots: file
@@ -441,6 +470,11 @@ impl KeeperConfig {
             auto_emergency_shutdown: self.auto_emergency_shutdown,
             send_watchdog_alert_tx: self.send_watchdog_alert_tx,
             execute_rebalance_immediately: self.execute_rebalance_immediately,
+            optimizer_enabled: Some(self.optimizer_enabled),
+            aig_enabled: Some(self.aig_enabled),
+            tournament_enabled: Some(self.tournament_enabled),
+            aig_interval_secs: Some(self.aig_interval_secs),
+            tournament_interval_secs: Some(self.tournament_interval_secs),
             watchdog_supply_spike_bps: self.watchdog_supply_spike_bps,
             watchdog_cr_drop_bps: self.watchdog_cr_drop_bps,
             watchdog_oracle_stale_slots: Some(self.watchdog_oracle_stale_slots),

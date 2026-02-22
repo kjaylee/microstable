@@ -43,6 +43,7 @@
   "auto_emergency_shutdown": false,
   "send_watchdog_alert_tx": false,
   "execute_rebalance_immediately": false,
+  "optimizer_enabled": true,
   "watchdog_supply_spike_bps": 2500,
   "watchdog_cr_drop_bps": 1500,
   "watchdog_oracle_stale_slots": 120,
