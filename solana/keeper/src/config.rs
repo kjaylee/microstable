@@ -10,6 +10,14 @@ use std::{
 pub const DEFAULT_CONFIG_PATH: &str = "keeper/config.devnet.json";
 const DEFAULT_PROGRAM_ID: &str = "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3";
 
+const DEFAULT_ORACLE_PUBLISH_MAX_AGE_SECS: u64 = 60;
+const DEFAULT_ORACLE_CONFIDENCE_MAX_BPS: u64 = 500;
+const DEFAULT_EMERGENCY_COLLATERAL_RATIO_BPS: u64 = 10_000;
+const DEFAULT_COMMIT_REVEAL_DELAY_SLOTS: u64 = 5;
+const DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS: u64 = 120;
+const DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS: u64 = 600;
+const DEFAULT_WATCHDOG_HISTORY_LIMIT: usize = 64;
+
 #[derive(Debug, Clone)]
 pub struct KeeperConfig {
     pub rpc_url: String,
@@ -18,15 +26,22 @@ pub struct KeeperConfig {
     pub pyth_feeds: Vec<PythFeedConfig>,
     pub tick_interval_secs: u64,
     pub oracle_max_age_secs: u64,
+    pub oracle_publish_max_age_secs: u64,
+    pub oracle_confidence_max_bps: u64,
     pub min_collateral_ratio_bps: u64,
+    pub emergency_collateral_ratio_bps: u64,
     pub rebalance_deviation_bps: u64,
     pub max_rebalance_slippage_bps: u64,
     pub commit_valid_for_slots: u64,
+    pub commit_reveal_delay_slots: u64,
     pub auto_emergency_shutdown: bool,
     pub send_watchdog_alert_tx: bool,
     pub execute_rebalance_immediately: bool,
     pub watchdog_supply_spike_bps: u64,
     pub watchdog_cr_drop_bps: u64,
+    pub watchdog_oracle_stale_slots: u64,
+    pub watchdog_weight_shift_bps: u64,
+    pub watchdog_history_limit: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -45,15 +60,22 @@ struct KeeperConfigFile {
     pyth_feeds: Vec<PythFeedFile>,
     tick_interval_secs: u64,
     oracle_max_age_secs: u64,
+    oracle_publish_max_age_secs: Option<u64>,
+    oracle_confidence_max_bps: Option<u64>,
     min_collateral_ratio_bps: u64,
+    emergency_collateral_ratio_bps: Option<u64>,
     rebalance_deviation_bps: u64,
     max_rebalance_slippage_bps: u64,
     commit_valid_for_slots: u64,
+    commit_reveal_delay_slots: Option<u64>,
     auto_emergency_shutdown: bool,
     send_watchdog_alert_tx: bool,
     execute_rebalance_immediately: bool,
     watchdog_supply_spike_bps: u64,
     watchdog_cr_drop_bps: u64,
+    watchdog_oracle_stale_slots: Option<u64>,
+    watchdog_weight_shift_bps: Option<u64>,
+    watchdog_history_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,8 +113,8 @@ impl KeeperConfig {
             rpc_url: "https://api.devnet.solana.com".to_string(),
             program_id: Pubkey::from_str(DEFAULT_PROGRAM_ID).expect("valid program id"),
             keeper_keypairs: vec![
-                PathBuf::from("~/.config/solana/id.json"),
-                PathBuf::from("~/.config/solana/keeper2.json"),
+                PathBuf::from("~/.config/solana/devnet-keypair.json"),
+                PathBuf::from("~/.config/solana/devnet-deploy.json"),
             ],
             pyth_feeds: vec![
                 PythFeedConfig {
@@ -119,15 +141,22 @@ impl KeeperConfig {
             ],
             tick_interval_secs: 30,
             oracle_max_age_secs: 120,
+            oracle_publish_max_age_secs: DEFAULT_ORACLE_PUBLISH_MAX_AGE_SECS,
+            oracle_confidence_max_bps: DEFAULT_ORACLE_CONFIDENCE_MAX_BPS,
             min_collateral_ratio_bps: 10_500,
+            emergency_collateral_ratio_bps: DEFAULT_EMERGENCY_COLLATERAL_RATIO_BPS,
             rebalance_deviation_bps: 300,
             max_rebalance_slippage_bps: 200,
             commit_valid_for_slots: 200,
+            commit_reveal_delay_slots: DEFAULT_COMMIT_REVEAL_DELAY_SLOTS,
             auto_emergency_shutdown: false,
             send_watchdog_alert_tx: false,
             execute_rebalance_immediately: false,
             watchdog_supply_spike_bps: 2_500,
             watchdog_cr_drop_bps: 1_500,
+            watchdog_oracle_stale_slots: DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS,
+            watchdog_weight_shift_bps: DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS,
+            watchdog_history_limit: DEFAULT_WATCHDOG_HISTORY_LIMIT,
         }
     }
 
@@ -158,15 +187,36 @@ impl KeeperConfig {
             pyth_feeds,
             tick_interval_secs: file.tick_interval_secs,
             oracle_max_age_secs: file.oracle_max_age_secs,
+            oracle_publish_max_age_secs: file
+                .oracle_publish_max_age_secs
+                .unwrap_or(DEFAULT_ORACLE_PUBLISH_MAX_AGE_SECS),
+            oracle_confidence_max_bps: file
+                .oracle_confidence_max_bps
+                .unwrap_or(DEFAULT_ORACLE_CONFIDENCE_MAX_BPS),
             min_collateral_ratio_bps: file.min_collateral_ratio_bps,
+            emergency_collateral_ratio_bps: file
+                .emergency_collateral_ratio_bps
+                .unwrap_or(DEFAULT_EMERGENCY_COLLATERAL_RATIO_BPS),
             rebalance_deviation_bps: file.rebalance_deviation_bps,
             max_rebalance_slippage_bps: file.max_rebalance_slippage_bps,
             commit_valid_for_slots: file.commit_valid_for_slots,
+            commit_reveal_delay_slots: file
+                .commit_reveal_delay_slots
+                .unwrap_or(DEFAULT_COMMIT_REVEAL_DELAY_SLOTS),
             auto_emergency_shutdown: file.auto_emergency_shutdown,
             send_watchdog_alert_tx: file.send_watchdog_alert_tx,
             execute_rebalance_immediately: file.execute_rebalance_immediately,
             watchdog_supply_spike_bps: file.watchdog_supply_spike_bps,
             watchdog_cr_drop_bps: file.watchdog_cr_drop_bps,
+            watchdog_oracle_stale_slots: file
+                .watchdog_oracle_stale_slots
+                .unwrap_or(DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS),
+            watchdog_weight_shift_bps: file
+                .watchdog_weight_shift_bps
+                .unwrap_or(DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS),
+            watchdog_history_limit: file
+                .watchdog_history_limit
+                .unwrap_or(DEFAULT_WATCHDOG_HISTORY_LIMIT),
         })
     }
 
@@ -191,15 +241,22 @@ impl KeeperConfig {
                 .collect(),
             tick_interval_secs: self.tick_interval_secs,
             oracle_max_age_secs: self.oracle_max_age_secs,
+            oracle_publish_max_age_secs: Some(self.oracle_publish_max_age_secs),
+            oracle_confidence_max_bps: Some(self.oracle_confidence_max_bps),
             min_collateral_ratio_bps: self.min_collateral_ratio_bps,
+            emergency_collateral_ratio_bps: Some(self.emergency_collateral_ratio_bps),
             rebalance_deviation_bps: self.rebalance_deviation_bps,
             max_rebalance_slippage_bps: self.max_rebalance_slippage_bps,
             commit_valid_for_slots: self.commit_valid_for_slots,
+            commit_reveal_delay_slots: Some(self.commit_reveal_delay_slots),
             auto_emergency_shutdown: self.auto_emergency_shutdown,
             send_watchdog_alert_tx: self.send_watchdog_alert_tx,
             execute_rebalance_immediately: self.execute_rebalance_immediately,
             watchdog_supply_spike_bps: self.watchdog_supply_spike_bps,
             watchdog_cr_drop_bps: self.watchdog_cr_drop_bps,
+            watchdog_oracle_stale_slots: Some(self.watchdog_oracle_stale_slots),
+            watchdog_weight_shift_bps: Some(self.watchdog_weight_shift_bps),
+            watchdog_history_limit: Some(self.watchdog_history_limit),
         }
     }
 }

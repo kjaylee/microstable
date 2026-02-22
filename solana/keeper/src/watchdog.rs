@@ -15,10 +15,20 @@ use tracing::warn;
 const WEIGHT_SCALE: u64 = 1_000_000;
 const MEMO_PROGRAM_ID: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
+#[derive(Debug, Clone)]
+pub struct AnomalyEvent {
+    pub slot: u64,
+    pub message: String,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct WatchdogMemory {
     pub last_total_supply: Option<u64>,
     pub last_global_cr_bps: Option<u64>,
+    pub last_protocol_update_slot: Option<u64>,
+    pub last_weights: Option<[u64; 4]>,
+    pub last_emergency_shutdown: Option<bool>,
+    pub history: Vec<AnomalyEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +53,7 @@ pub fn run_watchdog_cycle(
         utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
     ];
 
+    let current_slot = rpc.get_slot()?;
     let mut anomalies = Vec::new();
 
     let weight_sum: u64 = protocol.weights.iter().sum();
@@ -50,6 +61,14 @@ pub fn run_watchdog_cycle(
         anomalies.push(format!(
             "weight sum invariant violated: sum={}, expected≈{}",
             weight_sum, WEIGHT_SCALE
+        ));
+    }
+
+    let oracle_stale_slots = current_slot.saturating_sub(protocol.last_update_slot);
+    if oracle_stale_slots > cfg.watchdog_oracle_stale_slots {
+        anomalies.push(format!(
+            "oracle updates are stale: last_update_slot={}, current_slot={}, lag={} slots",
+            protocol.last_update_slot, current_slot, oracle_stale_slots
         ));
     }
 
@@ -83,15 +102,74 @@ pub fn run_watchdog_cycle(
         }
     }
 
+    if let Some(prev_weights) = memory.last_weights {
+        let shift_bps = weight_shift_bps(prev_weights, protocol.weights);
+        if shift_bps >= cfg.watchdog_weight_shift_bps {
+            anomalies.push(format!(
+                "large weight shift detected: {:?} -> {:?} ({} bps)",
+                prev_weights, protocol.weights, shift_bps
+            ));
+        }
+    }
+
+    if let Some(prev_shutdown) = memory.last_emergency_shutdown {
+        if prev_shutdown != protocol.emergency_shutdown {
+            anomalies.push(format!(
+                "emergency shutdown state changed: {} -> {}",
+                prev_shutdown, protocol.emergency_shutdown
+            ));
+        }
+    }
+
+    if let Some(prev_update_slot) = memory.last_protocol_update_slot {
+        if prev_update_slot == protocol.last_update_slot
+            && oracle_stale_slots > cfg.watchdog_oracle_stale_slots
+        {
+            anomalies.push(format!(
+                "protocol update slot unchanged across cycles while stale: {}",
+                protocol.last_update_slot
+            ));
+        }
+    }
+
+    if !anomalies.is_empty() {
+        for message in &anomalies {
+            memory.history.push(AnomalyEvent {
+                slot: current_slot,
+                message: message.clone(),
+            });
+        }
+
+        if memory.history.len() > cfg.watchdog_history_limit {
+            let overflow = memory
+                .history
+                .len()
+                .saturating_sub(cfg.watchdog_history_limit);
+            memory.history.drain(0..overflow);
+        }
+    }
+
     memory.last_total_supply = Some(protocol.total_supply);
     memory.last_global_cr_bps = Some(global_cr_bps);
+    memory.last_protocol_update_slot = Some(protocol.last_update_slot);
+    memory.last_weights = Some(protocol.weights);
+    memory.last_emergency_shutdown = Some(protocol.emergency_shutdown);
 
     let alert_signature = if !anomalies.is_empty() && cfg.send_watchdog_alert_tx {
+        let recent_history: Vec<_> = memory
+            .history
+            .iter()
+            .rev()
+            .take(8)
+            .map(|e| serde_json::json!({ "slot": e.slot, "message": e.message }))
+            .collect();
+
         let payload = serde_json::json!({
             "kind": "watchdog_alert",
             "program_id": cfg.program_id.to_string(),
+            "slot": current_slot,
             "anomalies": anomalies,
-            "slot": rpc.get_slot()?,
+            "recent_history": recent_history,
         })
         .to_string();
 
@@ -122,7 +200,11 @@ fn total_collateral_ratio_bps(
 
     let total_value: u128 = vaults
         .iter()
-        .map(|v| (v.total_deposits as u128).saturating_mul(v.price as u128))
+        .map(|v| {
+            (v.total_deposits as u128)
+                .saturating_mul(v.price as u128)
+                .saturating_div(WEIGHT_SCALE as u128)
+        })
         .sum();
 
     ((total_value.saturating_mul(10_000)) / protocol.total_supply as u128) as u64
@@ -134,6 +216,13 @@ fn relative_change_bps(prev: u64, current: u64) -> u64 {
     }
     let delta = prev.abs_diff(current) as u128;
     ((delta.saturating_mul(10_000)) / prev as u128) as u64
+}
+
+fn weight_shift_bps(prev: [u64; 4], current: [u64; 4]) -> u64 {
+    let l1 = (0..4)
+        .map(|i| prev[i].abs_diff(current[i]) as u128)
+        .sum::<u128>();
+    ((l1.saturating_mul(10_000)) / WEIGHT_SCALE as u128) as u64
 }
 
 fn build_memo_instruction(signer: Pubkey, memo: Vec<u8>) -> Result<Instruction> {

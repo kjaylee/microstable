@@ -2,8 +2,8 @@
   "rpc_url": "https://api.devnet.solana.com",
   "program_id": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
   "keeper_keypairs": [
-    "~/.config/solana/id.json",
-    "~/.config/solana/keeper2.json"
+    "~/.config/solana/devnet-keypair.json",
+    "~/.config/solana/devnet-deploy.json"
   ],
   "pyth_feeds": [
     {
@@ -27,13 +27,20 @@
   ],
   "tick_interval_secs": 30,
   "oracle_max_age_secs": 120,
+  "oracle_publish_max_age_secs": 60,
+  "oracle_confidence_max_bps": 500,
   "min_collateral_ratio_bps": 10500,
+  "emergency_collateral_ratio_bps": 10000,
   "rebalance_deviation_bps": 300,
   "max_rebalance_slippage_bps": 200,
   "commit_valid_for_slots": 200,
+  "commit_reveal_delay_slots": 5,
   "auto_emergency_shutdown": false,
   "send_watchdog_alert_tx": false,
   "execute_rebalance_immediately": false,
   "watchdog_supply_spike_bps": 2500,
-  "watchdog_cr_drop_bps": 1500
+  "watchdog_cr_drop_bps": 1500,
+  "watchdog_oracle_stale_slots": 120,
+  "watchdog_weight_shift_bps": 600,
+  "watchdog_history_limit": 64
 }
