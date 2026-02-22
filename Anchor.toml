@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-microstable = "C4eAvHBdnjub8A2eCsbbVsFk2rmsVzJdeqHPAoDfazyK"
+microstable = "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"
 
 [programs.devnet]
-microstable = "C4eAvHBdnjub8A2eCsbbVsFk2rmsVzJdeqHPAoDfazyK"
+microstable = "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"
 
 [registry]
 url = "https://api.apr.dev"

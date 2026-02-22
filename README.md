@@ -38,9 +38,53 @@ Inspired by two minimalist traditions:
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 1 | 🔵 In Progress | Pure Python simulation (`microstable.py`, ≤500 lines, zero dependencies) |
-| Phase 2 | ⬜ Planned | Rust/Anchor → Solana devnet |
+| Phase 1 | ✅ Complete | Pure Python simulation (`microstable.py`) and scenario checks |
+| Phase 2 (M6) | 🟡 Local-validated | Anchor program deployed and exercised on local validator (devnet faucet blocked) |
 | Phase 3 | ⬜ Planned | Agent interfaces + autonomous operation |
+
+## M6 Deployment Result
+
+- **Deployment target:** `localnet` (fallback from devnet due repeated faucet 429 rate limits)
+- **Program ID:** `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
+- **Upgrade authority:** `3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk`
+- **Program deploy tx signatures:**
+  - `3DLpWHrMihE1crsWM5PHmFDSM5MfEkpX5wDqQpgoVV92zsmgeAXZLhLhC8Qngaq6ovLjFQNuFBzsVKkEs78bvGtU`
+  - `3Bgg62meM3otQnVFe6xiwi6A9FFASz9LRuTnfDymzBkuqGc2Mjb3hHur2k9Ys7t2bnGKjQ4GnZ9omWWCrnE7ktkb`
+- **Initialize tx signature:**
+  - `2LGAitxLffMVbLP2cSHNaEusaS6MQmCnKbVkT9ot9kkYpetTtry6men9mRwCeHSYhbudmzqxwMCw9bdmbBqqrAMM`
+
+### Test Status (localnet)
+
+`anchor test --skip-local-validator --skip-deploy --provider.cluster localnet`
+
+- Passing: 5
+- Failing: 2
+  - `mint flow`: `InsufficientCollateralRatio (6012)`
+  - `redeem flow`: `AccountNotInitialized (3012)` (downstream of mint failure)
+
+### Verified On-Chain State
+
+- Program account exists and is executable under `BPFLoaderUpgradeab1e11111111111111111111111`
+- `protocol_state` PDA exists: `9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP`
+- `circuit_breaker` PDA exists: `7xy7xc4nqhywYa72Bb5A2u7g3t6kz96HN2e2z4Yn9WXe`
+- Decoded protocol state confirms keeper, fee params, and weight vector persisted on-chain
+
+## How to Interact (Anchor)
+
+```bash
+cd solana
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$HOME/.cargo/bin:$PATH"
+
+# Local validator flow
+solana-test-validator --reset
+solana config set --url localhost
+anchor deploy --provider.cluster localnet
+anchor test --skip-local-validator --provider.cluster localnet
+
+# Inspect deployed program/account state
+solana program show BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 --url localhost
+anchor account microstable.ProtocolState 9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP --provider.cluster localnet
+```
 
 ## Architecture
 
