@@ -46,9 +46,10 @@ const MAX_REBALANCE_SLIPPAGE_BPS: u64 = 1_500; // 15%
 const BATCH_WINDOW_SLOTS: u64 = 32;
 
 // // BLUE-TEAM: I25 - commit/reveal for large rebalances.
-const LARGE_REBALANCE_THRESHOLD: u64 = 50_000; // 5%
+const LARGE_REBALANCE_THRESHOLD: u64 = 40_000; // 4% (<= 2 * WEIGHT_STEP_LIMIT)
 const COMMIT_REVEAL_DELAY_SLOTS: u64 = 5;
 const COMMIT_REVEAL_MAX_VALIDITY: u64 = 1_000;
+const KEEPER_ROTATION_DELAY_SLOTS: u64 = 100;
 
 #[program]
 pub mod microstable {
@@ -89,6 +90,8 @@ pub mod microstable {
         protocol.pending_rebalance_commit = [0u8; 32];
         protocol.pending_rebalance_slot = 0;
         protocol.pending_rebalance_expiry = 0;
+        protocol.pending_keeper_set = [Pubkey::default(); 3];
+        protocol.pending_keeper_activation_slot = 0;
         protocol.bump = ctx.bumps.protocol_state;
 
         init_vault(
@@ -197,14 +200,12 @@ pub mod microstable {
             ErrorCode::InvalidLegacyAccount
         );
         {
-            let data = ctx
-                .accounts
-                .protocol_state
-                .to_account_info()
+            let info = ctx.accounts.protocol_state.to_account_info();
+            let data = info
                 .try_borrow_data()
                 .map_err(|_| error!(ErrorCode::InvalidLegacyAccount))?;
             // FIX PTV2-007: migration is one-shot; reject reruns on initialized state.
-            if data.len() >= 8 && data[..8] == ProtocolState::DISCRIMINATOR {
+            if data.len() >= 8 && data[..8] == *ProtocolState::DISCRIMINATOR {
                 return err!(ErrorCode::MigrationAlreadyCompleted);
             }
         }
@@ -227,6 +228,8 @@ pub mod microstable {
             pending_rebalance_commit: [0u8; 32],
             pending_rebalance_slot: 0,
             pending_rebalance_expiry: 0,
+            pending_keeper_set: [Pubkey::default(); 3],
+            pending_keeper_activation_slot: 0,
             bump: protocol_bump,
         };
         write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
@@ -459,6 +462,9 @@ pub mod microstable {
 
         // FIX PTV2-003: bind updates to expected feed-id per collateral.
         let expected_feed_id = expected_pyth_feed_id(collateral_index)?;
+        let mut allowed_authorities = Vec::with_capacity(4);
+        allowed_authorities.push(PYTH_TRUSTED_WRITE_AUTHORITY);
+        allowed_authorities.extend_from_slice(&ctx.accounts.protocol_state.keeper_set);
         match collateral_index {
             0 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_usdc,
@@ -466,6 +472,7 @@ pub mod microstable {
                 slot,
                 unix_timestamp,
                 expected_feed_id,
+                &allowed_authorities,
             )?,
             1 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_usdt,
@@ -473,6 +480,7 @@ pub mod microstable {
                 slot,
                 unix_timestamp,
                 expected_feed_id,
+                &allowed_authorities,
             )?,
             2 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_dai,
@@ -480,6 +488,7 @@ pub mod microstable {
                 slot,
                 unix_timestamp,
                 expected_feed_id,
+                &allowed_authorities,
             )?,
             3 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_usds,
@@ -487,6 +496,7 @@ pub mod microstable {
                 slot,
                 unix_timestamp,
                 expected_feed_id,
+                &allowed_authorities,
             )?,
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         }
@@ -1309,6 +1319,15 @@ pub mod microstable {
             ctx.accounts.keeper_one.key(),
             ctx.accounts.keeper_two.key(),
         )?;
+        let circuit = &ctx.accounts.circuit_breaker;
+        require!(
+            circuit
+                .status
+                .iter()
+                .all(|s| *s == BreakerStatus::Inactive as u8),
+            ErrorCode::UnsafeToResume
+        );
+
         let protocol = &mut ctx.accounts.protocol_state;
         protocol.emergency_shutdown = false;
         protocol.last_update_slot = Clock::get()?.slot;
@@ -1323,15 +1342,33 @@ pub mod microstable {
         ctx: Context<EmergencyShutdown>,
         new_keeper_set: [Pubkey; 3],
     ) -> Result<()> {
-        // FIX PTV2-015: keeper rotation path guarded by existing quorum and set validation.
+        // FIX PTV2-015 / PTV3-022: keeper rotation guarded by quorum + timelock.
         require_keeper_quorum(
             &ctx.accounts.protocol_state,
             ctx.accounts.keeper_one.key(),
             ctx.accounts.keeper_two.key(),
         )?;
         validate_keeper_set(&new_keeper_set)?;
-        ctx.accounts.protocol_state.keeper_set = new_keeper_set;
-        ctx.accounts.protocol_state.last_update_slot = Clock::get()?.slot;
+
+        let slot = Clock::get()?.slot;
+        let protocol = &mut ctx.accounts.protocol_state;
+
+        if protocol.pending_keeper_set != new_keeper_set {
+            protocol.pending_keeper_set = new_keeper_set;
+            protocol.pending_keeper_activation_slot = slot.saturating_add(KEEPER_ROTATION_DELAY_SLOTS);
+            protocol.last_update_slot = slot;
+            return Ok(());
+        }
+
+        require!(
+            slot >= protocol.pending_keeper_activation_slot,
+            ErrorCode::KeeperRotationTimelockActive
+        );
+
+        protocol.keeper_set = protocol.pending_keeper_set;
+        protocol.pending_keeper_set = [Pubkey::default(); 3];
+        protocol.pending_keeper_activation_slot = 0;
+        protocol.last_update_slot = slot;
         Ok(())
     }
 }
@@ -1706,11 +1743,14 @@ pub struct ProtocolState {
     pub pending_rebalance_commit: [u8; 32],
     pub pending_rebalance_slot: u64,
     pub pending_rebalance_expiry: u64,
+    /// Pending keeper rotation (timelocked).
+    pub pending_keeper_set: [Pubkey; 3],
+    pub pending_keeper_activation_slot: u64,
     pub bump: u8,
 }
 
 impl ProtocolState {
-    pub const SPACE: usize = 8 + 256;
+    pub const SPACE: usize = 8 + 400;
 }
 
 #[account]
@@ -1839,6 +1879,8 @@ pub enum ErrorCode {
     DuplicateKeeperSigner,
     #[msg("Invalid keeper set")]
     InvalidKeeperSet,
+    #[msg("Keeper rotation timelock active")]
+    KeeperRotationTimelockActive,
     #[msg("Invalid collateral mint binding")]
     InvalidCollateralMint,
     #[msg("Invalid collateral mint decimals")]
@@ -1849,6 +1891,8 @@ pub enum ErrorCode {
     InvalidTokenAccount,
     #[msg("Emergency shutdown is active")]
     EmergencyShutdownActive,
+    #[msg("Unsafe to resume from shutdown")]
+    UnsafeToResume,
     #[msg("Unauthorized initializer")]
     UnauthorizedInitializer,
     #[msg("Amount exceeds hard maximum")]
@@ -2059,6 +2103,7 @@ fn update_vault_oracle_from_pyth(
     current_slot: u64,
     current_timestamp: i64,
     expected_feed_id: [u8; 32],
+    allowed_authorities: &[Pubkey],
 ) -> Result<()> {
     require!(
         vault.pyth_price_feed != Pubkey::default(),
@@ -2071,7 +2116,7 @@ fn update_vault_oracle_from_pyth(
     );
 
     let (price, confidence, observed_slot, publish_time, feed_id) =
-        read_pyth_price_update(pyth_price_account)?;
+        read_pyth_price_update(pyth_price_account, allowed_authorities)?;
 
     // FIX PTV2-003: ensure feed-id matches configured collateral.
     require!(feed_id == expected_feed_id, ErrorCode::InvalidPythFeedId);
@@ -2103,6 +2148,7 @@ fn update_vault_oracle_from_pyth(
 
 fn read_pyth_price_update(
     pyth_price_account: &UncheckedAccount,
+    allowed_authorities: &[Pubkey],
 ) -> Result<(u64, u64, u64, i64, [u8; 32])> {
     let info = pyth_price_account.to_account_info();
     require_keys_eq!(
@@ -2125,10 +2171,11 @@ fn read_pyth_price_update(
         _ => return err!(ErrorCode::PythVerificationLevelTooLow),
     }
 
-    // FIX PTV2-004: enforce trusted write authority on Pyth updates.
-    require_keys_eq!(
-        price_update.write_authority,
-        PYTH_TRUSTED_WRITE_AUTHORITY,
+    // FIX PTV2-004 / PTV3-023: enforce trusted write authority on Pyth updates.
+    require!(
+        allowed_authorities
+            .iter()
+            .any(|k| *k == price_update.write_authority),
         ErrorCode::InvalidPythWriteAuthority
     );
 
