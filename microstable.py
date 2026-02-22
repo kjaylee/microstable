@@ -23,7 +23,7 @@ import random
 import secrets
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 
 # -----------------------------------------------------------------------------
@@ -1271,6 +1271,148 @@ def distribute_fees(total_fee: float) -> Dict[str, float]:
 # -----------------------------------------------------------------------------
 # Economic/security hardening primitives
 # -----------------------------------------------------------------------------
+
+
+class CorrelationAwareRebalancer:
+    """Emergency basket rebalancer that reacts to correlated depeg stress."""
+
+    def __init__(
+        self,
+        *,
+        correlation_threshold: float = 0.70,
+        emergency_cap: float = 0.35,
+        depeg_threshold: float = 0.015,
+    ):
+        self.correlation_threshold = float(correlation_threshold)
+        self.emergency_cap = float(emergency_cap)
+        self.depeg_threshold = float(depeg_threshold)
+
+    def detect_correlated_depeg(self, prices: Sequence[float], correlation: float) -> bool:
+        stressed = sum(1 for p in prices if (1.0 - float(p)) >= self.depeg_threshold)
+        return stressed >= 2 and float(correlation) >= self.correlation_threshold
+
+    @staticmethod
+    def _normalize(weights: Sequence[float]) -> List[float]:
+        vals = [max(0.0, float(w)) for w in weights]
+        s = sum(vals)
+        if s <= EPS:
+            return [1.0 / max(1, len(vals)) for _ in vals]
+        return [v / s for v in vals]
+
+    def emergency_rebalance(self, weights: Sequence[float], prices: Sequence[float], correlation: float) -> List[float]:
+        if len(weights) != len(prices):
+            raise ValueError("weights/prices length mismatch")
+        base = self._normalize(weights)
+        if not self.detect_correlated_depeg(prices, correlation):
+            return base
+
+        # Reduce exposure to deepest depeg assets and distribute residual weight.
+        stress = [max(0.0, 1.0 - float(p)) for p in prices]
+        avg_stress = sum(stress) / max(1, len(stress))
+        adjusted: List[float] = []
+        for w, s in zip(base, stress):
+            pressure = 0.0 if avg_stress <= EPS else min(1.0, s / max(avg_stress, EPS))
+            reduced = w * (1.0 - 0.40 * pressure)
+            adjusted.append(min(self.emergency_cap, max(0.0, reduced)))
+        return self._normalize(adjusted)
+
+
+class DynamicRedemptionFee:
+    """Fee schedule that rises with redemption pressure (0.1%~5.0%)."""
+
+    def __init__(self, min_fee: float = 0.001, max_fee: float = 0.05, kink: float = 0.60):
+        self.min_fee = float(min_fee)
+        self.max_fee = float(max_fee)
+        self.kink = max(0.05, min(0.95, float(kink)))
+
+    def compute_fee(self, redemption_pressure: float) -> float:
+        p = max(0.0, float(redemption_pressure))
+        if p <= self.kink:
+            ratio = p / self.kink
+            fee = self.min_fee + (self.max_fee * 0.35 - self.min_fee) * ratio
+        else:
+            tail = min(1.0, (p - self.kink) / max(EPS, 1.0 - self.kink))
+            fee = self.max_fee * (0.35 + 0.65 * tail)
+        return min(self.max_fee, max(self.min_fee, fee))
+
+
+class CBInteractionGraph:
+    """Tracks breaker dependencies and detects cascading deadlock cycles."""
+
+    def __init__(self):
+        self.dependencies: Dict[int, Set[int]] = {1: {2, 3}, 2: {3}, 3: set(), 4: set()}
+
+    def add_dependency(self, cb_id: int, waits_for: int) -> None:
+        self.dependencies.setdefault(int(cb_id), set()).add(int(waits_for))
+
+    def detect_deadlock(self, active_states: Dict[int, str]) -> bool:
+        waiting = {cb for cb, st in active_states.items() if st == CB_RECOVERY_CHECK}
+        if len(waiting) < 2:
+            return False
+
+        def has_cycle(node: int, stack: Set[int], visited: Set[int]) -> bool:
+            if node in stack:
+                return True
+            if node in visited:
+                return False
+            visited.add(node)
+            stack.add(node)
+            for nxt in self.dependencies.get(node, set()):
+                if nxt in waiting and has_cycle(nxt, stack, visited):
+                    return True
+            stack.remove(node)
+            return False
+
+        seen: Set[int] = set()
+        for cb in waiting:
+            if has_cycle(cb, set(), seen):
+                return True
+        return False
+
+    def escalation_plan(self, active_states: Dict[int, str]) -> List[str]:
+        if not self.detect_deadlock(active_states):
+            return []
+        # Release highest-priority blockers first.
+        plan = []
+        for cb_id in (3, 2, 1):
+            if active_states.get(cb_id) == CB_RECOVERY_CHECK:
+                plan.append(f"force_release_cb{cb_id}")
+        if not plan:
+            plan.append("manual_governance_override")
+        return plan
+
+
+class EconomicFloor:
+    """Treasury-backed minimum reward floor to avoid agent exodus."""
+
+    def __init__(
+        self,
+        treasury_balance: float,
+        *,
+        min_reward_per_agent: float = 8.0,
+        max_treasury_draw_ratio: float = 0.03,
+    ):
+        self.treasury_balance = float(treasury_balance)
+        self.min_reward_per_agent = float(min_reward_per_agent)
+        self.max_treasury_draw_ratio = float(max_treasury_draw_ratio)
+
+    def apply_floor(self, active_agents: int, variable_reward_pool: float) -> Dict[str, float]:
+        agents = max(0, int(active_agents))
+        if agents == 0:
+            return {"per_agent": 0.0, "treasury_used": 0.0, "treasury_remaining": self.treasury_balance}
+
+        variable = max(0.0, float(variable_reward_pool)) / agents
+        shortfall = max(0.0, self.min_reward_per_agent - variable)
+        required = shortfall * agents
+        max_draw = max(0.0, self.treasury_balance * self.max_treasury_draw_ratio)
+        draw = min(required, max_draw, self.treasury_balance)
+        self.treasury_balance -= draw
+        floor_boost = draw / agents
+        return {
+            "per_agent": variable + floor_boost,
+            "treasury_used": draw,
+            "treasury_remaining": self.treasury_balance,
+        }
 
 
 def mul_div_floor(a: int, b: int, d: int) -> int:
