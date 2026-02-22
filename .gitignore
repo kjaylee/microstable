@@ -6,6 +6,7 @@
 keypair.json
 *-keypair.json
 wallet-seed.txt
+wallets/*.json
 
 # Deployment configs with infra details
 deploy.sh

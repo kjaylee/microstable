@@ -1,0 +1,154 @@
+{
+  "cluster": "https://api.devnet.solana.com",
+  "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+  "agents": {
+    "keeper": "5TqUUs13kquowSYJSokyMpwdfargPFDEUYPP2FzaVFYg",
+    "watchdog": "8Ap9d9gsQ7qhvgvEvVcrXMaJaMA12RD9bBFQYTXopd9d",
+    "auditor": "JcCzCzSEzuFrhCVuMp1YSYSFgAUuPEmmvLjbB7ca2Qz"
+  },
+  "transactions": [
+    {
+      "step": "initialize",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "5z7H7HG28cyTSXcuiakfHDEeiszK8ifuKRY6wppeQZwhDQdrp2WBK2YzYd4eJAb9bkf8WVxU2tyQTqeEzxaivQzr"
+    },
+    {
+      "step": "update_oracle_0",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "5LyuybQ3Q4DeCQFb2cqbJnkyXNi7nT3AKixK9zTuPKKPCwTNVbT4zBJsPooNJoTkJczCAWNKhJb3pg7VxghyfWUj"
+    },
+    {
+      "step": "update_oracle_1",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "33hag7gGNa6epMyX3Dv6EAG1ZdEvNjfRaRvnL14MHVt1wBqpSGg9tfdMQoVPfysydTD1ov5GP1b8gMbDF4SsFRkv"
+    },
+    {
+      "step": "update_oracle_2",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "66nzRzVqDuKDkhrAJu94QgtqyRSzyrtUTKiQ1xEpxcnsVFndLGXSMsKTDdCzMJdacuMfuFy5UAMCQ8eW8wtoN8zW"
+    },
+    {
+      "step": "update_oracle_3",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "3TJRq2B7ChZfpD8fG9GNHrY28QoZb1Myuzyx78wFRfv4nRxb9NdLwG7YFxFcqt6wLh4t7SkK1XJ6YY7qF3o3zRQb"
+    },
+    {
+      "step": "mint",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "5SDwJGkFW9wPFRmXQjicotXjPjQSbZGVUD47VCnoRdkSTnHZS7WP7qb7aSY7iyuYsZLdzNPRoxh4VmHrXmKHFtwq"
+    },
+    {
+      "step": "rebalance",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "4xbXAippbKZkFmNL1VJmYgJurVkWqqag8CN2djawtLFsaoErx2qtiaxraaTHRc2WdGnE1sRGfu1uEYT2zWfFgESG"
+    },
+    {
+      "step": "depeg_oracle",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "2VvdehWHERZD9VeKnXkMMF2sp7YwovGisQYh9awrsUHpYXLbXSFR3cudDKcFgZhwKnrruxFdP4if6giDyiJMRbsJ"
+    },
+    {
+      "step": "activate_circuit_breaker",
+      "actor": "watchdog",
+      "status": "error",
+      "error": {
+        "message": "Unauthorized keeper",
+        "logs": [
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]",
+          "Program log: AnchorError thrown in programs/microstable/src/lib.rs:946. Error Code: Unauthorized. Error Number: 6000. Error Message: Unauthorized keeper.",
+          "Program log: Left:",
+          "Program log: 5TqUUs13kquowSYJSokyMpwdfargPFDEUYPP2FzaVFYg",
+          "Program log: Right:",
+          "Program log: 8Ap9d9gsQ7qhvgvEvVcrXMaJaMA12RD9bBFQYTXopd9d",
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 24541 of 200000 compute units",
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1770"
+        ],
+        "code": null
+      }
+    },
+    {
+      "step": "recovery_oracle_0",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "z32shjS85BaBYFgh7H41Sqyrw1T1QP52x3kDKEHrKetAtSMtASJrCQzG32qy7R1KpTcZRpdS3FGKzud93S5nypZ"
+    },
+    {
+      "step": "recovery_oracle_1",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "5nh4bCoJGHRoSzBHBVE6NRgWj66wYN2gJsqdkoGhfSBC6q4RHFHDKeXxNCq6aejSTztk6whJ2pMr9b9yqjvYNt5Y"
+    },
+    {
+      "step": "recovery_oracle_2",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "25uCuS2hgdZABapxCrNpkcZnrK3joeCEbbYq1a6F73Rp9SWhU7roYPiASaU1vNCYZr9Ybps4Ye5JvhWEiemcpC47"
+    },
+    {
+      "step": "recovery_oracle_3",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "3S6aGFcphiF3RFpsbtVHfaWN3ozb8zP69KfXANqUQqw1beK1A6E3LyKJYS4NBGp3M3ShgeRvYCUZJfcs28yYrNFE"
+    },
+    {
+      "step": "recovery_oracle_4",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "5tJv8JCaSzKhDsTW8RaBgaBsyFTJXMEnsb6Z4RYJxSBtx7N28QbgQJ9u3wBTSA8zWjk9xcMuSWR1D9TCpYkHHZDx"
+    },
+    {
+      "step": "recovery_oracle_5",
+      "actor": "keeper",
+      "status": "ok",
+      "signature": "36kN591AuGCNoXXrqUr1jHDcMwgoxbSmtMdqi8Wf7q1FDabVDTqJst8LzWBQHLrFs8vG5paaQGacUTMTSyDeRZsk"
+    },
+    {
+      "step": "recover_circuit_breaker",
+      "actor": "watchdog",
+      "status": "error",
+      "error": {
+        "message": "Unauthorized keeper",
+        "logs": [
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]",
+          "Program log: AnchorError thrown in programs/microstable/src/lib.rs:946. Error Code: Unauthorized. Error Number: 6000. Error Message: Unauthorized keeper.",
+          "Program log: Left:",
+          "Program log: 5TqUUs13kquowSYJSokyMpwdfargPFDEUYPP2FzaVFYg",
+          "Program log: Right:",
+          "Program log: 8Ap9d9gsQ7qhvgvEvVcrXMaJaMA12RD9bBFQYTXopd9d",
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 24539 of 200000 compute units",
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1770"
+        ],
+        "code": null
+      }
+    },
+    {
+      "step": "redeem",
+      "actor": "auditor",
+      "status": "error",
+      "error": {
+        "message": "The program expected this account to be already initialized",
+        "logs": [
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]",
+          "Program log: AnchorError caused by account: user_position. Error Code: AccountNotInitialized. Error Number: 3012. Error Message: The program expected this account to be already initialized.",
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 14349 of 200000 compute units",
+          "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0xbc4"
+        ],
+        "code": null
+      }
+    }
+  ],
+  "generatedAt": "2026-02-22T07:40:46.700Z",
+  "fundingTransactions": {
+    "keeper": "5qhiQLMargC9Wpbrr9R9jZxqEwyKuYrymRjuBzm8nBWeLJhQLmHMNPXj7KNKXChujCS3sTef39vKELSaPL6cv5KG",
+    "watchdog": "2pH3ZiyUL3XfMb5UKtztD6PHrroEEmSLmkmX8H1tVXfrTXWm2oq1wzwYXmybN7yH1L1nvSKSbnXKvTTmY9tNcUvK",
+    "auditor": "2VkW4bmhwyA55SbCCxbyFG7jR8YhLpRncAMLPfwg91iWHRSUCJyyy5aAgyn53k4gn4nVtsu6vaoNUiHU7gWoQLTg"
+  }
+}

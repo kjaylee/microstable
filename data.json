@@ -1,0 +1,132 @@
+{
+  "devnet": {
+    "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+    "agents": {
+      "keeper": "5TqUUs13kquowSYJSokyMpwdfargPFDEUYPP2FzaVFYg",
+      "watchdog": "8Ap9d9gsQ7qhvgvEvVcrXMaJaMA12RD9bBFQYTXopd9d",
+      "auditor": "JcCzCzSEzuFrhCVuMp1YSYSFgAUuPEmmvLjbB7ca2Qz"
+    },
+    "transactions": [
+      {
+        "step": "initialize",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "5z7H7HG28cyTSXcuiakfHDEeiszK8ifuKRY6wppeQZwhDQdrp2WBK2YzYd4eJAb9bkf8WVxU2tyQTqeEzxaivQzr",
+        "error": null
+      },
+      {
+        "step": "update_oracle_0",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "5LyuybQ3Q4DeCQFb2cqbJnkyXNi7nT3AKixK9zTuPKKPCwTNVbT4zBJsPooNJoTkJczCAWNKhJb3pg7VxghyfWUj",
+        "error": null
+      },
+      {
+        "step": "update_oracle_1",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "33hag7gGNa6epMyX3Dv6EAG1ZdEvNjfRaRvnL14MHVt1wBqpSGg9tfdMQoVPfysydTD1ov5GP1b8gMbDF4SsFRkv",
+        "error": null
+      },
+      {
+        "step": "update_oracle_2",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "66nzRzVqDuKDkhrAJu94QgtqyRSzyrtUTKiQ1xEpxcnsVFndLGXSMsKTDdCzMJdacuMfuFy5UAMCQ8eW8wtoN8zW",
+        "error": null
+      },
+      {
+        "step": "update_oracle_3",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "3TJRq2B7ChZfpD8fG9GNHrY28QoZb1Myuzyx78wFRfv4nRxb9NdLwG7YFxFcqt6wLh4t7SkK1XJ6YY7qF3o3zRQb",
+        "error": null
+      },
+      {
+        "step": "mint",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "5SDwJGkFW9wPFRmXQjicotXjPjQSbZGVUD47VCnoRdkSTnHZS7WP7qb7aSY7iyuYsZLdzNPRoxh4VmHrXmKHFtwq",
+        "error": null
+      },
+      {
+        "step": "rebalance",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "4xbXAippbKZkFmNL1VJmYgJurVkWqqag8CN2djawtLFsaoErx2qtiaxraaTHRc2WdGnE1sRGfu1uEYT2zWfFgESG",
+        "error": null
+      },
+      {
+        "step": "depeg_oracle",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "2VvdehWHERZD9VeKnXkMMF2sp7YwovGisQYh9awrsUHpYXLbXSFR3cudDKcFgZhwKnrruxFdP4if6giDyiJMRbsJ",
+        "error": null
+      },
+      {
+        "step": "activate_circuit_breaker",
+        "actor": "watchdog",
+        "status": "error",
+        "signature": null,
+        "error": "Unauthorized keeper"
+      },
+      {
+        "step": "recovery_oracle_0",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "z32shjS85BaBYFgh7H41Sqyrw1T1QP52x3kDKEHrKetAtSMtASJrCQzG32qy7R1KpTcZRpdS3FGKzud93S5nypZ",
+        "error": null
+      },
+      {
+        "step": "recovery_oracle_1",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "5nh4bCoJGHRoSzBHBVE6NRgWj66wYN2gJsqdkoGhfSBC6q4RHFHDKeXxNCq6aejSTztk6whJ2pMr9b9yqjvYNt5Y",
+        "error": null
+      },
+      {
+        "step": "recovery_oracle_2",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "25uCuS2hgdZABapxCrNpkcZnrK3joeCEbbYq1a6F73Rp9SWhU7roYPiASaU1vNCYZr9Ybps4Ye5JvhWEiemcpC47",
+        "error": null
+      },
+      {
+        "step": "recovery_oracle_3",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "3S6aGFcphiF3RFpsbtVHfaWN3ozb8zP69KfXANqUQqw1beK1A6E3LyKJYS4NBGp3M3ShgeRvYCUZJfcs28yYrNFE",
+        "error": null
+      },
+      {
+        "step": "recovery_oracle_4",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "5tJv8JCaSzKhDsTW8RaBgaBsyFTJXMEnsb6Z4RYJxSBtx7N28QbgQJ9u3wBTSA8zWjk9xcMuSWR1D9TCpYkHHZDx",
+        "error": null
+      },
+      {
+        "step": "recovery_oracle_5",
+        "actor": "keeper",
+        "status": "ok",
+        "signature": "36kN591AuGCNoXXrqUr1jHDcMwgoxbSmtMdqi8Wf7q1FDabVDTqJst8LzWBQHLrFs8vG5paaQGacUTMTSyDeRZsk",
+        "error": null
+      },
+      {
+        "step": "recover_circuit_breaker",
+        "actor": "watchdog",
+        "status": "error",
+        "signature": null,
+        "error": "Unauthorized keeper"
+      },
+      {
+        "step": "redeem",
+        "actor": "auditor",
+        "status": "error",
+        "signature": null,
+        "error": "The program expected this account to be already initialized"
+      }
+    ],
+    "status": "live"
+  }
+}
