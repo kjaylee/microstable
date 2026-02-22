@@ -45,6 +45,8 @@ MAX_AUTOGRAD_DEPTH = 256
 
 # // BLUE-TEAM: E2 - oracle freshness + collateral quality gates for mint/redeem accounting.
 ORACLE_FRESHNESS_MAX_SECONDS = 120
+ORACLE_MIN_SOURCES = 1
+ORACLE_PRICE_UPPER_BOUND = 2.0
 MIN_COLLATERAL_QUALITY = 0.85
 
 # FIX PT-014: hard cap redemption discount input range.
@@ -1232,6 +1234,24 @@ class CircuitBreaker:
 
 
 class Keeper:
+    def __init__(self, keeper_set: Optional[Sequence[str]] = None, required_quorum: int = 2) -> None:
+        seeds = list(keeper_set or ("keeper-a", "keeper-b", "keeper-c"))
+        uniq = []
+        for k in seeds:
+            kk = str(k).strip()
+            if kk and kk not in uniq:
+                uniq.append(kk)
+        self.keeper_set = tuple(uniq[:3]) if uniq else ("keeper-a", "keeper-b", "keeper-c")
+        self.required_quorum = max(1, min(int(required_quorum), len(self.keeper_set)))
+
+    def _has_quorum(self, proposal: Dict[str, object]) -> bool:
+        raw = proposal.get("keeper_signers", [])
+        if not isinstance(raw, (list, tuple)):
+            return False
+        signers = {str(s).strip() for s in raw if str(s).strip()}
+        approved = sum(1 for k in self.keeper_set if k in signers)
+        return approved >= self.required_quorum
+
     def propose(
         self,
         state: ProtocolState,
@@ -1248,6 +1268,7 @@ class Keeper:
             "proposal_epoch": state.market_epoch,
             "state_hash": state.market_state_hash,
             "expiry_epoch": state.market_epoch + 2,
+            "keeper_signers": list(self.keeper_set[: self.required_quorum]),
             # FIX PTV2-022 / RTV3-A24: unpredictable per-epoch commit proof.
             "commit_proof": state.expected_rebalance_commit(
                 weights=new_w,
@@ -1258,8 +1279,19 @@ class Keeper:
         }
 
     def submit_update_proposal(self, state: ProtocolState, proposal: Dict[str, object]) -> Dict[str, object]:
+        # FIX PTV3-011: enforce keeper quorum on simulation path too.
+        if not self._has_quorum(proposal):
+            return {"status": "REJECTED", "reason": "missing_keeper_quorum"}
+
         w = [float(x) for x in proposal["weights"]]  # type: ignore[index]
         fee = float(proposal.get("mint_fee", state.mint_fee))
+
+        if len(w) != len(state.weights):
+            return {"status": "REJECTED", "reason": "weights_length_mismatch"}
+        if any((not math.isfinite(x)) for x in w):
+            return {"status": "REJECTED", "reason": "invalid_weight_non_finite"}
+        if not math.isfinite(fee):
+            return {"status": "REJECTED", "reason": "invalid_fee_non_finite"}
 
         # // BLUE-TEAM: G16 - reject stale/unbound replayed proposals.
         epoch = proposal.get("proposal_epoch")
@@ -1289,7 +1321,7 @@ class Keeper:
         delta_mag = sum(abs(w[i] - state.weights[i]) for i in range(len(w)))
         window = (state.rebalance_turnover_window + [delta_mag])[-max(1, int(state.rebalance_window_size)):]
         cumulative = sum(window)
-        if cumulative > float(state.rebalance_commit_threshold) + 1e-12:
+        if cumulative >= float(state.rebalance_commit_threshold) - 1e-12:
             expected_commit = state.expected_rebalance_commit(
                 weights=w,
                 mint_fee=fee,
@@ -1514,11 +1546,18 @@ def validated_oracle_price(
     stale_seconds: int,
     *,
     max_stale_seconds: int = ORACLE_FRESHNESS_MAX_SECONDS,
+    min_sources: int = ORACLE_MIN_SOURCES,
+    max_price: float = ORACLE_PRICE_UPPER_BOUND,
 ) -> float:
-    if stale_seconds > max_stale_seconds:
+    stale_i = int(stale_seconds)
+    if stale_i < 0 or stale_i > max_stale_seconds:
         raise ValueError("oracle_stale")
+    if len(oracle_samples) < max(1, int(min_sources)):
+        raise ValueError("oracle_insufficient_sources")
+    if any((not math.isfinite(float(px))) for px in oracle_samples):
+        raise ValueError("oracle_invalid")
     px = median_price(oracle_samples)
-    if px <= 0.0 or (not math.isfinite(px)):
+    if px <= 0.0 or (not math.isfinite(px)) or px > float(max_price):
         raise ValueError("oracle_invalid")
     return px
 
@@ -1539,7 +1578,17 @@ def secure_mint_amount(
     risk_reject_threshold: float = RISK_SCORE_REJECT_THRESHOLD,
     risk_cr_penalty_ppm: int = 100_000,
 ) -> int:
+    try:
+        units_i = int(collateral_units)
+    except Exception:
+        return 0
+    if units_i <= 0:
+        return 0
+
     price = validated_oracle_price(oracle_samples, stale_seconds)
+    # FIX PTV3-014: single-source quotes are capped conservatively.
+    if len(oracle_samples) <= 1:
+        price = min(price, 1.0)
     if not collateral_quality_ok(quality_score):
         return 0
 
@@ -1549,7 +1598,7 @@ def secure_mint_amount(
 
     effective_cr_target = int(cr_target_ppm)
 
-    gross = mul_div_floor(collateral_units, int(price * 1_000_000), 1_000_000)
+    gross = mul_div_floor(units_i, int(price * 1_000_000), 1_000_000)
     max_mint = mul_div_floor(gross, 1_000_000, max(1, effective_cr_target))
     fee = mul_div_ceil(max_mint, fee_rate_ppm, 1_000_000)
     minted = max_mint - fee
@@ -1578,8 +1627,15 @@ def redeem_by_value(
     if len(enabled_assets) != len(vault_units):
         raise ValueError("enabled_assets length mismatch")
 
-    active_units = [int(u) if bool(enabled_assets[i]) else 0 for i, u in enumerate(vault_units)]
-    values = [max(0.0, float(u) * float(p)) for u, p in zip(active_units, oracle_prices)]
+    checked_prices: List[float] = []
+    for p in oracle_prices:
+        pf = float(p)
+        if (not math.isfinite(pf)) or pf <= 0.0 or pf > ORACLE_PRICE_UPPER_BOUND:
+            raise ValueError("oracle_invalid")
+        checked_prices.append(pf)
+
+    active_units = [max(0, int(u)) if bool(enabled_assets[i]) else 0 for i, u in enumerate(vault_units)]
+    values = [max(0.0, float(u) * checked_prices[i]) for i, u in enumerate(active_units)]
     total_value = sum(values)
     if total_value <= 0.0:
         return [0] * len(vault_units)
@@ -1592,7 +1648,7 @@ def redeem_by_value(
 
     payouts: List[int] = []
     allocated_value = 0.0
-    for i, (units, price, asset_value, enabled) in enumerate(zip(active_units, oracle_prices, values, enabled_assets)):
+    for i, (units, price, asset_value, enabled) in enumerate(zip(active_units, checked_prices, values, enabled_assets)):
         if not enabled:
             payouts.append(0)
             continue
@@ -1638,11 +1694,18 @@ class RedemptionQueue:
         if (not math.isfinite(burn_f)) or (not math.isfinite(discount_f)):
             return False
 
+        if burn_f <= 0:
+            return False
+
+        account_s = str(account).strip()
+        if not account_s:
+            return False
+
         clamped_discount = max(0, min(int(discount_f), self.max_discount_ppm))
         self._pending.append(
             RedemptionRequest(
-                account=str(account),
-                burn_amount=max(0, int(burn_f)),
+                account=account_s,
+                burn_amount=int(burn_f),
                 # FIX PT-014: clamp request discount at enqueue boundary.
                 requested_discount_ppm=clamped_discount,
             )
@@ -1671,14 +1734,17 @@ class RedemptionQueue:
         avg_discount = int(weighted_discount / total_burn)
         avg_discount = max(0, min(avg_discount, self.max_discount_ppm))
 
-        aggregate = redeem_by_value(
-            vault_units=vault_units,
-            oracle_prices=oracle_prices,
-            burn_amount=total_burn,
-            total_supply=total_supply,
-            payout_discount_ppm=avg_discount,
-            max_discount_ppm=self.max_discount_ppm,
-        )
+        try:
+            aggregate = redeem_by_value(
+                vault_units=vault_units,
+                oracle_prices=oracle_prices,
+                burn_amount=total_burn,
+                total_supply=total_supply,
+                payout_discount_ppm=avg_discount,
+                max_discount_ppm=self.max_discount_ppm,
+            )
+        except ValueError:
+            return {r.account: [0 for _ in vault_units] for r in batch}
 
         out: Dict[str, List[int]] = {}
         running = [0 for _ in aggregate]
@@ -1690,7 +1756,10 @@ class RedemptionQueue:
                 alloc = max(0, alloc)
                 running[j] += alloc
                 allocs.append(alloc)
-            out[req.account] = allocs
+            if req.account in out:
+                out[req.account] = [out[req.account][j] + allocs[j] for j in range(len(allocs))]
+            else:
+                out[req.account] = allocs
 
         residuals = [max(0, aggregate[j] - running[j]) for j in range(len(aggregate))]
         if not self.treasury_residual_units:
@@ -1781,6 +1850,8 @@ class InsuranceFund:
         self._epoch_index = -1
         self._epoch_claimed = 0.0
         self._refill_done_epoch: Optional[int] = None
+        self._last_tick: Optional[int] = None
+        self.global_cooldown_min_claim = max(self.min_claim * 5.0, self.min_claim)
 
     def _refresh_epoch(self, tick: int) -> None:
         idx = int(tick) // self.epoch_length_ticks
@@ -1795,17 +1866,37 @@ class InsuranceFund:
             self.treasury += self.refill_amount
             self._refill_done_epoch = self._epoch_index
 
+    def _normalize_tick(self, tick: int) -> int:
+        try:
+            tick_i = int(tick)
+        except Exception:
+            tick_i = 0
+        if tick_i < 0:
+            tick_i = 0
+        if self._last_tick is None:
+            self._last_tick = tick_i
+            return tick_i
+        if tick_i <= self._last_tick:
+            return self._last_tick
+        if tick_i > self._last_tick + 1:
+            tick_i = self._last_tick + 1
+        self._last_tick = tick_i
+        return tick_i
+
     def claim(self, claimant: str, amount: float, tick: int) -> Dict[str, object]:
-        tick_i = int(tick)
+        tick_i = self._normalize_tick(tick)
         self._refresh_epoch(tick_i)
-        self._auto_refill(tick_i)
 
         amt = float(amount)
         if (not math.isfinite(amt)) or amt < self.min_claim:
             return {"approved": False, "reason": "below_min_claim"}
 
-        # FIX PTV2-021: global cooldown prevents sybil rotation bypass.
-        if self._last_global_claim_tick is not None and tick_i - self._last_global_claim_tick < self.cooldown_ticks:
+        # FIX PTV2-021: global cooldown prevents sybil rotation bypass (gated by claim size).
+        if (
+            self._last_global_claim_tick is not None
+            and amt >= self.global_cooldown_min_claim
+            and tick_i - self._last_global_claim_tick < self.cooldown_ticks
+        ):
             return {"approved": False, "reason": "global_cooldown"}
 
         last = self._last_claim_tick.get(claimant)
@@ -1815,13 +1906,17 @@ class InsuranceFund:
         if self._epoch_claimed + amt > self.epoch_claim_cap:
             return {"approved": False, "reason": "epoch_cap"}
 
+        # FIX PTV3-019: validate before auto-refill trigger.
+        self._auto_refill(tick_i)
+
         if amt > self.treasury:
             return {"approved": False, "reason": "insufficient_fund"}
 
         self.treasury -= amt
         self._epoch_claimed += amt
         self._last_claim_tick[claimant] = tick_i
-        self._last_global_claim_tick = tick_i
+        if amt >= self.global_cooldown_min_claim:
+            self._last_global_claim_tick = tick_i
         return {"approved": True, "reason": "ok", "treasury": self.treasury}
 
 

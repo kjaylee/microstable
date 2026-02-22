@@ -761,12 +761,13 @@ class ResponseEngine:
         self.stake_requirement_multiplier = 1.0
 
     def _idempotency_key(self, alert: Dict[str, Any]) -> str:
-        # FIX PT-024: stable idempotency key from semantic tuple, not random alert_id.
+        # FIX CT-S05: canonicalize multi-agent alerts independent of ordering.
         epoch = int(alert.get("epoch", 0))
         alert_type = _norm_text(alert.get("type", "unknown"))
         agent_id = _norm_text(alert.get("agent_id", ""))
         if not agent_id and isinstance(alert.get("agents"), list) and alert.get("agents"):
-            agent_id = _norm_text(alert.get("agents")[0])
+            normalized = sorted({_norm_text(a) for a in alert.get("agents", []) if _norm_text(a)})
+            agent_id = ",".join(normalized)
         return f"{epoch}:{alert_type}:{agent_id}"
 
     @staticmethod

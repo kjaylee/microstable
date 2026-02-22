@@ -5,6 +5,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   getAccount,
+  getMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
 } from "@solana/spl-token";
@@ -103,7 +104,12 @@ describe("devnet e2e (SPL collateral + manual oracle)", () => {
       USDS_MINT,
       main.publicKey
     );
-    await getOrCreateAssociatedTokenAccount(provider.connection, main, MSTB_MINT, main.publicKey);
+    const userMstbAta = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      main,
+      MSTB_MINT,
+      main.publicKey
+    );
 
     const vaultUsdcAta = await getOrCreateAssociatedTokenAccount(
       provider.connection,
@@ -205,6 +211,8 @@ describe("devnet e2e (SPL collateral + manual oracle)", () => {
     const beforeUsd = beforeUserPos ? Number(beforeUserPos.usdBalance) : 0;
     const beforeUserUsdc = await getAccount(provider.connection, userUsdcAta.address);
     const beforeVaultUsdc = await getAccount(provider.connection, vaultUsdcAta.address);
+    const beforeUserMstb = await getAccount(provider.connection, userMstbAta.address);
+    const beforeMstbMint = await getMint(provider.connection, MSTB_MINT);
 
     await program.methods
       .mint(0, new BN(depositAmount))
@@ -219,6 +227,8 @@ describe("devnet e2e (SPL collateral + manual oracle)", () => {
         userPosition,
         userCollateralAta: userUsdcAta.address,
         vaultCollateralAta: vaultUsdcAta.address,
+        mstbMint: MSTB_MINT,
+        userMstbAta: userMstbAta.address,
         collateralMint: USDC_MINT,
         tokenProgram: TOKEN_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -230,6 +240,14 @@ describe("devnet e2e (SPL collateral + manual oracle)", () => {
     const afterMintPos = await program.account.userPosition.fetch(userPosition);
     const mintedDelta = Number(afterMintPos.usdBalance) - beforeUsd;
     expect(mintedDelta).to.be.greaterThan(0);
+
+    const afterMintUserMstb = await getAccount(provider.connection, userMstbAta.address);
+    const afterMintMstbMint = await getMint(provider.connection, MSTB_MINT);
+    const mstbUserDelta = Number(afterMintUserMstb.amount) - Number(beforeUserMstb.amount);
+    const mstbSupplyDelta = Number(afterMintMstbMint.supply) - Number(beforeMstbMint.supply);
+
+    expect(mstbUserDelta).to.eq(mintedDelta);
+    expect(mstbSupplyDelta).to.eq(mintedDelta);
 
     await program.methods
       .redeem(new BN(mintedDelta))
@@ -254,6 +272,8 @@ describe("devnet e2e (SPL collateral + manual oracle)", () => {
         usdtMint: USDT_MINT,
         daiMint: DAI_MINT,
         usdsMint: USDS_MINT,
+        mstbMint: MSTB_MINT,
+        userMstbAta: userMstbAta.address,
         tokenProgram: TOKEN_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       })
@@ -263,9 +283,13 @@ describe("devnet e2e (SPL collateral + manual oracle)", () => {
     const afterRedeemPos = await program.account.userPosition.fetch(userPosition);
     const afterUserUsdc = await getAccount(provider.connection, userUsdcAta.address);
     const afterVaultUsdc = await getAccount(provider.connection, vaultUsdcAta.address);
+    const afterRedeemUserMstb = await getAccount(provider.connection, userMstbAta.address);
+    const afterRedeemMstbMint = await getMint(provider.connection, MSTB_MINT);
 
     expect(Number(afterRedeemPos.usdBalance)).to.eq(beforeUsd);
     expect(Number(afterUserUsdc.amount)).to.be.closeTo(Number(beforeUserUsdc.amount), 1);
     expect(Number(afterVaultUsdc.amount)).to.be.closeTo(Number(beforeVaultUsdc.amount), 1);
+    expect(Number(afterRedeemUserMstb.amount)).to.eq(Number(beforeUserMstb.amount));
+    expect(Number(afterRedeemMstbMint.supply)).to.eq(Number(beforeMstbMint.supply));
   });
 });

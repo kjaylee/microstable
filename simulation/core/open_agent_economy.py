@@ -5,13 +5,15 @@ Pure Python (numpy optional). Python 3.12+ compatible.
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, ClassVar, Deque, Dict, List, Optional, Set, Tuple
 import hashlib
 import hmac
 import json
 import math
 import random
+import secrets
 import time
 
 try:
@@ -113,6 +115,16 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def finite_float(value: Any) -> Optional[float]:
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if not math.isfinite(out):
+        return None
+    return out
+
+
 # -----------------------------------------------------------------------------
 # Agent Registry
 # -----------------------------------------------------------------------------
@@ -150,6 +162,7 @@ class AgentRegistry:
         self.records: Dict[str, AgentRecord] = {}
         self.cooldowns: Dict[str, int] = {}
         self.meta: Dict[str, Dict[str, Any]] = {}
+        self._rotation_master_key = secrets.token_hex(32)
 
     def _now(self, epoch: Optional[int]) -> int:
         return int(epoch if epoch is not None else 0)
@@ -168,6 +181,26 @@ class AgentRegistry:
         self.require_challenge_exam = bool(required)
         self.challenge_exam_checker = checker
 
+    def _requires_lifecycle_auth(self, agent_id: str) -> bool:
+        pub = str(self.meta.get(agent_id, {}).get("public_key", "")).strip()
+        return bool(pub)
+
+    def _caller_authorized(self, agent_id: str, actor_id: Optional[str]) -> bool:
+        if not self._requires_lifecycle_auth(agent_id):
+            return True
+        return str(actor_id or "") == str(agent_id)
+
+    def build_rotation_token(self, agent_id: str, new_key: str) -> Optional[str]:
+        rec = self.records.get(agent_id)
+        if rec is None or rec.status not in {"Active", "Cooldown"}:
+            return None
+        current = self.get_public_key(agent_id)
+        if not current:
+            return None
+        payload = canonical_json({"agent_id": str(agent_id), "new_key": str(new_key).strip()})
+        secret = hmac_sha256_hex(self._rotation_master_key, f"{agent_id}:{current}")
+        return hmac_sha256_hex(secret, payload)
+
     def register(
         self,
         agent_id: str,
@@ -185,8 +218,12 @@ class AgentRegistry:
                 passed = bool(self.challenge_exam_checker(agent_id, agent_type, float(stake)))
             if not passed:
                 return False
+        stake_f = finite_float(stake)
+        if stake_f is None:
+            return False
+
         min_stake = self.min_stake_by_type.get(agent_type, 0.0)
-        if stake < min_stake:
+        if stake_f < min_stake:
             return False
         if agent_id in self.records and self.records[agent_id].status != "Deregistered":
             return False
@@ -199,7 +236,7 @@ class AgentRegistry:
         self.records[agent_id] = AgentRecord(
             agent_id=agent_id,
             agent_type=agent_type,
-            stake=float(stake),
+            stake=stake_f,
             reputation=0,
             registered_at=now,
             last_active=now,
@@ -213,14 +250,17 @@ class AgentRegistry:
             self.cooldowns.pop(agent_id, None)
 
         # FIX PTV2-018: bind ACP key at registration time and lock by default.
-        if public_key is not None and str(public_key).strip():
-            self.set_meta(agent_id, public_key=str(public_key).strip(), public_key_locked=True)
+        bound_key = str(public_key).strip() if public_key is not None else ""
+        if bound_key:
+            self.set_meta(agent_id, public_key=bound_key, public_key_locked=True)
         else:
             self.set_meta(agent_id, public_key_locked=True)
         return True
 
-    def deregister(self, agent_id: str, epoch: Optional[int] = None) -> bool:
+    def deregister(self, agent_id: str, epoch: Optional[int] = None, *, actor_id: Optional[str] = None) -> bool:
         if agent_id not in self.records:
+            return False
+        if not self._caller_authorized(agent_id, actor_id):
             return False
         rec = self.records[agent_id]
         if rec.status != "Active":
@@ -231,8 +271,16 @@ class AgentRegistry:
         self.cooldowns[agent_id] = now + self.cooldown_epochs
         return True
 
-    def finalize_deregistration(self, agent_id: str, epoch: Optional[int] = None) -> bool:
+    def finalize_deregistration(
+        self,
+        agent_id: str,
+        epoch: Optional[int] = None,
+        *,
+        actor_id: Optional[str] = None,
+    ) -> bool:
         if agent_id not in self.records:
+            return False
+        if not self._caller_authorized(agent_id, actor_id):
             return False
         rec = self.records[agent_id]
         if rec.status != "Cooldown":
@@ -245,25 +293,29 @@ class AgentRegistry:
         self.cooldowns.pop(agent_id, None)
         return True
 
-    def slash(self, agent_id: str, amount: float, epoch: Optional[int] = None) -> float:
+    def slash(
+        self,
+        agent_id: str,
+        amount: float,
+        epoch: Optional[int] = None,
+        *,
+        as_ratio: bool = True,
+    ) -> float:
         if agent_id not in self.records:
             return 0.0
+        amount_f = finite_float(amount)
+        if amount_f is None or amount_f < 0.0:
+            return 0.0
+
         rec = self.records[agent_id]
         now = self._now(epoch)
-        slash_amt = rec.stake * amount if amount <= 1.0 else amount
+        slash_amt = rec.stake * amount_f if as_ratio else amount_f
         slash_amt = min(slash_amt, rec.stake)
         rec.stake -= slash_amt
         rec.total_slashed += slash_amt
         rec.last_active = now
         min_stake = self.min_stake_by_type.get(rec.agent_type, 0.0)
-        # Ratio-based penalties are temporary (Slashed), while large absolute
-        # penalties can force deregistration if stake falls below minimum.
-        if amount <= 1.0:
-            rec.status = "Deregistered" if rec.stake <= EPS else "Slashed"
-        elif rec.stake < min_stake:
-            rec.status = "Deregistered"
-        else:
-            rec.status = "Slashed"
+        rec.status = "Deregistered" if rec.stake < min_stake else "Slashed"
         return slash_amt
 
     def reward(self, agent_id: str, amount: float, epoch: Optional[int] = None) -> bool:
@@ -323,8 +375,9 @@ class AgentRegistry:
             return False
 
         if current:
-            payload = canonical_json({"agent_id": agent_id, "new_key": new_key})
-            expected = hmac_sha256_hex(str(current), payload)
+            expected = self.build_rotation_token(agent_id, new_key)
+            if expected is None:
+                return False
             if rotate_token is None or not hmac.compare_digest(str(rotate_token), expected):
                 return False
 
@@ -414,14 +467,23 @@ class StakingEconomics:
         registry: AgentRegistry,
         cooldown_epochs: int = 5,
         reward_epoch_cap: float = 1_000.0,
-        claim_signing_key: str = "OAE_REWARD_AUTHORITY_V1",
+        claim_signing_key: Optional[str] = None,
         legacy_unsigned_claim_limit: float = 1.0,
+        legacy_unsigned_epoch_cap: Optional[float] = None,
     ) -> None:
         self.registry = registry
         self.cooldown_epochs = cooldown_epochs
         self.reward_epoch_cap = max(0.0, float(reward_epoch_cap))
-        self.claim_signing_key = str(claim_signing_key)
+        self.claim_signing_key = str(claim_signing_key or secrets.token_hex(32))
         self.legacy_unsigned_claim_limit = max(0.0, float(legacy_unsigned_claim_limit))
+        self.legacy_unsigned_epoch_cap = max(
+            0.0,
+            float(
+                self.legacy_unsigned_claim_limit
+                if legacy_unsigned_epoch_cap is None
+                else legacy_unsigned_epoch_cap
+            ),
+        )
 
         self.balances: Dict[str, float] = {}
         self.locked: Dict[str, float] = {}
@@ -429,15 +491,38 @@ class StakingEconomics:
         self.total_deposited: float = 0.0
         self.total_rewards: float = 0.0
         self.total_slashed: float = 0.0
-        self.claimed: set[str] = set()
+        self.claimed: Set[Tuple[str, str]] = set()
         self.claimed_by_epoch: Dict[int, float] = {}
+        self.claimed_by_agent_epoch: Dict[Tuple[str, int], float] = {}
+        self.unsigned_claimed_by_agent_epoch: Dict[Tuple[str, int], float] = {}
+
+    @staticmethod
+    def _to_scaled_amount(value: float) -> int:
+        return int(round(float(value) * 1_000_000))
+
+    @staticmethod
+    def _from_scaled_amount(value: int) -> float:
+        return float(value) / 1_000_000.0
+
+    def _agent_epoch_quota(self, epoch: int) -> float:
+        active = max(1, len(self.registry.active_agents()))
+        return self.reward_epoch_cap / float(active)
+
+    def _claim_key(self, agent_id: str, claim_id: str) -> Tuple[str, str]:
+        return (str(agent_id), str(claim_id))
+
+    def _claim_signing_key_for(self, agent_id: str) -> str:
+        return hmac_sha256_hex(self.claim_signing_key, f"agent:{agent_id}")
 
     def deposit(self, agent_id: str, agent_type: str, amount: float, epoch: int) -> bool:
-        min_stake = self.registry.min_stake_by_type.get(agent_type, 0.0)
-        if amount < min_stake and agent_id not in self.balances:
+        amount_f = finite_float(amount)
+        if amount_f is None or amount_f <= 0.0:
             return False
-        self.balances[agent_id] = self.balances.get(agent_id, 0.0) + amount
-        self.total_deposited += amount
+        min_stake = self.registry.min_stake_by_type.get(agent_type, 0.0)
+        if amount_f < min_stake and agent_id not in self.balances:
+            return False
+        self.balances[agent_id] = self.balances.get(agent_id, 0.0) + amount_f
+        self.total_deposited += amount_f
         return True
 
     def available(self, agent_id: str) -> float:
@@ -453,26 +538,33 @@ class StakingEconomics:
         self.locked[agent_id] = max(0.0, self.locked.get(agent_id, 0.0) - amount)
 
     def request_withdrawal(self, agent_id: str, amount: float, epoch: int) -> bool:
-        if amount <= 0.0:
+        amount_f = finite_float(amount)
+        if amount_f is None or amount_f <= 0.0:
             return False
         if agent_id in self.pending:
             return False
-        if self.available(agent_id) < amount:
+        if self.available(agent_id) < amount_f:
             return False
         # FIX PT-002: lock withdrawal amount at request time.
-        self.locked[agent_id] = self.locked.get(agent_id, 0.0) + amount
-        self.pending[agent_id] = (amount, epoch + self.cooldown_epochs)
+        self.locked[agent_id] = self.locked.get(agent_id, 0.0) + amount_f
+        self.pending[agent_id] = (amount_f, int(epoch) + self.cooldown_epochs)
         return True
 
     def withdraw(self, agent_id: str, epoch: int) -> float:
         if agent_id not in self.pending:
             raise ValueError("no pending withdrawal")
         requested, unlock_epoch = self.pending[agent_id]
-        if epoch < unlock_epoch:
+        if int(epoch) < unlock_epoch:
             raise ValueError("cooldown not finished")
 
         balance = self.balances.get(agent_id, 0.0)
         locked = self.locked.get(agent_id, 0.0)
+        if not all(math.isfinite(v) for v in (requested, balance, locked)):
+            self.pending.pop(agent_id, None)
+            self.locked[agent_id] = 0.0
+            self.balances[agent_id] = 0.0
+            return 0.0
+
         withdrawable = max(0.0, min(requested, balance, locked))
         self.pending.pop(agent_id, None)
         self.unlock(agent_id, requested)
@@ -506,13 +598,16 @@ class StakingEconomics:
         self.total_slashed += slash_amt
         rec = self.registry.get_record(agent_id)
         if rec:
-            self.registry.slash(agent_id, slash_amt, epoch)
+            self.registry.slash(agent_id, slash_amt, epoch, as_ratio=False)
         return slash_amt
 
     def reward(self, agent_id: str, amount: float, epoch: int) -> None:
-        self.balances[agent_id] = self.balances.get(agent_id, 0.0) + amount
-        self.total_rewards += amount
-        self.registry.reward(agent_id, amount, epoch)
+        amount_f = finite_float(amount)
+        if amount_f is None or amount_f <= 0.0:
+            return
+        self.balances[agent_id] = self.balances.get(agent_id, 0.0) + amount_f
+        self.total_rewards += amount_f
+        self.registry.reward(agent_id, amount_f, epoch)
 
     def _reward_claim_payload(self, agent_id: str, amount: float, claim_id: str, epoch: int) -> str:
         payload = {
@@ -525,7 +620,9 @@ class StakingEconomics:
 
     def build_claim_proof(self, agent_id: str, amount: float, claim_id: str, epoch: int) -> str:
         """Create signed reward-evidence proof for claim_reward."""
-        return hmac_sha256_hex(self.claim_signing_key, self._reward_claim_payload(agent_id, amount, claim_id, epoch))
+        epoch_i = int(float(epoch))
+        key = self._claim_signing_key_for(agent_id)
+        return hmac_sha256_hex(key, self._reward_claim_payload(agent_id, amount, claim_id, epoch_i))
 
     def claim_reward(self, agent_id: str, amount: float, claim_id: str, epoch: int, proof: Optional[str] = None) -> bool:
         # FIX RTV3-A01: only registered active agents can claim rewards.
@@ -533,28 +630,59 @@ class StakingEconomics:
         if rec is None or rec.status != "Active":
             return False
 
-        if (not math.isfinite(float(amount))) or amount <= 0.0 or claim_id in self.claimed:
-            # FIX PTV2-020 / RTV3-A02: reject NaN/inf reward claims.
+        amount_f = finite_float(amount)
+        epoch_f = finite_float(epoch)
+        if amount_f is None or amount_f <= 0.0 or epoch_f is None:
             return False
 
-        used = self.claimed_by_epoch.get(epoch, 0.0)
+        epoch_i = int(epoch_f)
+        if abs(epoch_f - float(epoch_i)) > EPS:
+            return False
+
+        claim_key = self._claim_key(agent_id, claim_id)
+        if claim_key in self.claimed:
+            return False
+
+        used = self.claimed_by_epoch.get(epoch_i, 0.0)
         if not math.isfinite(float(used)):
             used = 0.0
 
-        # FIX PT-001: enforce strict epoch reward budget cap.
-        if used + amount > self.reward_epoch_cap + EPS:
+        used_agent = self.claimed_by_agent_epoch.get((agent_id, epoch_i), 0.0)
+        if not math.isfinite(float(used_agent)):
+            used_agent = 0.0
+
+        # FIX PT-001: enforce strict epoch reward budget cap (scaled integer accounting).
+        cap_scaled = self._to_scaled_amount(self.reward_epoch_cap)
+        used_scaled = self._to_scaled_amount(used)
+        amount_scaled = self._to_scaled_amount(amount_f)
+        if used_scaled + amount_scaled > cap_scaled:
             return False
 
-        expected = self.build_claim_proof(agent_id, amount, claim_id, epoch)
+        # FIX PTV3-003: prevent first-claimer griefing via per-agent epoch quota.
+        agent_cap = self._agent_epoch_quota(epoch_i)
+        agent_cap_scaled = self._to_scaled_amount(agent_cap)
+        used_agent_scaled = self._to_scaled_amount(used_agent)
+        if used_agent_scaled + amount_scaled > agent_cap_scaled:
+            return False
+
+        expected = self.build_claim_proof(agent_id, amount_f, claim_id, epoch_i)
         has_valid_proof = proof is not None and hmac.compare_digest(str(proof), expected)
 
-        # FIX PT-001: require signed evidence for meaningful claims.
-        if not has_valid_proof and amount > self.legacy_unsigned_claim_limit:
-            return False
+        # FIX PTV3-002: unsigned lane is strictly micro + per-agent epoch capped.
+        if not has_valid_proof:
+            if amount_f > self.legacy_unsigned_claim_limit:
+                return False
+            unsigned_used = self.unsigned_claimed_by_agent_epoch.get((agent_id, epoch_i), 0.0)
+            if not math.isfinite(unsigned_used):
+                unsigned_used = 0.0
+            if self._to_scaled_amount(unsigned_used) + amount_scaled > self._to_scaled_amount(self.legacy_unsigned_epoch_cap):
+                return False
+            self.unsigned_claimed_by_agent_epoch[(agent_id, epoch_i)] = unsigned_used + amount_f
 
-        self.claimed.add(claim_id)
-        self.claimed_by_epoch[epoch] = used + amount
-        self.reward(agent_id, amount, epoch)
+        self.claimed.add(claim_key)
+        self.claimed_by_epoch[epoch_i] = used + amount_f
+        self.claimed_by_agent_epoch[(agent_id, epoch_i)] = used_agent + amount_f
+        self.reward(agent_id, amount_f, epoch_i)
         return True
 
     def apy(self, total_epochs: int, epochs_per_year: int = 8760) -> float:
@@ -581,6 +709,8 @@ class ACPMessage:
     id: str
 
     _seen_nonces: ClassVar[Set[str]] = set()
+    _seen_nonce_order: ClassVar[Deque[str]] = deque()
+    _max_seen_nonces: ClassVar[int] = 4096
 
     @staticmethod
     def _payload(method: str, params: Dict[str, Any], msg_id: str) -> str:
@@ -632,6 +762,15 @@ class ACPMessage:
         return secret
 
     @staticmethod
+    def _remember_nonce(nonces: Set[str], nonce_key: str) -> None:
+        nonces.add(nonce_key)
+        if nonces is ACPMessage._seen_nonces:
+            ACPMessage._seen_nonce_order.append(nonce_key)
+            while len(ACPMessage._seen_nonce_order) > ACPMessage._max_seen_nonces:
+                expired = ACPMessage._seen_nonce_order.popleft()
+                nonces.discard(expired)
+
+    @staticmethod
     def verify(
         msg: "ACPMessage",
         secret: Optional[str] = None,
@@ -675,19 +814,23 @@ class ACPMessage:
         if expected_epoch is not None and signed_epoch_i != int(expected_epoch):
             return False
 
-        if now_epoch is not None:
-            # FIX PT-009: reject impossible far-future signed epochs.
-            if signed_epoch_i > int(now_epoch) + int(max_future_drift):
-                return False
-            if expiry_i < int(now_epoch):
-                return False
+        # FIX PTV3-007: enforce explicit verification time for expiry checks.
+        if now_epoch is None:
+            return False
 
-        # FIX PT-011: replay prevention with nonce set.
+        now_i = int(now_epoch)
+        # FIX PT-009: reject impossible far-future signed epochs.
+        if signed_epoch_i > now_i + int(max_future_drift):
+            return False
+        if expiry_i < now_i:
+            return False
+
+        # FIX PT-011 / PTV3-008: replay prevention with bounded nonce set.
         nonces = seen_nonces if seen_nonces is not None else ACPMessage._seen_nonces
         nonce_key = f"{params.get('agent_id', '')}:{signed_epoch_i}:{nonce_s}"
         if nonce_key in nonces:
             return False
-        nonces.add(nonce_key)
+        ACPMessage._remember_nonce(nonces, nonce_key)
         return True
 
 
@@ -859,7 +1002,11 @@ class OptimizationTournament:
         return True
 
     def _score(self, proposal: Proposal) -> float:
-        loss_score = -proposal.loss_estimate
+        loss_raw = finite_float(proposal.loss_estimate)
+        if loss_raw is None:
+            return -1e18
+        safe_loss = max(0.0, min(1.0, float(loss_raw)))
+        loss_score = -safe_loss
         # FIX PT-005: clamp self-reported return/risk terms to bounded ranges.
         safe_return = max(-1.0, min(1.0, float(proposal.expected_return)))
         safe_risk = max(0.01, min(5.0, float(proposal.risk)))
@@ -909,7 +1056,10 @@ class OptimizationTournament:
 
         # If all proposals worse than current loss, keep current
         if self.current_loss is not None:
-            best_loss = min(p.loss_estimate for p in self.proposals)
+            finite_losses = [float(p.loss_estimate) for p in self.proposals if math.isfinite(float(p.loss_estimate))]
+            if not finite_losses:
+                return None
+            best_loss = min(finite_losses)
             if best_loss > self.current_loss * 1.05:
                 return None
 
@@ -927,12 +1077,10 @@ class OptimizationTournament:
             self.staking.reward(winner.agent_id, winner_share, self.current_epoch)
             runner = next((p for p in ranked if p.agent_id != winner.agent_id), None)
 
-            # FIX RTV3-A10: when proposal volume spikes, suppress near-clone runner payouts.
+            # FIX RTV3-A10/RTV4-A16: suppress runner lane in crowded epochs.
             if runner_share > 0.0 and runner is not None:
                 if len(self.proposal_agents) > 10:
-                    sim = safe_cosine_similarity(runner.weights, winner.weights)
-                    if sim >= 0.995:
-                        runner_share = 0.0
+                    runner_share = 0.0
                 if runner_share > 0.0:
                     self.staking.reward(runner.agent_id, runner_share, self.current_epoch)
 
@@ -941,13 +1089,21 @@ class OptimizationTournament:
                 # FIX RTV3-A10: anti-sybil dampening by proposal fingerprint clusters
                 # under large-participant epochs.
                 if len(self.proposal_agents) > 10:
-                    buckets: Dict[Tuple[float, ...], List[str]] = {}
+                    clusters: List[Tuple[List[float], List[str]]] = []
                     for p in self.proposals:
-                        fp = tuple(round(float(w), 2) for w in p.weights)
-                        buckets.setdefault(fp, []).append(p.agent_id)
-                    if buckets:
-                        per_bucket = participant_pool / len(buckets)
-                        for members in buckets.values():
+                        # FIX RTV4-A16 / CT-S04: higher-resolution fingerprint + similarity clustering.
+                        vec = [round(float(w), 4) for w in p.weights]
+                        placed = False
+                        for anchor, members in clusters:
+                            if safe_cosine_similarity(vec, anchor) >= 0.96:
+                                members.append(p.agent_id)
+                                placed = True
+                                break
+                        if not placed:
+                            clusters.append((vec, [p.agent_id]))
+                    if clusters:
+                        per_bucket = participant_pool / len(clusters)
+                        for _, members in clusters:
                             per_agent = per_bucket / len(members)
                             for aid in members:
                                 self.staking.reward(aid, per_agent, self.current_epoch)
@@ -1051,10 +1207,11 @@ class FederatedWatchdog:
         if key in self.finalized:
             return
 
+        # FIX PTV3-010 / CT-S06: any resolution that applies slash/reward requires consensus.
+        if not self.consensus(alert_type, epoch):
+            return
+
         if is_true:
-            # FIX RTV3-A12: true-resolution requires quorum consensus.
-            if not self.consensus(alert_type, epoch):
-                return
             order = self.report_order.get(key, {})
             if order:
                 first = min(order.items(), key=lambda kv: kv[1])[0]

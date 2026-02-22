@@ -631,8 +631,8 @@ def test_E09_rotate_public_key_requires_token():
     assert not reg.set_public_key("a", "k2", actor_id="a")
     
     # With valid token
-    payload = oae.canonical_json({"agent_id": "a", "new_key": "k2"})
-    token = oae.hmac_sha256_hex("k1", payload)
+    token = reg.build_rotation_token("a", "k2")
+    assert token is not None
     assert reg.set_public_key("a", "k2", actor_id="a", rotate_token=token)
 
 def test_E10_rate_limit_counts_per_epoch():

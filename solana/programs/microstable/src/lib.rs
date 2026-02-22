@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{hash::hashv, program::invoke, system_instruction};
 use anchor_spl::associated_token::get_associated_token_address;
-use anchor_spl::token::{self, Mint as TokenMint, Token, TokenAccount, TransferChecked};
+use anchor_spl::token::{
+    self, Burn, Mint as TokenMint, MintTo, Token, TokenAccount, TransferChecked,
+};
 
 declare_id!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3");
 
@@ -513,8 +515,7 @@ pub mod microstable {
     }
 
     pub fn mint(ctx: Context<Mint>, collateral_index: u8, collateral_amount: u64) -> Result<()> {
-        // FIX PTV2-012: simulation-only ledger update; production must mint/burn MSTB SPL
-        // with protocol_state PDA as mint authority to keep on-chain supply consistent.
+        // FIX PTV2-012: execute real SPL collateral transfer + MSTB mint CPI path.
         require!(collateral_index < 4, ErrorCode::InvalidCollateralIndex);
         require!(collateral_amount > 0, ErrorCode::InvalidAmount);
         require!(
@@ -633,6 +634,10 @@ pub mod microstable {
             &ctx.accounts.protocol_state.key(),
             &ctx.accounts.collateral_mint.key(),
         );
+        let expected_user_mstb_ata = get_associated_token_address(
+            &ctx.accounts.user.key(),
+            &ctx.accounts.mstb_mint.key(),
+        );
         require_keys_eq!(
             ctx.accounts.user_collateral_ata.key(),
             expected_user_ata,
@@ -643,8 +648,12 @@ pub mod microstable {
             expected_protocol_ata,
             ErrorCode::InvalidTokenAccount
         );
+        require_keys_eq!(
+            ctx.accounts.user_mstb_ata.key(),
+            expected_user_mstb_ata,
+            ErrorCode::InvalidTokenAccount
+        );
 
-        // FIX CR-01: execute real SPL transfer before mutating accounting state.
         token::transfer_checked(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -657,6 +666,14 @@ pub mod microstable {
             ),
             collateral_amount,
             ctx.accounts.collateral_mint.decimals,
+        )?;
+
+        mint_mstb_to_user(
+            &ctx.accounts.token_program,
+            &ctx.accounts.mstb_mint,
+            &ctx.accounts.user_mstb_ata,
+            &ctx.accounts.protocol_state,
+            minted_musd,
         )?;
 
         match collateral_index {
@@ -743,8 +760,7 @@ pub mod microstable {
     }
 
     pub fn redeem(ctx: Context<Redeem>, musd_amount: u64) -> Result<()> {
-        // FIX PTV2-012: simulation-only ledger burn; production must burn MSTB SPL
-        // via PDA-controlled mint authority to prevent supply divergence.
+        // FIX PTV2-012: execute real MSTB burn + collateral transfer CPI path.
         require!(musd_amount > 0, ErrorCode::InvalidAmount);
         require!(
             musd_amount <= MAX_COLLATERAL_AMOUNT,
@@ -861,6 +877,25 @@ pub mod microstable {
             expected_user_usds,
             ErrorCode::InvalidTokenAccount
         );
+        let expected_user_mstb =
+            get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.mstb_mint.key());
+        require_keys_eq!(
+            ctx.accounts.user_mstb_ata.key(),
+            expected_user_mstb,
+            ErrorCode::InvalidTokenAccount
+        );
+
+        token::burn(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.mstb_mint.to_account_info(),
+                    from: ctx.accounts.user_mstb_ata.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            musd_amount,
+        )?;
 
         let payout_usdc = preview_redeem_from_vault(
             ctx.accounts.vault_usdc.total_deposits,
@@ -1597,6 +1632,16 @@ pub struct Mint<'info> {
     )]
     pub vault_collateral_ata: Box<Account<'info, TokenAccount>>,
 
+    #[account(mut, mint::authority = protocol_state)]
+    pub mstb_mint: Box<Account<'info, TokenMint>>,
+
+    #[account(
+        mut,
+        associated_token::mint = mstb_mint,
+        associated_token::authority = user,
+    )]
+    pub user_mstb_ata: Box<Account<'info, TokenAccount>>,
+
     pub collateral_mint: Box<Account<'info, TokenMint>>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
@@ -1658,6 +1703,12 @@ pub struct Redeem<'info> {
     pub usdt_mint: Box<Account<'info, TokenMint>>,
     pub dai_mint: Box<Account<'info, TokenMint>>,
     pub usds_mint: Box<Account<'info, TokenMint>>,
+
+    #[account(mut, mint::authority = protocol_state)]
+    pub mstb_mint: Box<Account<'info, TokenMint>>,
+
+    #[account(mut, associated_token::mint = mstb_mint, associated_token::authority = user)]
+    pub user_mstb_ata: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
@@ -2434,6 +2485,36 @@ fn oracle_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u
             || v.confidence > ORACLE_CONFIDENCE_MAX
             || slot.saturating_sub(v.last_oracle_slot) > ORACLE_STALENESS_MAX
     })
+}
+
+fn mint_mstb_to_user<'info>(
+    token_program: &Program<'info, Token>,
+    mstb_mint: &Account<'info, TokenMint>,
+    user_mstb_ata: &Account<'info, TokenAccount>,
+    authority: &Account<'info, ProtocolState>,
+    amount: u64,
+) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+
+    let bump_seed = [authority.bump];
+    let signer_seeds: &[&[u8]] = &[b"protocol_state", &bump_seed];
+
+    token::mint_to(
+        CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            MintTo {
+                mint: mstb_mint.to_account_info(),
+                to: user_mstb_ata.to_account_info(),
+                authority: authority.to_account_info(),
+            },
+            &[signer_seeds],
+        ),
+        amount,
+    )?;
+
+    Ok(())
 }
 
 fn preview_redeem_from_vault(

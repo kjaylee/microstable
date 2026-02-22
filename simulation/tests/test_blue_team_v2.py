@@ -371,8 +371,8 @@ def test_pt011_post_replay_nonce_blocked():
 
 
 def test_pt012_pre_shared_secret_impersonation_issue():
-    msg = oae.ACPMessage.create("acp.ping", {"agent_id": "victim"}, "1", "shared")
-    assert oae.ACPMessage.verify(msg, "shared")
+    msg = oae.ACPMessage.create("acp.ping", {"agent_id": "victim"}, "1", "shared", epoch=0, expiry_epoch=2, nonce="n1")
+    assert oae.ACPMessage.verify(msg, "shared", now_epoch=0)
 
 
 def test_pt012_post_registry_key_binding():
@@ -469,6 +469,7 @@ def test_pt018_post_cumulative_window_guard():
         return {
             **p_args,
             "expiry_epoch": state.market_epoch + 2,
+            "keeper_signers": list(keeper.keeper_set[: keeper.required_quorum]),
             **({"commit_proof": proof} if proof is not None else {}),
         }
 

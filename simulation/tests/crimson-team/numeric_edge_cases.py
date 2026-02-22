@@ -156,7 +156,12 @@ def n06_negative_price_residual_drain() -> Attempt:
 
 
 def n07_negative_staleness_accepted() -> Attempt:
-    minted = ms.secure_mint_amount(1_000, [1.0], -100, 1.0)
+    minted = 0
+    err = ""
+    try:
+        minted = ms.secure_mint_amount(1_000, [1.0], -100, 1.0)
+    except Exception as exc:  # noqa: BLE001
+        err = f"{type(exc).__name__}:{exc}"
     success = minted > 0
     return Attempt(
         attempt_id="CT-N07",
@@ -164,7 +169,7 @@ def n07_negative_staleness_accepted() -> Attempt:
         category="C/D/E",
         success=success,
         severity="MEDIUM" if success else "NONE",
-        evidence={"minted": minted},
+        evidence={"minted": minted, "error": err},
         defense_or_failure_reason="validated_oracle_price checks only stale_seconds > max, not negative values.",
     )
 

@@ -18,8 +18,7 @@
 | `solana/programs/microstable/src/lib.rs:466, 2149-2194` | Pyth `write_authority` 검증이 하드코딩 allowlist 중심이라 devnet 실계정(`write_authority == price_account`)을 거부. Keeper oracle update 실운영 실패 유발. | **CRITICAL** | **YES (수정 완료)** |
 | `solana/keeper/src/oracle.rs:17, 474-482` | Keeper도 동일하게 `PYTH_TRUSTED_WRITE_AUTHORITY` 단일 신뢰값 기반 검증. 실제 devnet feed 업데이트를 거부. | **CRITICAL** | **YES (수정 완료)** |
 | `solana/keeper/src/config.rs:134` | 기본 secondary RPC가 `https://secondary-rpc.devnet.example.invalid`로 하드코딩(placeholder). 정상 dual-RPC 검증 불가. | **HIGH** | **YES (수정 완료)** |
-| `solana/programs/microstable/src/lib.rs:516` | `mint`가 주석상 “simulation-only ledger update”; 실제 MSTB SPL mint 발행 경로 미구현(장부 수치만 증가). | **HIGH** | **YES (미완, 아키텍처 변경 필요)** |
-| `solana/programs/microstable/src/lib.rs:746` | `redeem`가 주석상 “simulation-only ledger burn”; 실제 MSTB SPL burn 경로 미구현(장부 수치만 감소). | **HIGH** | **YES (미완, 아키텍처 변경 필요)** |
+| `solana/programs/microstable/src/lib.rs:515-985` | `mint/redeem`에 실제 SPL CPI 경로 부재(ledger-only)였던 문제. 현행 코드는 `token::mint_to` / `token::burn` + collateral transfer CPI를 포함하도록 보완. | **HIGH** | **YES (수정 완료, devnet 상태검증 필요)** |
 | `solana/programs/microstable/src/lib.rs:32` | `PYTH_USDS_USD` 고정 계정(`9h4r...`)이 devnet `AccountNotFound` 확인됨. index=3 feed 설정/업데이트 경로 잠재 실패. | **MEDIUM** | **YES (후속 조치 권장)** |
 | `solana/keeper/src/utils.rs:1158` | `resolve_expected_binary_sha256`가 “Legacy helper retained” 상태. 테스트 호환용 잔존 코드. | **LOW** | NO (의도된 호환 코드) |
 
@@ -28,6 +27,12 @@
 - ✅ `keeper/src/oracle.rs`: 동일 규칙으로 보완
 - ✅ `keeper/src/config.rs`: 기본 secondary RPC를 실사용 가능한 `https://devnet.rpcpool.com`으로 변경
 - ✅ `keeper/config.devnet.json`도 동일 endpoint로 갱신
+- ✅ `lib.rs`: `mint/redeem`에 실거래 CPI 경로 반영
+  - Mint: collateral `transfer_checked` → MSTB `mint_to`(PDA authority) → state update
+  - Redeem: MSTB `burn` → vault collateral `transfer_checked`(PDA authority) → state update
+  - 계정 제약: `mstb_mint(mint::authority = protocol_state)`, `user_mstb_ata` canonical ATA
+- ✅ `solana/tests/devnet-e2e.ts`: MSTB 사용자 잔고/총공급 증감 검증 TC 추가
 
-## 잔여 미구현(중요)
-- `mint/redeem`의 “simulation-only” 상태(실제 MSTB SPL mint/burn 미구현)는 구조 변경(계정 모델 + CPI 경로 + 권한 설계) 필요.
+## 운영 주의(Devnet)
+- 현재 devnet `protocol_state` 계정 데이터 길이(264 bytes)와 최신 프로그램 struct 기대치가 불일치하여,
+  일부 privileged ix(`rebalance`, `rotate_keeper_set`)가 `AccountDidNotDeserialize (0xbbb)`로 실패함.

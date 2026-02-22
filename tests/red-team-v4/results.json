@@ -1,0 +1,274 @@
+{
+  "summary": {
+    "total_attempts": 24,
+    "successful_exploits": 13,
+    "blocked_attempts": 11,
+    "success_rate": 0.5416666666666666
+  },
+  "attempts": [
+    {
+      "attempt_id": "A01",
+      "title": "Pyth publish_time exact-60s boundary accepted",
+      "defense_focus": "Pyth staleness boundary",
+      "target": "Solana oracle update",
+      "severity": "MEDIUM",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Boundary stale price acceptance around TTL edge",
+      "evidence": "max_age=60, guard='age<=max' (age==60 accepted)",
+      "narrative": "Check whether exactly 60s-old Pyth message is still accepted by <= guard."
+    },
+    {
+      "attempt_id": "A02",
+      "title": "Pyth >60s stale price acceptance",
+      "defense_focus": "Pyth staleness boundary",
+      "target": "Solana oracle update",
+      "severity": "MEDIUM",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Replay stale prices beyond configured max age",
+      "evidence": "age_guard_present=True",
+      "narrative": "Attempt to bypass publish_time guard with 61s old price."
+    },
+    {
+      "attempt_id": "A03",
+      "title": "Valid but wrong feed_id injection",
+      "defense_focus": "Feed ID validation",
+      "target": "Solana oracle parser",
+      "severity": "HIGH",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Cross-asset oracle poisoning",
+      "evidence": "feed_id_binding_present=True",
+      "narrative": "Pass syntactically valid update carrying mismatched feed_id."
+    },
+    {
+      "attempt_id": "A04",
+      "title": "Valid but wrong feed account binding",
+      "defense_focus": "Feed account validation",
+      "target": "Solana set/update oracle",
+      "severity": "HIGH",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Oracle account substitution",
+      "evidence": "account_binding=True, allowlist=True",
+      "narrative": "Try account-level feed substitution using wrong configured feed account."
+    },
+    {
+      "attempt_id": "A05",
+      "title": "Large finite oracle value over-mint",
+      "defense_focus": "NaN/inf guard bypass via huge finite",
+      "target": "Python secure_mint_amount",
+      "severity": "HIGH",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Astronomical over-mint from unbounded finite prices",
+      "evidence": "mint_normal=831666, mint_huge=831666666666666666",
+      "narrative": "Use huge finite oracle sample values near overflow regime (not NaN/inf)."
+    },
+    {
+      "attempt_id": "A06",
+      "title": "Solana commit/reveal unreachable by threshold mismatch",
+      "defense_focus": "Rebalance commit secrets",
+      "target": "Solana rebalance",
+      "severity": "HIGH",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Large-rebalance commit gate never activates",
+      "evidence": "step=20000, turnover_max=40000, commit_threshold=50000",
+      "narrative": "Compare max possible turnover vs LARGE_REBALANCE_THRESHOLD."
+    },
+    {
+      "attempt_id": "A07",
+      "title": "Replay old commit proof across epoch",
+      "defense_focus": "Rebalance commit secrets",
+      "target": "Python Keeper",
+      "severity": "MEDIUM",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Cross-epoch commit replay",
+      "evidence": "r1={'status': 'APPLIED', 'weights': [0.41, 0.29, 0.2, 0.1], 'mint_fee': 0.002}, r2={'status': 'REJECTED', 'reason': 'missing_commit_reveal_proof'}",
+      "narrative": "Reuse prior epoch commit proof after secret rotation."
+    },
+    {
+      "attempt_id": "A08",
+      "title": "Exact-threshold cumulative turnover skips commit proof",
+      "defense_focus": "Rebalance commit secrets boundary",
+      "target": "Python Keeper",
+      "severity": "MEDIUM",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Stealth split-rebalance at guard boundary",
+      "evidence": "last={'status': 'APPLIED', 'weights': [0.425, 0.275, 0.2, 0.1], 'mint_fee': 0.002}, cumulative_turnover=0.04999999999999993",
+      "narrative": "Set cumulative turnover exactly at threshold where check uses > not >=."
+    },
+    {
+      "attempt_id": "A09",
+      "title": "NaN deposit acceptance",
+      "defense_focus": "Type confusion / non-finite handling",
+      "target": "OAE staking deposit",
+      "severity": "CRITICAL",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "State poisoning with NaN balances",
+      "evidence": "deposit_ok=True, balance=nan",
+      "narrative": "Inject NaN into deposit path that lacks isfinite guard."
+    },
+    {
+      "attempt_id": "A10",
+      "title": "NaN balance withdrawal forgery",
+      "defense_focus": "Type confusion / non-finite handling",
+      "target": "OAE staking withdrawal",
+      "severity": "CRITICAL",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Unbacked withdrawals via NaN comparison semantics",
+      "evidence": "request_ok=True, withdrawn=1000000.0, final_balance=0.0",
+      "narrative": "Exploit NaN balance to bypass available-check and withdraw arbitrary amount."
+    },
+    {
+      "attempt_id": "A11",
+      "title": "Infinity deposit acceptance",
+      "defense_focus": "Type confusion / non-finite handling",
+      "target": "OAE staking deposit",
+      "severity": "HIGH",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Infinite accounting values accepted",
+      "evidence": "deposit_ok=True, balance=inf",
+      "narrative": "Inject +inf into staking balance via deposit."
+    },
+    {
+      "attempt_id": "A12",
+      "title": "Unsigned micro-claim splitting to full epoch cap",
+      "defense_focus": "Legacy unsigned claim carveout",
+      "target": "OAE reward claims",
+      "severity": "HIGH",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Bypass signed-proof requirement using claim fragmentation",
+      "evidence": "approved=1000, epoch_used=1000.0, balance=1000.0",
+      "narrative": "Submit 1000 unsigned claims of 1.0 to consume full epoch reward cap."
+    },
+    {
+      "attempt_id": "A13",
+      "title": "Negative-zero slash mint attempt",
+      "defense_focus": "NaN/inf guard edge value",
+      "target": "OAE slash",
+      "severity": "LOW",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Balance inflation from signed-zero ambiguity",
+      "evidence": "before=100.0, slashed=0.0, after=100.0",
+      "narrative": "Attempt slash with -0.0 to trigger sign confusion."
+    },
+    {
+      "attempt_id": "A14",
+      "title": "RedemptionQueue negative-burn window clog",
+      "defense_focus": "Type confusion / queue logic",
+      "target": "Redemption queue",
+      "severity": "MEDIUM",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Operational DoS via zero-value batch slot exhaustion",
+      "evidence": "first_batch=['attacker-0', 'attacker-1', 'attacker-2', 'attacker-3'], second_batch=['victim']",
+      "narrative": "Flood queue with negative burn values coerced to zero and consume smoothing window."
+    },
+    {
+      "attempt_id": "A15",
+      "title": "Anti-sybil dampening on exact clone cluster",
+      "defense_focus": "Anti-sybil dampening",
+      "target": "Tournament rewards",
+      "severity": "MEDIUM",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Sybil participant capture despite clustering",
+      "evidence": "sybil_total=2.5",
+      "narrative": "Baseline: identical fingerprints should be bucket-dampened."
+    },
+    {
+      "attempt_id": "A16",
+      "title": "Anti-sybil fingerprint evasion via rounded-bucket spray",
+      "defense_focus": "Anti-sybil dampening",
+      "target": "Tournament rewards",
+      "severity": "HIGH",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Near-full sybil reward capture despite dampening defense",
+      "evidence": "sybil_total=14.761904761904761, unique_buckets=20",
+      "narrative": "Craft many near-collusive proposals that hash into unique 2-decimal buckets."
+    },
+    {
+      "attempt_id": "A17",
+      "title": "Direct public-key hijack via actor mismatch",
+      "defense_focus": "Public key binding",
+      "target": "Agent registry",
+      "severity": "HIGH",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Identity takeover by direct overwrite",
+      "evidence": "set_public_key_ok=False",
+      "narrative": "Attempt unauthorized set_public_key(victim) from attacker actor."
+    },
+    {
+      "attempt_id": "A18",
+      "title": "Deregister/finalize race + ID re-registration takeover",
+      "defense_focus": "Public key binding race",
+      "target": "Registry + ACP",
+      "severity": "CRITICAL",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Full impersonation after lifecycle takeover",
+      "evidence": "deregister=True, finalize=True, re_register=True, forged_verify=True",
+      "narrative": "Exploit unauth lifecycle transitions to recycle victim ID and bind attacker key."
+    },
+    {
+      "attempt_id": "A19",
+      "title": "Legacy ACP default-path replay",
+      "defense_focus": "allow_legacy=False",
+      "target": "ACP verifier",
+      "severity": "MEDIUM",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Legacy replay acceptance by default",
+      "evidence": "legacy_verify_default=False",
+      "narrative": "Replay legacy ACP message without nonce/expiry under default verifier settings."
+    },
+    {
+      "attempt_id": "A20",
+      "title": "Expired ACP accepted when now_epoch omitted",
+      "defense_focus": "allow_legacy/expiry enforcement path",
+      "target": "ACP verifier",
+      "severity": "MEDIUM",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Time-expired control messages accepted in lax caller mode",
+      "evidence": "late_no_now=True, late_with_now=False",
+      "narrative": "Send expired signed message to verifier call site that omits now_epoch."
+    },
+    {
+      "attempt_id": "A21",
+      "title": "Insurance sybil rotation bypass",
+      "defense_focus": "Insurance cooldown",
+      "target": "Insurance fund",
+      "severity": "MEDIUM",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Bypass claimant cooldown via rotating identities",
+      "evidence": "r1={'approved': True, 'reason': 'ok', 'treasury': 999000.0}, r2={'approved': False, 'reason': 'global_cooldown'}",
+      "narrative": "Use two claimants in adjacent ticks to evade per-user cooldown."
+    },
+    {
+      "attempt_id": "A22",
+      "title": "Insurance invalid-claim auto-refill trigger",
+      "defense_focus": "Insurance epoch manipulation",
+      "target": "Insurance fund",
+      "severity": "HIGH",
+      "outcome": "SUCCESS",
+      "financial_impact_estimate": "Treasury inflation without approved claims",
+      "evidence": "before=240000.0, invalid={'approved': False, 'reason': 'below_min_claim'}, after=440000.0",
+      "narrative": "Trigger auto_refill using below-min invalid claims before validation short-circuit."
+    },
+    {
+      "attempt_id": "A23",
+      "title": "Insurance epoch-boundary cooldown bypass",
+      "defense_focus": "Insurance cooldown boundary",
+      "target": "Insurance fund",
+      "severity": "MEDIUM",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "Cooldown bypass at epoch rollover",
+      "evidence": "tick19={'approved': True, 'reason': 'ok', 'treasury': 999000.0}, tick20={'approved': False, 'reason': 'global_cooldown'}",
+      "narrative": "Claim at tick 19 then tick 20 with different claimant."
+    },
+    {
+      "attempt_id": "A24",
+      "title": "Migration one-shot bypass via CPI",
+      "defense_focus": "Migration one-shot",
+      "target": "Solana migration",
+      "severity": "HIGH",
+      "outcome": "BLOCKED",
+      "financial_impact_estimate": "State reinitialization via CPI/replay",
+      "evidence": "trusted_initializer=True, signer=True, one_shot=True",
+      "narrative": "Check for signer + trusted initializer + discriminator one-shot gates."
+    }
+  ]
+}

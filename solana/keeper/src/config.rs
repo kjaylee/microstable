@@ -135,7 +135,8 @@ impl KeeperConfig {
             program_id: pubkey!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"),
             keeper_keypairs: vec![
                 PathBuf::from("~/.config/solana/devnet-keypair.json"),
-                PathBuf::from("~/.config/solana/devnet-deploy.json"),
+                PathBuf::from("keeper/keeper2.json"),
+                PathBuf::from("keeper/keeper3.json"),
             ],
             pyth_feeds: vec![
                 PythFeedConfig {
