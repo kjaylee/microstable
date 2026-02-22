@@ -1,0 +1,270 @@
+{
+  "lastUpdated": "2026-02-22T04:05:00Z",
+  "pipeline": {
+    "m0": {
+      "status": "complete",
+      "label": "Agent Governance",
+      "detail": "Spec Section 10: 3-agent system"
+    },
+    "m1": {
+      "status": "complete",
+      "label": "Algorithm Verification",
+      "detail": "412-line report, CB=FAIL fixed"
+    },
+    "m1.5": {
+      "status": "complete",
+      "label": "Circuit Breaker Fix",
+      "detail": "Recovery/priority/Zeno prevention"
+    },
+    "m2": {
+      "status": "complete",
+      "label": "Test Cases",
+      "detail": "55 TCs (Value 12, Loss 8, Optimizer 8, CB 15, Scenario 8, Agent 4)"
+    },
+    "m3": {
+      "status": "complete",
+      "label": "Python Simulator",
+      "detail": "1,437 lines, zero deps",
+      "gateA": {
+        "pegMAE": 0.000331,
+        "crViolation": 0.0,
+        "breakerFP": 0.0
+      }
+    },
+    "m4": {
+      "status": "complete",
+      "label": "Scenario Verification",
+      "detail": "6 scenarios \u00d7 100 runs",
+      "scenarios": [
+        "normal",
+        "single_depeg",
+        "multi_depeg",
+        "volatile",
+        "gradient_attack",
+        "oracle_failure"
+      ]
+    },
+    "m5": {
+      "status": "complete",
+      "label": "Solana Anchor",
+      "detail": "Build + 7/7 tests pass",
+      "binarySize": "273KB"
+    },
+    "m6": {
+      "status": "local_validated",
+      "label": "Deployment",
+      "detail": "Local validator verified, devnet pending",
+      "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"
+    },
+    "m7": {
+      "status": "complete",
+      "label": "Agent Interfaces",
+      "detail": "keeper/watchdog/auditor/consensus",
+      "agents": [
+        "keeper",
+        "watchdog",
+        "auditor",
+        "consensus"
+      ]
+    }
+  },
+  "gateA": {
+    "threshold": {
+      "pegMAE": 0.0015,
+      "crViolation": 1.0,
+      "breakerFP": 5.0
+    },
+    "results": {
+      "normal": {
+        "pegMAE": 0.000331,
+        "crViolation": 0.0,
+        "breakerFP": 0.0,
+        "pass": true
+      },
+      "single_depeg": {
+        "pegMAE": 0.000892,
+        "crViolation": 0.0,
+        "breakerFP": 0.0,
+        "pass": true
+      },
+      "multi_depeg": {
+        "pegMAE": 0.001331,
+        "crViolation": 0.0,
+        "breakerFP": 0.0,
+        "pass": true
+      },
+      "volatile": {
+        "pegMAE": 0.000567,
+        "crViolation": 0.0,
+        "breakerFP": 0.0,
+        "pass": true
+      },
+      "gradient_attack": {
+        "pegMAE": 0.000445,
+        "crViolation": 0.0,
+        "breakerFP": 0.0,
+        "pass": true
+      },
+      "oracle_failure": {
+        "pegMAE": 0.000712,
+        "crViolation": 0.0,
+        "breakerFP": 0.0,
+        "pass": true
+      }
+    }
+  },
+  "collateral": {
+    "basket": [
+      {
+        "symbol": "USDC",
+        "weight": 0.4,
+        "maxWeight": 0.55,
+        "color": "#2775CA"
+      },
+      {
+        "symbol": "USDT",
+        "weight": 0.3,
+        "maxWeight": 0.45,
+        "color": "#26A17B"
+      },
+      {
+        "symbol": "DAI",
+        "weight": 0.2,
+        "maxWeight": 0.45,
+        "color": "#F5AC37"
+      },
+      {
+        "symbol": "USDS",
+        "weight": 0.1,
+        "maxWeight": 0.35,
+        "color": "#6B7280"
+      }
+    ]
+  },
+  "agents": [
+    {
+      "name": "Optimizer Keeper",
+      "icon": "\ud83d\udd27",
+      "role": "Gradient descent, weight rebalancing",
+      "feeShare": 30,
+      "status": "ready"
+    },
+    {
+      "name": "Watchdog",
+      "icon": "\ud83d\udc41\ufe0f",
+      "role": "Price monitoring, CB detection",
+      "feeShare": 10,
+      "status": "ready"
+    },
+    {
+      "name": "Auditor",
+      "icon": "\ud83d\udccb",
+      "role": "Invariant validation, compliance",
+      "feeShare": 5,
+      "status": "ready"
+    },
+    {
+      "name": "Treasury",
+      "icon": "\ud83c\udfe6",
+      "role": "Protocol reserve fund",
+      "feeShare": 55,
+      "status": "active"
+    }
+  ],
+  "stressTest": {
+    "status": "complete",
+    "overall": "FAIL",
+    "passCount": 7,
+    "failCount": 1,
+    "totalRuns": 800,
+    "crashes": 0,
+    "nanInf": 0,
+    "scenarios": [
+      {
+        "name": "Death Spiral",
+        "icon": "\ud83d\udc80",
+        "result": "PASS",
+        "mae": 0.003599,
+        "detail": "Recovery 9 ticks"
+      },
+      {
+        "name": "Flash Crash",
+        "icon": "\u26a1",
+        "result": "FAIL",
+        "mae": 0.000469,
+        "detail": "CB FP rate 50%"
+      },
+      {
+        "name": "Oracle Manipulation",
+        "icon": "\ud83c\udfaf",
+        "result": "PASS",
+        "mae": 0.000322,
+        "detail": "Optimizer resisted"
+      },
+      {
+        "name": "High Volatility",
+        "icon": "\ud83c\udf0a",
+        "result": "PASS",
+        "mae": 0.000567,
+        "detail": "200 ticks stable"
+      },
+      {
+        "name": "Cascading CB",
+        "icon": "\ud83d\udd25",
+        "result": "PASS",
+        "mae": 0.0012,
+        "detail": "Priority correct"
+      },
+      {
+        "name": "Weight Manipulation",
+        "icon": "\ud83c\udfad",
+        "result": "PASS",
+        "mae": 0.000445,
+        "detail": "Diversified"
+      },
+      {
+        "name": "Zero Liquidity",
+        "icon": "\ud83d\udd73\ufe0f",
+        "result": "PASS",
+        "mae": 0.0,
+        "detail": "No NaN/crash"
+      },
+      {
+        "name": "Long Duration",
+        "icon": "\ud83c\udfd4\ufe0f",
+        "result": "PASS",
+        "mae": 0.000331,
+        "detail": "10K ticks stable"
+      }
+    ],
+    "lastUpdate": "2026-02-22T04:05:00Z"
+  },
+  "redTeam": {
+    "status": "running",
+    "findings": [],
+    "summary": null,
+    "startedAt": "2026-02-22T03:44:00Z",
+    "lastUpdate": null
+  },
+  "devnet": {
+    "status": "pending_sol",
+    "balance": 0,
+    "address": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+    "network": "devnet",
+    "retrySchedule": "hourly"
+  },
+  "github": {
+    "repo": "https://github.com/kjaylee/microstable",
+    "license": "MIT",
+    "latestCommit": "be629a9",
+    "commits": 7
+  },
+  "stats": {
+    "simulatorLines": 1437,
+    "testCases": 55,
+    "monteCarloRuns": 600,
+    "scenarios": 6,
+    "anchorTests": 7,
+    "agentCount": 4
+  }
+}
