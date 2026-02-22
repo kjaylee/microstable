@@ -213,94 +213,75 @@ The protocol avoids reflexive expansion under stress by design:
 
 ## 7. Simulation Results
 
-This section reports measured outputs from the Phase 1 implementation (`microstable.py`) and verification artifacts (`outputs/verification-report.md`, `tests/test_verification.py`).
+This section is updated with **real M4 verification data** from the current implementation (`microstable.py`, `test_microstable.py`).
 
-### 7.1 Single-Run Scenario Metrics (Seed=0, 120 ticks)
+### 7.1 Verification Campaign Setup
 
-Command:
+- Command: `cd /Users/kjaylee/.openclaw/workspace/microstable && python3 test_microstable.py`
+- Monte Carlo scope: **100 seeds × 6 scenarios × 80 ticks** (600 runs)
+- Scenarios: `normal`, `single_depeg`, `multi_depeg`, `volatile`, `gradient_attack`, `oracle_failure`
+- Full raw log: `outputs/m4-test_microstable-full-output.txt`
+- Aggregate stats artifact: `outputs/m4-montecarlo-analysis.json`
 
-```bash
-cd microstable
-python3 microstable.py
-```
+### 7.2 Gate A Outcomes (Per Scenario, 100/100 runs)
 
-**Table 1. Scenario-level performance metrics**
+Gate A criteria:
+- peg MAE < 0.0015
+- CR violation rate < 1%
+- breaker false positive rate < 5%
 
-| Scenario | peg MAE | CR violation rate | Breaker false positive rate |
-|---|---:|---:|---:|
-| normal | 0.000149 | 0.0000 | 0.0000 |
-| single_depeg | 0.000247 | 0.0000 | 0.0000 |
-| multi_depeg | 0.000943 | 0.0000 | 0.0000 |
-| volatile | 0.000300 | 0.0000 | 0.0000 |
-| gradient_attack | 0.000184 | 0.0000 | 0.0000 |
-| oracle_failure | 0.000267 | 0.0000 | 0.0000 |
-
-### 7.2 Monte Carlo Statistics (100 seeds × 6 scenarios)
-
-The verification harness executed 600 runs total. Mean/p95/worst values are reported in `verification-report.md`; p5/p50 are from the same Monte Carlo configuration in `tests/test_verification.py`.
-
-**Table 2. Peg MAE distribution by scenario**
-
-| Scenario | mean | p5 | p50 | p95 | worst |
+| Scenario | Gate A status | Failures (out of 100) | peg MAE worst | CR violation worst | FP worst |
 |---|---:|---:|---:|---:|---:|
-| normal | 0.000156 | 0.000142 | 0.000155 | 0.000169 | 0.000180 |
-| single_depeg | 0.000260 | 0.000240 | 0.000259 | 0.000280 | 0.000294 |
-| multi_depeg | 0.001095 | 0.001072 | 0.001093 | 0.001117 | 0.001134 |
-| volatile | 0.000330 | 0.000287 | 0.000330 | 0.000386 | 0.000426 |
-| gradient_attack | 0.000201 | 0.000182 | 0.000202 | 0.000222 | 0.000244 |
-| oracle_failure | 0.000285 | 0.000264 | 0.000284 | 0.000308 | 0.000322 |
+| normal | PASS | 0 | 0.000366 | 0.000000% | 0.000000% |
+| single_depeg | PASS | 0 | 0.000456 | 0.000000% | 0.000000% |
+| multi_depeg | PASS | 0 | 0.001331 | 0.000000% | 0.000000% |
+| volatile | PASS | 0 | 0.000504 | 0.000000% | 0.000000% |
+| gradient_attack | PASS | 0 | 0.000389 | 0.000000% | 0.000000% |
+| oracle_failure | PASS | 0 | 0.000639 | 0.000000% | 0.000000% |
 
-Additional risk statistics from the same campaign:
+**Result**: all scenarios pass Gate A; stop condition (≥3 failures on any scenario) was not triggered.
 
-- CR violation p95: 0.0000 for all six scenarios.
-- Breaker false-positive p95: 0.0000 for all six scenarios.
-- Threshold checks: normal-market peg MAE p95 < 0.0015, stress CR violation p95 < 1%, breaker false-positive p95 < 5% (all PASS).
+### 7.3 Monte Carlo KPI Distributions (mean / median / p5 / p95 / worst)
 
-### 7.3 Peg Trajectory Chart Description (Textual)
+#### (A) peg MAE
 
-- **normal**: peg remains tightly centered around 1.0 with small mean-reverting noise and no structural stress signatures.
-- **single_depeg**: a localized temporary peg deviation occurs during the depeg window, followed by stable re-centering after breaker intervention.
-- **multi_depeg**: largest sustained deviation profile among all scenarios; trajectory widens during correlated stress and then converges without solvency breach.
-- **volatile**: frequent high-frequency oscillations are observed, but amplitude stays bounded and does not accumulate into directional drift.
-- **gradient_attack**: alternating shocks create sawtooth-like pressure; adaptive updates and breakers keep deviations short-lived.
-- **oracle_failure**: during stale/divergent oracle interval, peg quality degrades modestly; conservative mode and optimization freeze prevent destabilizing updates.
+| Scenario | mean | median | p5 | p95 | worst |
+|---|---:|---:|---:|---:|---:|
+| normal | 0.000336 | 0.000336 | 0.000321 | 0.000353 | 0.000366 |
+| single_depeg | 0.000402 | 0.000402 | 0.000374 | 0.000436 | 0.000456 |
+| multi_depeg | 0.001274 | 0.001274 | 0.001244 | 0.001304 | 0.001331 |
+| volatile | 0.000405 | 0.000406 | 0.000354 | 0.000457 | 0.000504 |
+| gradient_attack | 0.000334 | 0.000334 | 0.000307 | 0.000366 | 0.000389 |
+| oracle_failure | 0.000585 | 0.000586 | 0.000558 | 0.000614 | 0.000639 |
 
-### 7.4 Circuit Breaker Activation Log (Seed=0, 120 ticks)
+#### (B) CR_min
 
-From `python3 microstable.py` output:
+| Scenario | mean | median | p5 | p95 | worst (lowest) |
+|---|---:|---:|---:|---:|---:|
+| normal | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
+| single_depeg | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
+| multi_depeg | 1.202941 | 1.202961 | 1.202601 | 1.203325 | 1.202422 |
+| volatile | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
+| gradient_attack | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
+| oracle_failure | 1.202944 | 1.202959 | 1.202689 | 1.203232 | 1.202554 |
 
-- **normal**: CB1=0, CB2=0, CB3=0, CB4=0
-- **single_depeg**: CB1=1, CB2=0, CB3=0, CB4=0
-- **multi_depeg**: CB1=1, CB2=1, CB3=0, CB4=0
-- **volatile**: CB1=0, CB2=0, CB3=0, CB4=0
-- **gradient_attack**: CB1=1, CB2=1, CB3=0, CB4=0
-- **oracle_failure**: CB1=0, CB2=0, CB3=1, CB4=1
+#### (C) turnover and breaker activations
 
-Interpretation: breaker routing matched intended threat classes (depeg→CB1/CB2, oracle degradation→CB3, optimizer divergence protection→CB4).
+| Scenario | turnover mean | turnover p95 | turnover worst | breaker activations mean | breaker activations worst |
+|---|---:|---:|---:|---:|---:|
+| normal | 0.000003 | 0.000003 | 0.000003 | 0.0 | 0 |
+| single_depeg | 0.001334 | 0.001336 | 0.001337 | 1.0 | 1 |
+| multi_depeg | 0.001761 | 0.002305 | 0.002305 | 2.0 | 2 |
+| volatile | 0.000010 | 0.000023 | 0.000039 | 0.0 | 0 |
+| gradient_attack | 0.000003 | 0.000003 | 0.000004 | 0.0 | 0 |
+| oracle_failure | 0.000003 | 0.000004 | 0.000004 | 1.0 | 1 |
 
-### 7.5 Gradient Check Summary
+### 7.4 Interpretation
 
-- Checked points: **29** (requirement: ≥20)
-- Covered ops: `+ - * / ** tanh exp log relu` plus composite chain `(a*b + c**2 - d/e)`
-- Max absolute error: **4.17e-09**
-- Max relative error: **8.35e-10**
-- Result: **PASS**
-
-### 7.6 Fuzzing Summary
-
-- Inputs: **1000** randomized extreme samples
-- Domain: prices `[0.5, 1.5]`, oracle quality `[0.0, 1.0]`, randomized state/weights
-- Crashes / NaN / Inf: **0**
-- Result: **PASS**
-
-### 7.7 Phase 1 Conclusion
-
-Phase 1 success criteria are satisfied.
-
-- All 6 scenarios executed without crash.
-- 55/55 unit/integration test cases passed.
-- Numerical verification, per-tick invariants, Monte Carlo thresholds, fuzzing, and circuit-breaker transition checks all passed.
-- No observed $CR_t$ hard-floor violations and no breaker false-positive escalation in the verification campaign.
+1. **Peg robustness**: all scenarios remain below the MAE threshold (0.0015), with `multi_depeg` as the closest stress case (worst 0.001331).
+2. **Solvency safety**: no CR hard-floor violations observed in any of 600 runs.
+3. **Breaker quality**: zero false positives under this scenario set; breaker activations align with intended stress classes (depeg/oracle-linked routing).
+4. **Operational note**: current stress generators produce highly structured breaker counts; future work should include heavier tail stress combinations to test additional headroom.
 
 ## 8. Comparison with Existing Approaches
 
