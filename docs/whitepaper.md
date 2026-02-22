@@ -1,8 +1,8 @@
 # microstable: A Self-Evolving, Agent-Native Multi-Collateral Stablecoin Protocol
 
-**Version**: Draft v0.2  
+**Version**: Draft v0.3  
 **Status**: Research Whitepaper (Educational / Hobby Project)  
-**Runtime Architecture**: Solana on-chain program + off-chain Rust keeper daemon  
+**Runtime Architecture**: Solana on-chain program (Anchor/Rust) + off-chain Rust keeper daemon  
 **Program ID (Devnet)**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
 
 > "Keep the protocol small and inspectable. Make adaptation bounded and auditable."
@@ -11,462 +11,163 @@
 
 ## 1. Abstract
 
-Stablecoins remain essential digital settlement primitives, but they still fail in predictable ways: concentrated collateral exposure, delayed governance reactions, oracle fragility, and static policy parameters that do not adapt to regime shifts. **microstable** proposes a bounded, inspectable alternative: a multi-collateral stablecoin protocol that continuously re-optimizes selected parameters while preserving hard safety invariants.
+Stablecoins remain essential settlement primitives, but typical failure modes are persistent: collateral concentration, delayed policy updates, oracle degradation, and weak emergency controls. **microstable** proposes a bounded and inspectable design: deterministic settlement on-chain, adaptive policy off-chain, and strict safety guards at every transition.
 
-Draft v0.2 extends prior design and simulation work in three directions. First, it introduces an **Open Agent Economy (OAE)** where participation is permissionless but stake- and reputation-constrained. Second, it adds an **Agent Intelligence Gate (AIG)** with progressive Tier 0→3 admission and runtime demotion logic. Third, it reports concrete implementation progress with Solana devnet deployment, Pyth integration, SPL-token E2E flow validation, and continuous red/purple/crimson adversarial campaigns.
+Draft **v0.3** updates the architecture and operations model to reflect production direction:
 
-The central claim remains unchanged: optimization should be a servant of solvency. microstable keeps settlement deterministic on-chain, pushes heavy optimization off-chain, and enforces strict circuit breakers, bounded deltas, and rollback-safe state transitions.
+- Solana on-chain kernel in **Anchor/Rust**,
+- Rust keeper daemon for oracle/rebalance/monitoring operations,
+- archived Python simulation retained only for educational and verification reference,
+- full security-cycle status with zero-finding rounds,
+- explicit instruction surface and devnet identifiers,
+- formal-verification hints for core invariants.
 
-## 2. Introduction
+## 2. Scope and Disclaimer
 
-Bitcoin demonstrated that monetary policy can be protocolized. Modern AI systems demonstrated that compact, explicit code can still produce adaptive behavior. microstable combines these two ideas for stablecoin design.
+This document is a research whitepaper for an educational/hobby project. It is **not** investment advice, legal advice, or a promise of future performance. The objective is protocol design clarity, safety reasoning, and reproducible engineering.
 
-Instead of discretionary, episodic parameter tuning, microstable uses explicit objectives and bounded updates. Unlike fully reflexive algorithmic systems, it does not allow unconstrained expansion loops.
+## 3. Architecture (v0.3)
 
-### 2.1 Motivation: Why now
+### 3.1 On-chain kernel: Solana + Anchor/Rust
 
-Stablecoins are no longer only DeFi infrastructure; they are becoming settlement rails for **agent-driven transactions** (autonomous market-making, machine-to-machine payments, automated treasury operations). Agent economies require:
+The on-chain program is the source of truth for:
 
-- deterministic and machine-verifiable rules,
-- low-latency parameter adaptation,
-- explicit safety constraints under stress,
-- permissionless but accountable participation.
-
-### 2.2 Thesis
-
-Let $\theta_t$ denote protocol parameters and $\mathcal{L}_t$ a risk-aware objective. microstable updates only within strict bounds:
-
-$$
-\theta_{t+1} = \Pi_{\Omega}\left(\theta_t - \alpha_t \nabla_{\theta}\mathcal{L}_t\right),
-$$
-
-where $\Pi_{\Omega}$ projects to a feasible safety set $\Omega$ (caps, floors, simplex constraints, fee limits, circuit state constraints).
-
-The objective is not unconstrained growth; it is robust peg quality and solvency under adversarial conditions.
-
-## 3. Background
-
-### 3.1 Lessons from prior failures
-
-The UST/Luna collapse highlighted three recurring failure channels:
-
-1. reflexive mint/burn feedback under confidence shock,  
-2. liquidity evaporation and slippage amplification,  
-3. absent or weak hard stops during fast depeg dynamics.
-
-microstable treats these as control-system failures, not marketing failures.
-
-### 3.2 Existing approaches and gap
-
-- **DAI-like systems**: strong collateral discipline, slower governance adaptation.
-- **FRAX-like historical hybrids**: flexible but confidence-sensitive.
-- **mStable-style baskets**: diversification and routing efficiency.
-
-microstable keeps basket diversification but adds agent-native optimization and formalized safety rails.
-
-### 3.3 Agent-native protocol context
-
-Agent-native protocols need deterministic interfaces (for automation) plus anti-sybil economics (for adversarial environments). Draft v0.2 therefore expands from “adaptive stablecoin” to “adaptive stablecoin with accountable machine participants.”
-
-## 4. System Design
-
-### 4.1 Collateral basket and constraints
-
-For collateral set $\mathcal{C}=\{c_1,\dots,c_n\}$ with weights $w_{i,t}$:
-
-$$
-\sum_i w_{i,t}=1,\quad w_{i,t}\ge 0,
-$$
-
-with per-asset upper bounds $w_{i,t}\le w_i^{\max}$ and risk haircuts in valuation.
-
-### 4.2 Parameter vector
-
-$$
-\theta_t=[\text{targetCR}_t,\text{mintFee}_t,\text{redeemFee}_t,\mathbf{w}_t,\dots]
-$$
-
-Updates are clipped by per-epoch movement caps (e.g., bounded weight and fee deltas).
-
-### 4.3 Loss function
-
-A representative objective:
-
-$$
-\mathcal{L}_t =
-\lambda_p(p_t-1)^2
-+\lambda_{cr}\max(0,CR_{\min}-CR_t)^2
-+\lambda_{vol}\,\mathrm{Var}(\Delta NAV)
-+\lambda_{turn}\|\mathbf{w}_t-\mathbf{w}_{t-1}\|_1
-+\lambda_{conc}\sum_i w_{i,t}^2
-+\lambda_{orc}(1-q_t)^2.
-$$
-
-Interpretation: preserve peg, avoid under-collateralization, reduce concentration and turnover, and penalize low-confidence oracle regimes.
-
-### 4.4 Optimization and projection
-
-microstable applies gradient/Adam-like updates only after:
-
-- gradient clipping,
-- bounded delta checks,
-- simplex + cap projection,
-- safety-gate acceptance.
-
-### 4.5 Circuit breakers
-
-- **CB-1 (depeg)**: asset-level depeg response and weight-cap reduction.
-- **CB-2 (collateral stress)**: mint tightening / halt under systemic stress.
-- **CB-3 (oracle degraded)**: conservative mode and optimization freeze.
-- **CB-4 (numerical rollback)**: checkpoint rollback on non-finite/unsafe optimizer state.
-
-### 4.6 Liquidity execution guardrails
-
-Execution constraints (slippage and turnover slicing) are distinct from numerical safety breakers, preventing optimization-valid but market-toxic moves.
-
-## 5. Architecture
-
-Draft v0.2 formalizes a **two-layer production architecture**:
-
-### 5.1 On-chain (Solana program)
-
-- custody/accounting,
-- mint/redeem state transitions,
-- invariant enforcement,
+- custody/accounting state,
+- mint/redeem transitions,
 - circuit-breaker state machine,
-- bounded update acceptance.
+- bounded acceptance of keeper proposals,
+- role- and signature-scoped authority checks.
 
-### 5.2 Off-chain (Rust keeper daemon)
+### 3.2 Off-chain runtime: Rust keeper daemon
 
-- oracle ingestion,
-- rebalance proposal generation,
-- monitor/watchdog loops,
-- keeper quorum coordination and submission.
+The keeper performs deterministic, policy-bounded off-chain computation and submits auditable intents to the chain.
 
-Reference implementation: `solana/keeper/` (`microstable-keeper`).
+### 3.3 Python simulation status
 
-### 5.3 Python simulation status
+The Python simulator under `simulation/` is now treated as **archived educational material and verification harness**, not a production runtime component.
 
-The Python simulator remains preserved under `simulation/` as an **archived reference and verification harness**, not the production runtime component.
+## 4. Protocol Model (Summary)
 
-## 6. Security Analysis
-
-Security analysis in v0.2 is informed by multi-round adversarial campaigns rather than purely hypothetical threat narratives.
-
-### 6.1 Attack classes observed in practice
-
-- reward/accounting manipulation,
-- identity/authorization bypass attempts,
-- oracle freshness and binding abuse,
-- tournament gaming and sybil reward capture,
-- watchdog consensus abuse,
-- numeric poisoning (NaN/Inf/edge semantics),
-- lifecycle and governance race conditions.
-
-### 6.2 Defensive design principles
-
-1. **Hard state invariants first** (caps/floors/finite checks).
-2. **Layered authorization** (keeper quorum, signer checks, scoped keys).
-3. **One-shot and replay-safe flows** (commit/reveal consume semantics, nonce discipline).
-4. **Economic penalties with semantic consistency** (slash model coherence).
-5. **Conservative fallback paths** for oracle degradation and abnormal states.
-
-### 6.3 Residual risk
-
-Remaining risk clusters are economic griefing and edge-case semantics under adversarial composition. Continuous red/blue cycling is treated as a permanent operational requirement, not a one-time audit phase.
-
-## 7. Open Agent Economy
-
-(From OAE spec sections 1–3)
-
-### 7.1 Participation model
-
-microstable moves from fixed 3-agent operation toward permissionless participation:
-
-- open registration via stake,
-- role specialization (Optimizer, Monitor, Auditor, Liquidator),
-- on-chain Agent Registry records status, stake, and reputation.
-
-### 7.2 Agent Registry
-
-Each agent is tracked through a registry account (PDA design in spec), including:
-
-- stake,
-- reputation,
-- accepted/proposed counts,
-- lifecycle status (Active/Cooldown/Slashed/Deregistered).
-
-### 7.3 ACP (Agent Communication Protocol)
-
-ACP v1 uses JSON-RPC style envelopes with signed messages for operations such as proposal submission, anomaly reporting, voting, and reward claiming.
-
-### 7.4 Optimization tournaments
-
-OAE introduces competitive proposal selection (commit/reveal compatible) with reward distribution and anti-gaming controls (copycat penalties, minimum stake, stake-weighted reputation).
-
-## 8. Agent Intelligence Gate
-
-AIG adds progressive trust before full protocol influence.
-
-### 8.1 Tiered progression
-
-- **Tier 0**: challenge exam on historical stress scenarios.
-- **Tier 1**: sandbox trial (100 epochs).
-- **Tier 2**: probation with restricted authority (minimum 30 epochs).
-- **Tier 3**: full participation with ongoing demotion checks.
-
-### 8.2 AgentScore model
-
-AgentScore combines quality, latency, safety, adversarial resilience, and consistency:
+Let protocol parameters be \(\theta_t\) and feasible safety set be \(\Omega\):
 
 $$
-\mathrm{Score}=0.35Q_{opt}+0.20Q_{lat}+0.20Q_{safe}+0.15Q_{adv}+0.10Q_{cons},
+\theta_{t+1}=\Pi_{\Omega}\left(\theta_t-\alpha_t\nabla\mathcal{L}_t\right)
 $$
 
-with score-to-tier mapping and downgrade triggers for deterioration.
+where projection \(\Pi_{\Omega}\) enforces hard bounds (caps/floors/simplex/fee limits/CB states). Optimization is subordinate to solvency and liveness.
 
-### 8.3 Integration policy
+## 5. On-Chain Instruction Surface (13)
 
-AIG gating is enforced at admission and during operation, reducing low-quality or malicious agent influence in OAE.
+v0.3 instruction surface (13 entrypoints):
 
-## 9. Protocol Resilience
+1. `initialize`
+2. `migrate_legacy_state`
+3. `update_oracle`
+4. `update_oracle_pyth`
+5. `set_pyth_feed`
+6. `mint`
+7. `redeem`
+8. `commit_rebalance`
+9. `rebalance`
+10. `activate_circuit_breaker`
+11. `recover_circuit_breaker`
+12. `emergency_shutdown` / `resume`
+13. `rotate_keeper_set`
 
-(From priority matrix in protocol gap analysis)
+## 6. Keeper Daemon Design (Rust)
 
-### 9.1 Structural gap matrix
+The keeper daemon is organized into four core modules:
 
-| Gap | Risk | Priority | Mitigation Direction |
-|---|---|---|---|
-| Correlated collateral risk | CRITICAL | P1 | Correlation-aware rebalancing + preemptive caps |
-| Collateral freeze risk | CRITICAL | P1 | Freeze-aware reweighting + redemption rerouting |
-| Bank run / redemption spiral | CRITICAL | P1 | Dynamic redemption fees + queued fair settlement |
-| Off-chain agent collusion | HIGH | P2 | Behavioral cluster detection + cluster penalties |
-| Governance plutocracy | HIGH | P2 | Entity caps + dampened governance weighting |
-| MEV / front-running | HIGH | P2 | Extended commit-reveal + batch style settlement |
-| CB cascading deadlock | CRITICAL | P1 | Interaction graph + forced recovery order |
-| Program upgrade single-key risk | CRITICAL | P1 | Multisig + timelock + guardian separation |
-| Economic death spiral | CRITICAL | P1 | Economic floor + treasury draw caps |
-| Information asymmetry | HIGH | P2 | Real-time disclosure + audit logs + policy penalties |
+1. **oracle module**: fetches and normalizes multi-source data, freshness checks, confidence-aware scoring.
+2. **rebalance module**: computes bounded proposals under policy constraints and prepares commit/reveal-compatible transactions.
+3. **monitor module**: evaluates protocol health (peg, CR, liquidity, oracle quality, breaker triggers) and emits deterministic alerts.
+4. **watchdog module**: supervises keeper process health, task deadlines, and safety fallback transitions.
 
-### 9.2 Interpretation
+### 6.1 Dual-RPC validation and tolerance checks
 
-The top resilience priorities are not cosmetic optimizations; they are existential liveness and solvency controls.
+Keeper reads are cross-checked between primary and secondary RPC endpoints. State responses are compared with tolerance-aware rules to detect divergence, lag, and transient fork ambiguity.
 
-## 10. Adversarial Infrastructure
+### 6.2 `SecondaryRpcMode`
 
-(From sections 1–2 of adversarial infrastructure spec)
+Keeper state transitions include three explicit secondary-RPC modes:
 
-### 10.1 Threat model assumptions
+- **normal**: primary + secondary both healthy and convergent,
+- **degraded**: secondary present but unstable/divergent (tightened policy, conservative cadence),
+- **no-secondary**: only primary available (most conservative behavior and escalation logging).
 
-Adversaries are modeled as high-speed, persistent, massively parallel, adaptive entities (up to swarm-level coordination and substantial attack budget).
+### 6.3 Adaptive confirmation windows
 
-### 10.2 Embedded Red/Blue architecture
+Submission confirmation windows adapt to observed network conditions (slot delay, commit latency, recent finalization behavior), reducing both premature retries and unsafe assumptions.
 
-- **Red side**: mutation-based attack generation, compositional attack chains, swarm execution, evolutionary search.
-- **Blue side**: anomaly detection (statistical/graph/behavioral), automatic response, forensics signatureing, adaptive hardening.
+### 6.4 Build attestation and supply-chain controls
 
-### 10.3 Antifragile loop
+- `Cargo.lock` anchored compile-time attestation,
+- reproducible build checks,
+- dependency pinning and review gates,
+- controlled artifact provenance for keeper release flow.
 
-microstable uses a continuous adversarial loop where successful attacks are converted into signatures/policies to improve future immunity.
+## 7. Security Lifecycle Results (v0.3)
 
-Immunity metric:
+microstable completed a full iterative security cycle with Purple/Red/Blue/Crimson style operations. Final cycle report: **6 rounds, ZERO FINDINGS**.
 
-$$
-\mathrm{Immunity}=1-\frac{\text{successful attacks}}{\text{total attacks}}.
-$$
+Additional verification status:
 
-Reported campaign immunity score: **1.0** (adversarial infrastructure test report).
+- **38 integration tests: all passing**,
+- no open critical findings in the current tracked cycle,
+- continuous adversarial testing retained as a permanent requirement.
 
-## 11. Security Audit Results
+## 8. Devnet Deployment
 
-### 11.1 Continuous cycling methodology
+- **Program ID**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
+- **MSTB mint**: `EZUwC88f1s3k9prgv5DGY6wML8giBqdpRxoA2rLtGA6R`
 
-microstable used alternating discovery/patch campaigns (Purple/Red + Blue patching) rather than one static audit.
+These identifiers are the current reference endpoints for devnet experimentation and integration tests.
 
-Campaign chain (as reported):
+## 9. Formal Verification Hints
 
-- Purple v1: **27 findings**
-- Blue v2: **27 patched**
-- Purple v2: **28 findings**
-- Red v3: **16 successful / 36 attempts**
-- Blue v3: **full patch cycle**
-- Purple v3: **23 findings**
-- Red v4: **13 successful / 24 attempts**
-- Crimson: **20 successful / 27 attempts**
+Formal verification scope candidates for v0.3:
 
-### 11.2 Test totals across modules
+1. **Solvency invariant**: protocol liabilities never exceed risk-adjusted collateral under accepted transitions.
+2. **Weight simplex invariant**: collateral weights remain non-negative and sum to one under all update paths.
+3. **Bounded-parameter invariant**: every accepted parameter update respects per-epoch and global bounds.
+4. **Circuit-breaker liveness**: once recovery conditions are met, the protocol can progress from breaker states without deadlock.
 
-- **Core**: 71/71 PASS
-- **Mega Stress**: 8000/8000 PASS
-- **Open Agent Economy**: 115/115 PASS
-- **Adversarial Infrastructure**: 100/100 PASS
-- **Agent Intelligence Gate**: 54/54 PASS
-- **Protocol Resilience**: 98/98 PASS
+These properties can be specified as executable invariants and model-checking targets for critical state-machine paths.
 
-Additional operational hardening evidence:
+## 10. Open Agent Economy (OAE) + AIG
 
-- Chaos engineering: **8/8 PASS**
-- Degradation tests: **5/5 PASS**
+microstable keeps permissionless participation as a core direction while coupling it with accountability controls:
 
-## 12. Simulation Results
+- permissionless registration and role specialization,
+- stake/reputation-aware participation,
+- tournament-style proposal competition,
+- **Agent Intelligence Gate (AIG)** for phased admission and operational demotion when quality/safety degrades.
 
-This section preserves the Gate A + Monte Carlo structure from v0.1 and adds mega-stress context.
+The design goal is open participation without surrendering protocol safety.
 
-### 12.1 Gate A setup
+## 11. Agent Integration and MCP
 
-- Monte Carlo scope: **100 seeds × 6 scenarios × 80 ticks**
-- Gate A criteria:
-  - peg MAE < 0.0015
-  - CR violation rate < 1%
-  - breaker false positive rate < 5%
+The protocol integration layer now includes published MCP tooling:
 
-### 12.2 Gate A outcomes (100 runs per scenario)
+- npm package: **`microstable-mcp-server@0.1.0`**,
+- purpose: expose machine-friendly protocol operations for external agent systems,
+- policy goal: automation-friendly interfaces with auditable control boundaries.
 
-| Scenario | pass_count | fail_count | Gate A | peg MAE worst | CR_min worst (lowest) | CR violation worst | FP worst |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| normal | 100 | 0 | PASS | 0.000366 | 1.201000 | 0.000000% | 0.000000% |
-| single_depeg | 100 | 0 | PASS | 0.000460 | 1.201000 | 0.000000% | 0.000000% |
-| multi_depeg | 100 | 0 | PASS | 0.001171 | 1.202422 | 0.000000% | 0.000000% |
-| volatile | 100 | 0 | PASS | 0.000504 | 1.201000 | 0.000000% | 0.000000% |
-| gradient_attack | 100 | 0 | PASS | 0.000389 | 1.201000 | 0.000000% | 0.000000% |
-| oracle_failure | 100 | 0 | PASS | 0.000639 | 1.202554 | 0.000000% | 0.000000% |
+## 12. Conclusion
 
-Worst peg MAE under Gate A: **0.001171** (`multi_depeg`).
+microstable v0.3 keeps the same thesis with clearer implementation posture:
 
-### 12.3 Monte Carlo KPI distributions (mean / median / p5 / p95 / worst)
+- on-chain settlement and invariants in Solana Anchor/Rust,
+- off-chain adaptive logic in a hardened Rust keeper,
+- archived Python simulation for education and verification,
+- explicit safety-cycle evidence and reproducible integration status.
 
-#### (A) peg MAE
+The project remains intentionally incremental, inspectable, and safety-first.
 
-| Scenario | mean | median | p5 | p95 | worst |
-|---|---:|---:|---:|---:|---:|
-| normal | 0.000336 | 0.000336 | 0.000321 | 0.000353 | 0.000366 |
-| single_depeg | 0.000405 | 0.000406 | 0.000378 | 0.000439 | 0.000460 |
-| multi_depeg | 0.001113 | 0.001113 | 0.001083 | 0.001143 | 0.001171 |
-| volatile | 0.000405 | 0.000406 | 0.000354 | 0.000457 | 0.000504 |
-| gradient_attack | 0.000334 | 0.000334 | 0.000307 | 0.000366 | 0.000389 |
-| oracle_failure | 0.000585 | 0.000586 | 0.000558 | 0.000614 | 0.000639 |
-
-#### (B) CR_min
-
-| Scenario | mean | median | p5 | p95 | worst (lowest) |
-|---|---:|---:|---:|---:|---:|
-| normal | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
-| single_depeg | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
-| multi_depeg | 1.202941 | 1.202961 | 1.202601 | 1.203325 | 1.202422 |
-| volatile | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
-| gradient_attack | 1.201000 | 1.201000 | 1.201000 | 1.201000 | 1.201000 |
-| oracle_failure | 1.202944 | 1.202959 | 1.202689 | 1.203232 | 1.202554 |
-
-### 12.4 Breaker/turnover behavior
-
-Breaker activations were scenario-aligned (e.g., depeg/oracle scenarios), with zero false positives in this campaign.
-
-### 12.5 Mega stress campaign
-
-- Scope: **80 scenarios × 100 Monte Carlo = 8,000 runs**
-- Result: **ALL PASS (8000/8000)**
-- Max MAE: **0.02684**
-- Crash/NaN/Inf: **0**
-
-## 13. Devnet Deployment
-
-### 13.1 On-chain identifiers
-
-- Program ID: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
-- MSTB mint: `EZUwC88f1s3k9prgv5DGY6wML8giBqdpRxoA2rLtGA6R`
-
-### 13.2 Oracle integration
-
-Pyth feeds integrated for:
-
-- USDC/USD
-- USDT/USD
-- DAI/USD
-
-(Devnet feed mapping and accounts tracked in deployment artifacts.)
-
-### 13.3 SPL token flow
-
-Devnet E2E test (`solana/tests/devnet-e2e.ts`) validates:
-
-1. state migration/initialization,  
-2. oracle updates,  
-3. collateral deposit mint path,  
-4. redeem path,  
-5. post-redeem accounting consistency.
-
-## 14. Agent Integration
-
-### 14.1 MCP server
-
-- Package: `microstable-mcp-server@0.1.0` (npm)
-- Purpose: expose protocol operations via MCP for external agents.
-
-### 14.2 ClawHub skill integration
-
-- Agent skill path: `microstable-agent` integration profile
-- OAE-compatible operations: proposal submission, anomaly reporting, state query, reward workflows.
-
-### 14.3 Design objective
-
-Agent integrations are intended to be machine-friendly while keeping protocol internals inspectable and auditable.
-
-## 15. Comparison
-
-| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.2 |
-|---|---|---|---|---|
-| Collateral model | Over-collateralized | Fractional/hybrid | Basket aggregation | Basket + adaptive CR |
-| Parameter updates | Governance epochs | Controller/policy dependent | Mostly static/rule-based | Bounded gradient updates |
-| Circuit-breaker formalism | Moderate | Model-dependent | Limited | Explicit multi-CB state machine |
-| Agent-native participation | Low | Low/Medium | Low | **High (OAE + AIG)** |
-| Adversarial feedback loop | Limited | Limited | Limited | **Embedded Red/Blue cycling** |
-| Runtime architecture | On-chain heavy governance | Mixed | App-layer routing | Solana kernel + Rust keeper daemon |
-
-## 16. Limitations & Future Work
-
-1. **Objective misspecification risk**: better loss does not guarantee better real-world outcomes.
-2. **Data and oracle dependence**: adaptation quality is bounded by data integrity.
-3. **Economic gameability**: adversaries co-adapt to deterministic defenses.
-4. **Cross-layer divergence risk**: simulation and on-chain behavior must remain tightly aligned.
-5. **Governance capture pressure**: stake-based systems require persistent anti-plutocracy controls.
-
-Priority future work:
-
-- formal verification for critical state transitions,
-- stronger oracle provenance and freshness hardening,
-- tighter auth semantics in all control paths,
-- broader stress matrices for correlated failures,
-- policy-level transparency tooling for agent actions.
-
-## 17. Conclusion
-
-microstable v0.2 is not a claim of finality; it is a claim of method.
-
-- keep mechanism compact,
-- keep adaptation bounded,
-- keep safety non-negotiable,
-- keep adversarial testing continuous.
-
-The protocol’s path is intentionally incremental: archived simulation rigor, production-oriented Solana + Rust runtime, and agent-native controls that are permissionless but not trustless-by-assumption.
-
-## 18. Reproducibility & References
-
-### 18.1 Reproducibility pointers
-
-- Reference commit for this whitepaper snapshot: `f9f5dae`
-- Key artifacts:
-  - `simulation/outputs/open-agent-economy-test-report.md`
-  - `simulation/outputs/adversarial-agent-report.md`
-  - `simulation/outputs/chaos/chaos-summary.md`
-  - `simulation/outputs/chaos/degradation-test-results.json`
-  - `simulation/outputs/mega-stress-report.md`
-
-### 18.2 References
+## 13. References (Selected)
 
 1. S. Nakamoto, *Bitcoin: A Peer-to-Peer Electronic Cash System*, 2008.  
-2. A. Karpathy, *micrograd/microgpt educational implementations* (public lectures/repos).  
-3. MakerDAO documentation and risk framework materials.  
-4. FRAX historical design documentation.  
-5. mStable documentation on basket-based stable assets.  
-6. Post-mortem analyses on algorithmic stablecoin failures (including UST/Luna).  
-7. microstable internal docs: OAE, AIG, protocol gap analysis, adversarial infrastructure, and security campaign reports.
+2. Solana and Anchor documentation.  
+3. Pyth network documentation.  
+4. Public literature on stablecoin failures and risk controls.  
+5. microstable internal specs (OAE, AIG, keeper, security cycle reports).
