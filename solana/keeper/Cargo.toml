@@ -3,6 +3,7 @@ name = "microstable-keeper"
 version = "0.1.0"
 edition = "2021"
 description = "Microstable keeper daemon (oracle, circuit breaker, rebalance, watchdog)"
+build = "build.rs"
 
 [dependencies]
 anyhow = "1"
@@ -17,3 +18,7 @@ solana-sdk = "2.3.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+libc = "0.2"
+
+[build-dependencies]
+sha2 = "0.10"

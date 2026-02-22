@@ -1,6 +1,6 @@
 {
   "rpc_url": "https://api.devnet.solana.com",
-  "secondary_rpc_url": null,
+  "secondary_rpc_url": "https://secondary-rpc.devnet.example.invalid",
   "program_id": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
   "keeper_keypairs": [
     "~/.config/solana/devnet-keypair.json",

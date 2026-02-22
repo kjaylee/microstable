@@ -21,6 +21,16 @@ const DEFAULT_WATCHDOG_HISTORY_LIMIT: usize = 64;
 const DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 5;
 
 const MAX_WATCHDOG_HISTORY_LIMIT: usize = 4_096;
+const MIN_TICK_INTERVAL_SECS: u64 = 5;
+const MAX_TICK_INTERVAL_SECS: u64 = 300;
+const MIN_STALENESS_SECS: u64 = 10;
+const MAX_STALENESS_SECS: u64 = 300;
+const MIN_ORACLE_CONFIDENCE_BPS: u64 = 1;
+const MAX_ORACLE_CONFIDENCE_BPS: u64 = 1_000;
+const MIN_EMERGENCY_CR_BPS: u64 = 10_000;
+const MAX_EMERGENCY_CR_BPS: u64 = 20_000;
+const MAX_COMMIT_VALID_FOR_SLOTS: u64 = 1_000;
+const MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct KeeperConfig {
@@ -121,7 +131,7 @@ impl KeeperConfig {
     pub fn default_devnet() -> Self {
         Self {
             rpc_url: "https://api.devnet.solana.com".to_string(),
-            secondary_rpc_url: None,
+            secondary_rpc_url: Some("https://secondary-rpc.devnet.example.invalid".to_string()),
             program_id: pubkey!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"),
             keeper_keypairs: vec![
                 PathBuf::from("~/.config/solana/devnet-keypair.json"),
@@ -245,15 +255,18 @@ impl KeeperConfig {
             return Err(anyhow!("rpc_url cannot be empty"));
         }
 
-        if let Some(secondary) = &self.secondary_rpc_url {
-            if secondary.trim().is_empty() {
-                return Err(anyhow!("secondary_rpc_url cannot be empty when provided"));
-            }
-            if *secondary == self.rpc_url {
-                return Err(anyhow!(
-                    "secondary_rpc_url must differ from rpc_url for cross-validation"
-                ));
-            }
+        let secondary = self
+            .secondary_rpc_url
+            .as_ref()
+            .ok_or_else(|| anyhow!("secondary_rpc_url is required and cannot be null"))?;
+
+        if secondary.trim().is_empty() {
+            return Err(anyhow!("secondary_rpc_url cannot be empty"));
+        }
+        if *secondary == self.rpc_url {
+            return Err(anyhow!(
+                "secondary_rpc_url must differ from rpc_url for cross-validation"
+            ));
         }
 
         if self.keeper_keypairs.len() < 2 {
@@ -281,31 +294,57 @@ impl KeeperConfig {
                     feed.collateral_index
                 ));
             }
-            if feed.max_age_secs == 0 {
+            if !(MIN_STALENESS_SECS..=MAX_STALENESS_SECS).contains(&feed.max_age_secs) {
                 return Err(anyhow!(
-                    "pyth feed max_age_secs must be > 0 for {}",
+                    "pyth feed max_age_secs must be within {}..={} for {}",
+                    MIN_STALENESS_SECS,
+                    MAX_STALENESS_SECS,
                     feed.symbol
                 ));
             }
         }
 
-        if self.tick_interval_secs == 0 {
-            return Err(anyhow!("tick_interval_secs must be > 0"));
+        if !(MIN_TICK_INTERVAL_SECS..=MAX_TICK_INTERVAL_SECS).contains(&self.tick_interval_secs) {
+            return Err(anyhow!(
+                "tick_interval_secs must be within {}..={}",
+                MIN_TICK_INTERVAL_SECS,
+                MAX_TICK_INTERVAL_SECS
+            ));
         }
-        if self.oracle_max_age_secs == 0 {
-            return Err(anyhow!("oracle_max_age_secs must be > 0"));
+        if !(MIN_STALENESS_SECS..=MAX_STALENESS_SECS).contains(&self.oracle_max_age_secs) {
+            return Err(anyhow!(
+                "oracle_max_age_secs must be within {}..={}",
+                MIN_STALENESS_SECS,
+                MAX_STALENESS_SECS
+            ));
         }
-        if self.oracle_publish_max_age_secs == 0 {
-            return Err(anyhow!("oracle_publish_max_age_secs must be > 0"));
+        if !(MIN_STALENESS_SECS..=MAX_STALENESS_SECS).contains(&self.oracle_publish_max_age_secs) {
+            return Err(anyhow!(
+                "oracle_publish_max_age_secs must be within {}..={}",
+                MIN_STALENESS_SECS,
+                MAX_STALENESS_SECS
+            ));
         }
-        if self.oracle_confidence_max_bps > 10_000 {
-            return Err(anyhow!("oracle_confidence_max_bps must be <= 10000"));
+        if !(MIN_ORACLE_CONFIDENCE_BPS..=MAX_ORACLE_CONFIDENCE_BPS)
+            .contains(&self.oracle_confidence_max_bps)
+        {
+            return Err(anyhow!(
+                "oracle_confidence_max_bps must be within {}..={} (bps)",
+                MIN_ORACLE_CONFIDENCE_BPS,
+                MAX_ORACLE_CONFIDENCE_BPS
+            ));
         }
         if self.min_collateral_ratio_bps == 0 {
             return Err(anyhow!("min_collateral_ratio_bps must be > 0"));
         }
-        if self.emergency_collateral_ratio_bps == 0 {
-            return Err(anyhow!("emergency_collateral_ratio_bps must be > 0"));
+        if !(MIN_EMERGENCY_CR_BPS..=MAX_EMERGENCY_CR_BPS)
+            .contains(&self.emergency_collateral_ratio_bps)
+        {
+            return Err(anyhow!(
+                "emergency_collateral_ratio_bps must be within {}..={} (1.0x-2.0x)",
+                MIN_EMERGENCY_CR_BPS,
+                MAX_EMERGENCY_CR_BPS
+            ));
         }
         if self.emergency_collateral_ratio_bps > self.min_collateral_ratio_bps {
             return Err(anyhow!(
@@ -321,8 +360,27 @@ impl KeeperConfig {
         if self.commit_valid_for_slots == 0 {
             return Err(anyhow!("commit_valid_for_slots must be > 0"));
         }
+        if self.commit_valid_for_slots < self.commit_reveal_delay_slots {
+            return Err(anyhow!(
+                "commit_valid_for_slots must be >= commit_reveal_delay_slots"
+            ));
+        }
+        if self.commit_valid_for_slots > MAX_COMMIT_VALID_FOR_SLOTS {
+            return Err(anyhow!(
+                "commit_valid_for_slots too large: {} (max {})",
+                self.commit_valid_for_slots,
+                MAX_COMMIT_VALID_FOR_SLOTS
+            ));
+        }
         if self.commit_reveal_delay_slots == 0 {
             return Err(anyhow!("commit_reveal_delay_slots must be > 0"));
+        }
+        if !(MIN_STALENESS_SECS..=MAX_STALENESS_SECS).contains(&self.watchdog_oracle_stale_slots) {
+            return Err(anyhow!(
+                "watchdog_oracle_stale_slots must be within {}..={}",
+                MIN_STALENESS_SECS,
+                MAX_STALENESS_SECS
+            ));
         }
         if self.watchdog_history_limit == 0 {
             return Err(anyhow!("watchdog_history_limit must be > 0"));
@@ -336,6 +394,13 @@ impl KeeperConfig {
         }
         if self.max_consecutive_failed_cycles == 0 {
             return Err(anyhow!("max_consecutive_failed_cycles must be > 0"));
+        }
+        if self.max_consecutive_failed_cycles > MAX_CONSECUTIVE_FAILED_CYCLES {
+            return Err(anyhow!(
+                "max_consecutive_failed_cycles too large: {} (max {})",
+                self.max_consecutive_failed_cycles,
+                MAX_CONSECUTIVE_FAILED_CYCLES
+            ));
         }
 
         Ok(())

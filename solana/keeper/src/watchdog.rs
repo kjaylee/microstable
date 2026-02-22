@@ -3,7 +3,7 @@ use crate::{
     utils::{self, DerivedAccounts},
     wire,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
@@ -45,57 +45,36 @@ pub fn run_watchdog_cycle(
     derived: &DerivedAccounts,
     memory: &mut WatchdogMemory,
 ) -> Result<WatchdogOutcome> {
-    let protocol: wire::ProtocolState =
-        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
-    let vaults = [
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
-    ];
+    let (protocol, _vaults, current_slot, global_cr_bps) = if let Some(secondary) = secondary_rpc {
+        utils::retry_with_backoff(
+            utils::CROSS_RPC_MAX_ATTEMPTS,
+            utils::CROSS_RPC_BACKOFF_BASE_MS,
+            |attempt| {
+                let primary_snapshot = fetch_watchdog_snapshot(rpc, derived)?;
+                let secondary_snapshot = fetch_watchdog_snapshot(secondary, derived)?;
 
-    let current_slot = rpc.get_slot()?;
-    let global_cr_bps = total_collateral_ratio_bps(&protocol, &vaults);
+                validate_watchdog_cross_rpc(
+                    &primary_snapshot.0,
+                    &secondary_snapshot.0,
+                    &primary_snapshot.1,
+                    &secondary_snapshot.1,
+                    primary_snapshot.3,
+                    secondary_snapshot.3,
+                )
+                .map_err(|err| {
+                    anyhow!(
+                        "watchdog cross-RPC mismatch (attempt {attempt}/{}): {err}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    )
+                })?;
 
-    if let Some(secondary) = secondary_rpc {
-        let secondary_protocol: wire::ProtocolState =
-            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
-        let secondary_vaults = [
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[0],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[1],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[2],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[3],
-                "CollateralVault",
-            )?,
-        ];
-        let secondary_global_cr_bps = total_collateral_ratio_bps(&secondary_protocol, &secondary_vaults);
-
-        if global_cr_bps != secondary_global_cr_bps || protocol != secondary_protocol || vaults != secondary_vaults {
-            warn!(
-                primary_global_cr_bps = global_cr_bps,
-                secondary_global_cr_bps,
-                "watchdog cycle skipped: cross-RPC mismatch on protocol safety state"
-            );
-            return Ok(WatchdogOutcome {
-                anomalies: Vec::new(),
-                alert_signature: None,
-            });
-        }
-    }
+                Ok(primary_snapshot)
+            },
+        )
+        .map_err(|err| anyhow!("watchdog cycle failed after cross-RPC retries: {err}"))?
+    } else {
+        fetch_watchdog_snapshot(rpc, derived)?
+    };
 
     let mut anomalies = Vec::new();
 
@@ -217,7 +196,13 @@ pub fn run_watchdog_cycle(
 
         let (k1, _) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
         let memo_ix = build_memo_instruction(k1.pubkey(), payload.into_bytes())?;
-        Some(utils::send_instructions(rpc, k1, &[k1], vec![memo_ix])?)
+        Some(utils::send_instructions(
+            rpc,
+            secondary_rpc,
+            k1,
+            &[k1],
+            vec![memo_ix],
+        )?)
     } else {
         None
     };
@@ -230,6 +215,50 @@ pub fn run_watchdog_cycle(
         anomalies,
         alert_signature,
     })
+}
+
+pub fn validate_watchdog_cross_rpc(
+    primary_protocol: &wire::ProtocolState,
+    secondary_protocol: &wire::ProtocolState,
+    primary_vaults: &[wire::CollateralVault; 4],
+    secondary_vaults: &[wire::CollateralVault; 4],
+    primary_global_cr_bps: u64,
+    secondary_global_cr_bps: u64,
+) -> Result<()> {
+    if !utils::within_u64_tolerance(
+        primary_global_cr_bps,
+        secondary_global_cr_bps,
+        utils::CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "global collateral ratio mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary_global_cr_bps,
+            secondary_global_cr_bps,
+            utils::CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    utils::validate_protocol_state_with_tolerance(primary_protocol, secondary_protocol)?;
+    utils::validate_vaults_with_tolerance(primary_vaults, secondary_vaults)?;
+    Ok(())
+}
+
+fn fetch_watchdog_snapshot(
+    rpc: &RpcClient,
+    derived: &DerivedAccounts,
+) -> Result<(wire::ProtocolState, [wire::CollateralVault; 4], u64, u64)> {
+    let protocol: wire::ProtocolState =
+        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let vaults = [
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
+    ];
+
+    let current_slot = rpc.get_slot()?;
+    let global_cr_bps = total_collateral_ratio_bps(&protocol, &vaults);
+    Ok((protocol, vaults, current_slot, global_cr_bps))
 }
 
 fn total_collateral_ratio_bps(

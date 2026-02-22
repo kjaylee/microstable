@@ -16,24 +16,20 @@ use tracing::{info, warn};
 const PYTH_RECEIVER_PROGRAM: &str = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ";
 const PYTH_TRUSTED_WRITE_AUTHORITY: &str = "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk";
 const PYTH_FEED_ID_USDC: [u8; 32] = [
-    0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71, 0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89,
-    0x4a, 0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc, 0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9,
-    0xc9, 0x4a,
+    0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71, 0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89, 0x4a,
+    0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc, 0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9, 0xc9, 0x4a,
 ];
 const PYTH_FEED_ID_USDT: [u8; 32] = [
-    0x2b, 0x89, 0xb9, 0xdc, 0x8f, 0xdf, 0x9f, 0x34, 0x70, 0x9a, 0x5b, 0x10, 0x6b, 0x47, 0x2f,
-    0x0f, 0x39, 0xbb, 0x6c, 0xa9, 0xce, 0x04, 0xb0, 0xfd, 0x7f, 0x2e, 0x97, 0x16, 0x88, 0xe2,
-    0xe5, 0x3b,
+    0x2b, 0x89, 0xb9, 0xdc, 0x8f, 0xdf, 0x9f, 0x34, 0x70, 0x9a, 0x5b, 0x10, 0x6b, 0x47, 0x2f, 0x0f,
+    0x39, 0xbb, 0x6c, 0xa9, 0xce, 0x04, 0xb0, 0xfd, 0x7f, 0x2e, 0x97, 0x16, 0x88, 0xe2, 0xe5, 0x3b,
 ];
 const PYTH_FEED_ID_DAI: [u8; 32] = [
-    0xb0, 0x94, 0x8a, 0x5e, 0x53, 0x13, 0x20, 0x0c, 0x63, 0x2b, 0x51, 0xbb, 0x5c, 0xa3, 0x2f,
-    0x6d, 0xe0, 0xd3, 0x6e, 0x99, 0x50, 0xa9, 0x42, 0xd1, 0x97, 0x51, 0xe8, 0x33, 0xf7, 0x0d,
-    0xab, 0xfd,
+    0xb0, 0x94, 0x8a, 0x5e, 0x53, 0x13, 0x20, 0x0c, 0x63, 0x2b, 0x51, 0xbb, 0x5c, 0xa3, 0x2f, 0x6d,
+    0xe0, 0xd3, 0x6e, 0x99, 0x50, 0xa9, 0x42, 0xd1, 0x97, 0x51, 0xe8, 0x33, 0xf7, 0x0d, 0xab, 0xfd,
 ];
 const PYTH_FEED_ID_USDS: [u8; 32] = [
-    0xc2, 0xf5, 0xc9, 0xb4, 0xd9, 0xe7, 0xa1, 0xfc, 0xb5, 0xa8, 0x0c, 0x7a, 0x2c, 0x3e, 0xc0,
-    0xf8, 0x4a, 0xb1, 0xde, 0x9f, 0x77, 0x8c, 0x0d, 0xf1, 0xb6, 0xe9, 0xc7, 0xab, 0x4f, 0x1e,
-    0x0d, 0x9a,
+    0xc2, 0xf5, 0xc9, 0xb4, 0xd9, 0xe7, 0xa1, 0xfc, 0xb5, 0xa8, 0x0c, 0x7a, 0x2c, 0x3e, 0xc0, 0xf8,
+    0x4a, 0xb1, 0xde, 0x9f, 0x77, 0x8c, 0x0d, 0xf1, 0xb6, 0xe9, 0xc7, 0xab, 0x4f, 0x1e, 0x0d, 0x9a,
 ];
 
 #[derive(Debug, Clone)]
@@ -49,11 +45,11 @@ pub struct OracleUpdateResult {
 }
 
 #[derive(Debug, Clone)]
-struct OracleObservation {
-    price: u64,
-    confidence: u64,
-    publish_time: i64,
-    observed_slot: u64,
+pub struct OracleObservation {
+    pub price: u64,
+    pub confidence: u64,
+    pub publish_time: i64,
+    pub observed_slot: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -98,47 +94,34 @@ pub fn run_oracle_cycle(
     keepers: &[Keypair],
     derived: &DerivedAccounts,
 ) -> Result<Vec<OracleUpdateResult>> {
-    let protocol: wire::ProtocolState =
-        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let (protocol, vaults) = if let Some(secondary) = secondary_rpc {
+        utils::retry_with_backoff(
+            utils::CROSS_RPC_MAX_ATTEMPTS,
+            utils::CROSS_RPC_BACKOFF_BASE_MS,
+            |attempt| {
+                let primary_snapshot = fetch_oracle_snapshot(rpc, derived)?;
+                let secondary_snapshot = fetch_oracle_snapshot(secondary, derived)?;
 
-    let vaults = [
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
-    ];
+                validate_oracle_cross_rpc(
+                    &primary_snapshot.0,
+                    &secondary_snapshot.0,
+                    &primary_snapshot.1,
+                    &secondary_snapshot.1,
+                )
+                .map_err(|err| {
+                    anyhow!(
+                        "oracle cross-RPC mismatch (attempt {attempt}/{}): {err}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    )
+                })?;
 
-    if let Some(secondary) = secondary_rpc {
-        let secondary_protocol: wire::ProtocolState =
-            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
-        let secondary_vaults = [
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[0],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[1],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[2],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[3],
-                "CollateralVault",
-            )?,
-        ];
-
-        if protocol != secondary_protocol || vaults != secondary_vaults {
-            warn!("oracle cycle skipped: protocol/vault state mismatch across RPC endpoints");
-            return Ok(Vec::new());
-        }
-    }
+                Ok(primary_snapshot)
+            },
+        )
+        .map_err(|err| anyhow!("oracle cycle failed after cross-RPC retries: {err}"))?
+    } else {
+        fetch_oracle_snapshot(rpc, derived)?
+    };
 
     if protocol.emergency_shutdown {
         warn!("oracle cycle skipped: protocol is in emergency shutdown");
@@ -176,7 +159,7 @@ pub fn run_oracle_cycle(
             vault.pyth_price_feed
         };
 
-        let observation = match fetch_pyth_observation(rpc, feed, pyth_account) {
+        let initial_observation = match fetch_pyth_observation(rpc, feed, pyth_account) {
             Ok(observation) => observation,
             Err(err) => {
                 warn!(
@@ -189,35 +172,49 @@ pub fn run_oracle_cycle(
             }
         };
 
-        if let Some(secondary) = secondary_rpc {
-            let secondary_observation = match fetch_pyth_observation(secondary, feed, pyth_account) {
-                Ok(observation) => observation,
-                Err(err) => {
-                    warn!(
-                        symbol = %feed.symbol,
-                        collateral_index = feed.collateral_index,
-                        error = %err,
-                        "oracle cycle skipped: secondary RPC fetch/decode failed"
-                    );
-                    return Ok(Vec::new());
-                }
-            };
+        let observation = if let Some(secondary) = secondary_rpc {
+            utils::retry_with_backoff(
+                utils::CROSS_RPC_MAX_ATTEMPTS,
+                utils::CROSS_RPC_BACKOFF_BASE_MS,
+                |attempt| {
+                    let primary_observation = if attempt == 1 {
+                        initial_observation.clone()
+                    } else {
+                        fetch_pyth_observation(rpc, feed, pyth_account)?
+                    };
 
-            if !oracle_observation_consistent(&observation, &secondary_observation) {
-                warn!(
-                    symbol = %feed.symbol,
-                    collateral_index = feed.collateral_index,
-                    primary_price = observation.price,
-                    secondary_price = secondary_observation.price,
-                    primary_confidence = observation.confidence,
-                    secondary_confidence = secondary_observation.confidence,
-                    primary_publish_time = observation.publish_time,
-                    secondary_publish_time = secondary_observation.publish_time,
-                    "oracle cycle skipped: cross-RPC mismatch on security-critical oracle read"
-                );
-                return Ok(Vec::new());
-            }
-        }
+                    let secondary_observation =
+                        fetch_pyth_observation(secondary, feed, pyth_account).map_err(|err| {
+                            anyhow!(
+                                "secondary observation fetch failed (attempt {attempt}/{}): {err}",
+                                utils::CROSS_RPC_MAX_ATTEMPTS
+                            )
+                        })?;
+
+                    validate_oracle_observation_consistency(
+                        &primary_observation,
+                        &secondary_observation,
+                    )
+                    .map_err(|err| {
+                        anyhow!(
+                            "oracle observation mismatch for {} (attempt {attempt}/{}): {err}",
+                            feed.symbol,
+                            utils::CROSS_RPC_MAX_ATTEMPTS
+                        )
+                    })?;
+
+                    Ok(primary_observation)
+                },
+            )
+            .map_err(|err| {
+                anyhow!(
+                    "oracle cycle failed after observation cross-RPC retries for {}: {err}",
+                    feed.symbol
+                )
+            })?
+        } else {
+            initial_observation
+        };
 
         let max_publish_age_secs = feed.max_age_secs.min(cfg.oracle_publish_max_age_secs);
         if is_stale(now, observation.publish_time, max_publish_age_secs) {
@@ -270,7 +267,7 @@ pub fn run_oracle_cycle(
             prepared.collateral_index,
         )?;
 
-        match utils::send_instructions(rpc, k1, &[k1, k2], vec![ix]) {
+        match utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![ix]) {
             Ok(sig) => {
                 info!(
                     symbol = %prepared.symbol,
@@ -307,6 +304,91 @@ pub fn run_oracle_cycle(
     }
 
     Ok(successful_updates)
+}
+
+pub fn validate_oracle_cross_rpc(
+    primary_protocol: &wire::ProtocolState,
+    secondary_protocol: &wire::ProtocolState,
+    primary_vaults: &[wire::CollateralVault; 4],
+    secondary_vaults: &[wire::CollateralVault; 4],
+) -> Result<()> {
+    utils::validate_protocol_state_with_tolerance(primary_protocol, secondary_protocol)?;
+    utils::validate_vaults_with_tolerance(primary_vaults, secondary_vaults)?;
+    Ok(())
+}
+
+pub fn validate_oracle_observation_consistency(
+    primary: &OracleObservation,
+    secondary: &OracleObservation,
+) -> Result<()> {
+    if !utils::within_u64_tolerance(
+        primary.price,
+        secondary.price,
+        utils::CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "price mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.price,
+            secondary.price,
+            utils::CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !utils::within_u64_tolerance(
+        primary.confidence,
+        secondary.confidence,
+        utils::CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "confidence mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.confidence,
+            secondary.confidence,
+            utils::CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !utils::within_i64_tolerance(
+        primary.publish_time,
+        secondary.publish_time,
+        utils::CROSS_RPC_TIME_TOLERANCE_SECS,
+    ) {
+        return Err(anyhow!(
+            "publish_time mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.publish_time,
+            secondary.publish_time,
+            utils::CROSS_RPC_TIME_TOLERANCE_SECS
+        ));
+    }
+
+    if !utils::within_u64_tolerance(
+        primary.observed_slot,
+        secondary.observed_slot,
+        utils::CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "observed_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.observed_slot,
+            secondary.observed_slot,
+            utils::CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    Ok(())
+}
+
+fn fetch_oracle_snapshot(
+    rpc: &RpcClient,
+    derived: &DerivedAccounts,
+) -> Result<(wire::ProtocolState, [wire::CollateralVault; 4])> {
+    let protocol: wire::ProtocolState =
+        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let vaults = [
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
+    ];
+    Ok((protocol, vaults))
 }
 
 fn fetch_pyth_observation(
@@ -390,12 +472,6 @@ fn expected_feed_id(collateral_index: u8) -> Result<[u8; 32]> {
             collateral_index
         )),
     }
-}
-
-fn oracle_observation_consistent(primary: &OracleObservation, secondary: &OracleObservation) -> bool {
-    primary.price == secondary.price
-        && primary.confidence == secondary.confidence
-        && primary.publish_time == secondary.publish_time
 }
 
 fn is_stale(now_unix_ts: i64, publish_time: i64, max_age_secs: u64) -> bool {

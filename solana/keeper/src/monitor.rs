@@ -3,9 +3,12 @@ use crate::{
     utils::{self, DerivedAccounts},
     wire,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::signature::{Keypair, Signature, Signer};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signature, Signer},
+};
 use tracing::{info, warn};
 
 const SCALE: u64 = 1_000_000;
@@ -23,6 +26,121 @@ pub struct MonitorOutcome {
     pub global_collateral_ratio_bps: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonitorCrossRpcView {
+    pub global_cr_bps: u64,
+    pub protocol_total_supply: u64,
+    pub protocol_emergency_shutdown: bool,
+    pub protocol_keeper_set: [Pubkey; 3],
+    pub circuit_status: [u8; 4],
+    pub vault_total_deposits: [u64; 4],
+    pub vault_prices: [u64; 4],
+}
+
+impl MonitorCrossRpcView {
+    pub fn from_state(
+        protocol: &wire::ProtocolState,
+        circuit: &wire::CircuitBreakerState,
+        vaults: &[wire::CollateralVault; 4],
+        global_cr_bps: u64,
+    ) -> Self {
+        Self {
+            global_cr_bps,
+            protocol_total_supply: protocol.total_supply,
+            protocol_emergency_shutdown: protocol.emergency_shutdown,
+            protocol_keeper_set: protocol.keeper_set,
+            circuit_status: circuit.status,
+            vault_total_deposits: std::array::from_fn(|i| vaults[i].total_deposits),
+            vault_prices: std::array::from_fn(|i| vaults[i].price),
+        }
+    }
+}
+
+pub fn validate_monitor_cross_rpc(
+    primary: &MonitorCrossRpcView,
+    secondary: &MonitorCrossRpcView,
+) -> Result<()> {
+    if !utils::within_u64_tolerance(
+        primary.global_cr_bps,
+        secondary.global_cr_bps,
+        utils::CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "global_cr_bps mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.global_cr_bps,
+            secondary.global_cr_bps,
+            utils::CROSS_RPC_NUMERIC_TOLERANCE,
+        ));
+    }
+
+    if !utils::within_u64_tolerance(
+        primary.protocol_total_supply,
+        secondary.protocol_total_supply,
+        utils::CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.total_supply mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.protocol_total_supply,
+            secondary.protocol_total_supply,
+            utils::CROSS_RPC_NUMERIC_TOLERANCE,
+        ));
+    }
+
+    if primary.protocol_emergency_shutdown != secondary.protocol_emergency_shutdown {
+        return Err(anyhow!(
+            "protocol.emergency_shutdown mismatch (primary={}, secondary={})",
+            primary.protocol_emergency_shutdown,
+            secondary.protocol_emergency_shutdown
+        ));
+    }
+
+    if primary.protocol_keeper_set != secondary.protocol_keeper_set {
+        return Err(anyhow!(
+            "protocol.keeper_set mismatch (primary={:?}, secondary={:?})",
+            primary.protocol_keeper_set,
+            secondary.protocol_keeper_set
+        ));
+    }
+
+    if primary.circuit_status != secondary.circuit_status {
+        return Err(anyhow!(
+            "circuit.status mismatch (primary={:?}, secondary={:?})",
+            primary.circuit_status,
+            secondary.circuit_status
+        ));
+    }
+
+    for i in 0..4 {
+        if !utils::within_u64_tolerance(
+            primary.vault_total_deposits[i],
+            secondary.vault_total_deposits[i],
+            utils::CROSS_RPC_NUMERIC_TOLERANCE,
+        ) {
+            return Err(anyhow!(
+                "vault.total_deposits[{i}] mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+                primary.vault_total_deposits[i],
+                secondary.vault_total_deposits[i],
+                utils::CROSS_RPC_NUMERIC_TOLERANCE,
+            ));
+        }
+
+        if !utils::within_u64_tolerance(
+            primary.vault_prices[i],
+            secondary.vault_prices[i],
+            utils::CROSS_RPC_NUMERIC_TOLERANCE,
+        ) {
+            return Err(anyhow!(
+                "vault.price[{i}] mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+                primary.vault_prices[i],
+                secondary.vault_prices[i],
+                utils::CROSS_RPC_NUMERIC_TOLERANCE,
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn run_monitor_cycle(
     rpc: &RpcClient,
     secondary_rpc: Option<&RpcClient>,
@@ -31,61 +149,54 @@ pub fn run_monitor_cycle(
     derived: &DerivedAccounts,
     memory: &mut MonitorMemory,
 ) -> Result<MonitorOutcome> {
-    let protocol: wire::ProtocolState =
-        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
-    let circuit: wire::CircuitBreakerState =
-        utils::fetch_account(rpc, &derived.circuit_breaker, "CircuitBreakerState")?;
+    let snapshot = if let Some(secondary) = secondary_rpc {
+        utils::retry_with_backoff(
+            utils::CROSS_RPC_MAX_ATTEMPTS,
+            utils::CROSS_RPC_BACKOFF_BASE_MS,
+            |attempt| {
+                let primary_snapshot = fetch_monitor_snapshot(rpc, derived)?;
+                let secondary_snapshot = fetch_monitor_snapshot(secondary, derived)?;
 
-    let vaults = [
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
-    ];
+                let primary_view = MonitorCrossRpcView::from_state(
+                    &primary_snapshot.0,
+                    &primary_snapshot.1,
+                    &primary_snapshot.2,
+                    primary_snapshot.3,
+                );
+                let secondary_view = MonitorCrossRpcView::from_state(
+                    &secondary_snapshot.0,
+                    &secondary_snapshot.1,
+                    &secondary_snapshot.2,
+                    secondary_snapshot.3,
+                );
 
-    let global_cr_bps = global_collateral_ratio_bps(&protocol, &vaults);
+                if let Err(err) = validate_monitor_cross_rpc(&primary_view, &secondary_view) {
+                    return Err(anyhow!(
+                        "cross-RPC mismatch (attempt {attempt}/{}): {err}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    ));
+                }
 
-    if let Some(secondary) = secondary_rpc {
-        let secondary_protocol: wire::ProtocolState =
-            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
-        let secondary_vaults = [
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[0],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[1],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[2],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[3],
-                "CollateralVault",
-            )?,
-        ];
-        let secondary_global_cr_bps = global_collateral_ratio_bps(&secondary_protocol, &secondary_vaults);
+                Ok(primary_snapshot)
+            },
+        )
+        .map_err(|err| {
+            if memory.consecutive_emergency_cycles > 0 {
+                info!(
+                    previous_consecutive_observations = memory.consecutive_emergency_cycles,
+                    "debounce counter reset due to skipped cycle"
+                );
+            } else {
+                info!("debounce counter reset due to skipped cycle");
+            }
+            memory.consecutive_emergency_cycles = 0;
+            anyhow!("monitor cycle failed after cross-RPC retries: {err}")
+        })?
+    } else {
+        fetch_monitor_snapshot(rpc, derived)?
+    };
 
-        if global_cr_bps != secondary_global_cr_bps {
-            warn!(
-                primary_global_cr_bps = global_cr_bps,
-                secondary_global_cr_bps,
-                "monitor cycle skipped: cross-RPC mismatch on collateral ratio"
-            );
-            return Ok(MonitorOutcome {
-                collateral_ratio_warnings: Vec::new(),
-                circuit_breaker_triggered: false,
-                emergency_shutdown_signature: None,
-                global_collateral_ratio_bps: global_cr_bps,
-            });
-        }
-    }
+    let (protocol, circuit, vaults, global_cr_bps) = snapshot;
 
     let mut warnings = Vec::new();
 
@@ -141,7 +252,7 @@ pub fn run_monitor_cycle(
                 k2.pubkey(),
             )?;
 
-            let sig = utils::send_instructions(rpc, k1, &[k1, k2], vec![ix])?;
+            let sig = utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![ix])?;
             warn!(
                 signature = %sig,
                 global_cr_bps,
@@ -184,6 +295,31 @@ pub fn run_monitor_cycle(
         emergency_shutdown_signature,
         global_collateral_ratio_bps: global_cr_bps,
     })
+}
+
+fn fetch_monitor_snapshot(
+    rpc: &RpcClient,
+    derived: &DerivedAccounts,
+) -> Result<(
+    wire::ProtocolState,
+    wire::CircuitBreakerState,
+    [wire::CollateralVault; 4],
+    u64,
+)> {
+    let protocol: wire::ProtocolState =
+        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let circuit: wire::CircuitBreakerState =
+        utils::fetch_account(rpc, &derived.circuit_breaker, "CircuitBreakerState")?;
+
+    let vaults = [
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
+    ];
+
+    let global_cr_bps = global_collateral_ratio_bps(&protocol, &vaults);
+    Ok((protocol, circuit, vaults, global_cr_bps))
 }
 
 fn global_collateral_ratio_bps(

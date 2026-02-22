@@ -42,6 +42,7 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     utils::init_tracing(cli.json_logs);
+    utils::enforce_supply_chain_controls()?;
 
     let cfg = KeeperConfig::load(cli.config.as_deref())?;
     info!(
@@ -52,31 +53,54 @@ async fn main() -> Result<()> {
     );
 
     let rpc = RpcClient::new_with_commitment(cfg.rpc_url.clone(), CommitmentConfig::confirmed());
-    let secondary_rpc = cfg.secondary_rpc_url.as_ref().map(|url| {
-        RpcClient::new_with_commitment(url.clone(), CommitmentConfig::confirmed())
-    });
+    let secondary_rpc = cfg
+        .secondary_rpc_url
+        .as_ref()
+        .map(|url| RpcClient::new_with_commitment(url.clone(), CommitmentConfig::confirmed()));
 
-    let epoch_info = rpc.get_epoch_info().context("primary RPC health check failed")?;
+    let epoch_info = rpc
+        .get_epoch_info()
+        .context("primary RPC health check failed")?;
     info!(
         epoch = epoch_info.epoch,
         absolute_slot = epoch_info.absolute_slot,
         "primary rpc connected"
     );
 
-    if let Some(secondary) = &secondary_rpc {
-        let epoch_info = secondary
-            .get_epoch_info()
-            .context("secondary RPC health check failed")?;
-        info!(
-            epoch = epoch_info.epoch,
-            absolute_slot = epoch_info.absolute_slot,
-            "secondary rpc connected"
-        );
+    if let Some(secondary) = secondary_rpc.as_ref() {
+        match secondary.get_epoch_info() {
+            Ok(secondary_epoch_info) => {
+                info!(
+                    epoch = secondary_epoch_info.epoch,
+                    absolute_slot = secondary_epoch_info.absolute_slot,
+                    "secondary rpc connected"
+                );
+                let _ = utils::register_secondary_rpc_success();
+            }
+            Err(err) => {
+                let entered_degraded = utils::register_secondary_rpc_failure();
+                warn!(
+                    error = %err,
+                    degraded = utils::secondary_rpc_is_degraded(),
+                    entered_degraded,
+                    "secondary RPC health check failed; continuing in degraded mode"
+                );
+            }
+        }
     }
 
     utils::verify_program_deployed(&rpc, &cfg.program_id)?;
-    if let Some(secondary) = &secondary_rpc {
-        utils::verify_program_deployed(secondary, &cfg.program_id)?;
+
+    if let Some(secondary) = active_secondary_rpc(secondary_rpc.as_ref()) {
+        if let Err(err) = utils::verify_program_deployed(secondary, &cfg.program_id) {
+            let entered_degraded = utils::register_secondary_rpc_failure();
+            warn!(
+                error = %err,
+                degraded = utils::secondary_rpc_is_degraded(),
+                entered_degraded,
+                "secondary program deployment check failed; disabling secondary RPC"
+            );
+        }
     }
 
     let derived = utils::DerivedAccounts::derive(&cfg.program_id);
@@ -95,9 +119,10 @@ async fn main() -> Result<()> {
     let mut watchdog_memory = WatchdogMemory::default();
 
     if cli.once {
+        let secondary_for_cycle = active_secondary_rpc(secondary_rpc.as_ref());
         run_cycle(
             &rpc,
-            secondary_rpc.as_ref(),
+            secondary_for_cycle,
             &cfg,
             &keypairs,
             &derived,
@@ -125,7 +150,7 @@ async fn main() -> Result<()> {
                 _ = interval.tick() => {
                     match run_cycle(
                         &rpc,
-                        secondary_rpc.as_ref(),
+                        active_secondary_rpc(secondary_rpc.as_ref()),
                         &cfg,
                         &keypairs,
                         &derived,
@@ -175,7 +200,7 @@ async fn main() -> Result<()> {
                 _ = interval.tick() => {
                     match run_cycle(
                         &rpc,
-                        secondary_rpc.as_ref(),
+                        active_secondary_rpc(secondary_rpc.as_ref()),
                         &cfg,
                         &keypairs,
                         &derived,
@@ -218,6 +243,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn active_secondary_rpc<'a>(secondary_rpc: Option<&'a RpcClient>) -> Option<&'a RpcClient> {
+    let secondary = secondary_rpc?;
+    utils::maybe_probe_secondary_rpc_recovery(secondary);
+
+    if utils::secondary_rpc_is_degraded() {
+        None
+    } else {
+        Some(secondary)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_cycle(
     rpc: &RpcClient,
@@ -241,7 +277,14 @@ fn run_cycle(
         }
     }
 
-    match rebalance::run_rebalance_cycle(rpc, secondary_rpc, cfg, keepers, derived, rebalance_memory) {
+    match rebalance::run_rebalance_cycle(
+        rpc,
+        secondary_rpc,
+        cfg,
+        keepers,
+        derived,
+        rebalance_memory,
+    ) {
         Ok(outcome) => {
             if outcome.proposed {
                 info!(
@@ -259,14 +302,7 @@ fn run_cycle(
         }
     }
 
-    match monitor::run_monitor_cycle(
-        rpc,
-        secondary_rpc,
-        cfg,
-        keepers,
-        derived,
-        monitor_memory,
-    ) {
+    match monitor::run_monitor_cycle(rpc, secondary_rpc, cfg, keepers, derived, monitor_memory) {
         Ok(outcome) => {
             if outcome.circuit_breaker_triggered {
                 warn!("circuit breaker active");
@@ -284,14 +320,7 @@ fn run_cycle(
         }
     }
 
-    match watchdog::run_watchdog_cycle(
-        rpc,
-        secondary_rpc,
-        cfg,
-        keepers,
-        derived,
-        watchdog_memory,
-    ) {
+    match watchdog::run_watchdog_cycle(rpc, secondary_rpc, cfg, keepers, derived, watchdog_memory) {
         Ok(outcome) => {
             if !outcome.anomalies.is_empty() {
                 warn!(anomalies = ?outcome.anomalies, "watchdog anomalies");

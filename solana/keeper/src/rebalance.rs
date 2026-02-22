@@ -3,7 +3,7 @@ use crate::{
     utils::{self, DerivedAccounts},
     wire,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     hash::hashv,
@@ -14,6 +14,8 @@ use tracing::{info, warn};
 
 const WEIGHT_SCALE: u64 = 1_000_000;
 const BATCH_WINDOW_SLOTS: u64 = 32;
+const MIN_WEIGHT_CAP_PPM: u64 = 10_000;
+const MAX_WEIGHT_CAP_PPM: u64 = WEIGHT_SCALE;
 
 #[derive(Debug, Clone)]
 pub struct RebalanceOutcome {
@@ -45,53 +47,34 @@ pub fn run_rebalance_cycle(
     derived: &DerivedAccounts,
     memory: &mut RebalanceMemory,
 ) -> Result<RebalanceOutcome> {
-    let protocol: wire::ProtocolState =
-        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let (protocol, vaults) = if let Some(secondary) = secondary_rpc {
+        utils::retry_with_backoff(
+            utils::CROSS_RPC_MAX_ATTEMPTS,
+            utils::CROSS_RPC_BACKOFF_BASE_MS,
+            |attempt| {
+                let primary_snapshot = fetch_rebalance_snapshot(rpc, derived)?;
+                let secondary_snapshot = fetch_rebalance_snapshot(secondary, derived)?;
 
-    let vaults = [
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
-        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
-    ];
+                validate_rebalance_cross_rpc(
+                    &primary_snapshot.0,
+                    &secondary_snapshot.0,
+                    &primary_snapshot.1,
+                    &secondary_snapshot.1,
+                )
+                .map_err(|err| {
+                    anyhow!(
+                        "rebalance cross-RPC mismatch (attempt {attempt}/{}): {err}",
+                        utils::CROSS_RPC_MAX_ATTEMPTS
+                    )
+                })?;
 
-    if let Some(secondary) = secondary_rpc {
-        let secondary_protocol: wire::ProtocolState =
-            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
-        let secondary_vaults = [
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[0],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[1],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[2],
-                "CollateralVault",
-            )?,
-            utils::fetch_account::<wire::CollateralVault>(
-                secondary,
-                &derived.vaults[3],
-                "CollateralVault",
-            )?,
-        ];
-
-        if protocol != secondary_protocol || vaults != secondary_vaults {
-            warn!("rebalance cycle skipped: protocol/vault state mismatch across RPC endpoints");
-            return Ok(RebalanceOutcome {
-                proposed: false,
-                deviation_bps: 0,
-                target_weights: protocol.weights,
-                commit_signature: None,
-                rebalance_signature: None,
-            });
-        }
-    }
+                Ok(primary_snapshot)
+            },
+        )
+        .map_err(|err| anyhow!("rebalance cycle failed after cross-RPC retries: {err}"))?
+    } else {
+        fetch_rebalance_snapshot(rpc, derived)?
+    };
 
     let mut outcome = RebalanceOutcome {
         proposed: false,
@@ -160,7 +143,7 @@ pub fn run_rebalance_cycle(
                 local_pending.reveal_salt,
             )?;
 
-            match utils::send_instructions(rpc, k1, &[k1, k2], vec![rebalance_ix]) {
+            match utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![rebalance_ix]) {
                 Ok(sig) => {
                     info!(
                         signature = %sig,
@@ -226,7 +209,7 @@ pub fn run_rebalance_cycle(
         cfg.commit_valid_for_slots,
     )?;
 
-    let commit_sig = utils::send_instructions(rpc, k1, &[k1, k2], vec![commit_ix])?;
+    let commit_sig = utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![commit_ix])?;
     info!(
         deviation_bps,
         signature = %commit_sig,
@@ -255,8 +238,7 @@ pub fn run_rebalance_cycle(
     if current_slot / BATCH_WINDOW_SLOTS != batch_slot / BATCH_WINDOW_SLOTS {
         warn!(
             current_slot,
-            batch_slot,
-            "skipping immediate reveal: moved outside batch window"
+            batch_slot, "skipping immediate reveal: moved outside batch window"
         );
         return Ok(outcome);
     }
@@ -274,7 +256,7 @@ pub fn run_rebalance_cycle(
         reveal_salt,
     )?;
 
-    match utils::send_instructions(rpc, k1, &[k1, k2], vec![rebalance_ix]) {
+    match utils::send_instructions(rpc, secondary_rpc, k1, &[k1, k2], vec![rebalance_ix]) {
         Ok(sig) => {
             info!(
                 signature = %sig,
@@ -295,6 +277,52 @@ pub fn run_rebalance_cycle(
     }
 
     Ok(outcome)
+}
+
+pub fn validate_rebalance_cross_rpc(
+    primary_protocol: &wire::ProtocolState,
+    secondary_protocol: &wire::ProtocolState,
+    primary_vaults: &[wire::CollateralVault; 4],
+    secondary_vaults: &[wire::CollateralVault; 4],
+) -> Result<()> {
+    validate_vault_weight_caps(primary_vaults)?;
+    validate_vault_weight_caps(secondary_vaults)?;
+    utils::validate_protocol_state_with_tolerance(primary_protocol, secondary_protocol)?;
+    utils::validate_vaults_with_tolerance(primary_vaults, secondary_vaults)?;
+    Ok(())
+}
+
+fn fetch_rebalance_snapshot(
+    rpc: &RpcClient,
+    derived: &DerivedAccounts,
+) -> Result<(wire::ProtocolState, [wire::CollateralVault; 4])> {
+    let protocol: wire::ProtocolState =
+        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+
+    let vaults = [
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[1], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
+        utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
+    ];
+
+    validate_vault_weight_caps(&vaults)?;
+    Ok((protocol, vaults))
+}
+
+fn validate_vault_weight_caps(vaults: &[wire::CollateralVault; 4]) -> Result<()> {
+    for (idx, vault) in vaults.iter().enumerate() {
+        if !(MIN_WEIGHT_CAP_PPM..=MAX_WEIGHT_CAP_PPM).contains(&vault.weight_cap) {
+            return Err(anyhow!(
+                "vault[{idx}] weight_cap out of range: {} (expected {}..={} => 0.01..1.0)",
+                vault.weight_cap,
+                MIN_WEIGHT_CAP_PPM,
+                MAX_WEIGHT_CAP_PPM
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn compute_target_weights(vaults: &[wire::CollateralVault; 4]) -> [u64; 4] {
