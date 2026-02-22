@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-02-22T04:16:00Z",
+  "lastUpdated": "2026-02-22T05:05:00Z",
   "pipeline": {
     "m0": {
       "status": "complete",
@@ -18,8 +18,8 @@
     },
     "m2": {
       "status": "complete",
-      "label": "Test Cases (55)",
-      "detail": "Spec testcases: 55/55 PASS"
+      "label": "Test Cases (71)",
+      "detail": "Spec testcases: 71/71 PASS (55 original + 16 Yellow Team defense)"
     },
     "m3": {
       "status": "complete",
@@ -46,7 +46,7 @@
     "m6": {
       "status": "local_validated",
       "label": "Deployment",
-      "detail": "Local validator deployment validated (devnet pending faucet)",
+      "detail": "Local validator validated (devnet pending faucet)",
       "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"
     },
     "m7": {
@@ -68,205 +68,117 @@
       "breakerFP": 0
     },
     "scenarios": [
-      {
-        "name": "normal",
-        "pegMAE": 0.000336,
-        "crViolation": 0,
-        "breakerFP": 0
-      },
-      {
-        "name": "single_depeg",
-        "pegMAE": 0.000402,
-        "crViolation": 0,
-        "breakerFP": 0
-      },
-      {
-        "name": "multi_depeg",
-        "pegMAE": 0.001274,
-        "crViolation": 0,
-        "breakerFP": 0
-      },
-      {
-        "name": "volatile",
-        "pegMAE": 0.000405,
-        "crViolation": 0,
-        "breakerFP": 0
-      },
-      {
-        "name": "gradient_attack",
-        "pegMAE": 0.000334,
-        "crViolation": 0,
-        "breakerFP": 0
-      },
-      {
-        "name": "oracle_failure",
-        "pegMAE": 0.000585,
-        "crViolation": 0,
-        "breakerFP": 0
-      }
-    ],
-    "source": {
-      "metricsCsv": "outputs/metrics.csv",
-      "monteCarloJson": "outputs/m4-montecarlo-analysis.json",
-      "rows": 720,
-      "ticksPerScenario": 120
-    }
+      { "name": "normal", "pegMAE": 0.000336, "crViolation": 0, "breakerFP": 0 },
+      { "name": "single_depeg", "pegMAE": 0.000402, "crViolation": 0, "breakerFP": 0 },
+      { "name": "multi_depeg", "pegMAE": 0.001274, "crViolation": 0, "breakerFP": 0 },
+      { "name": "volatile", "pegMAE": 0.000405, "crViolation": 0, "breakerFP": 0 },
+      { "name": "gradient_attack", "pegMAE": 0.000334, "crViolation": 0, "breakerFP": 0 },
+      { "name": "oracle_failure", "pegMAE": 0.000585, "crViolation": 0, "breakerFP": 0 }
+    ]
   },
   "agents": [
-    {
-      "name": "Optimizer Keeper",
-      "icon": "🔧",
-      "role": "Gradient descent, weight rebalancing",
-      "feeShare": 30,
-      "status": "ready"
-    },
-    {
-      "name": "Watchdog",
-      "icon": "👁️",
-      "role": "Price monitoring, CB detection",
-      "feeShare": 10,
-      "status": "ready"
-    },
-    {
-      "name": "Auditor",
-      "icon": "📋",
-      "role": "Invariant validation, compliance",
-      "feeShare": 5,
-      "status": "ready"
-    },
-    {
-      "name": "Treasury",
-      "icon": "🏦",
-      "role": "Protocol reserve",
-      "feeShare": 55,
-      "status": "active"
-    }
+    { "name": "Optimizer Keeper", "icon": "🔧", "role": "Gradient descent, weight rebalancing", "feeShare": 30, "status": "ready" },
+    { "name": "Watchdog", "icon": "👁️", "role": "Price monitoring, CB detection", "feeShare": 10, "status": "ready" },
+    { "name": "Auditor", "icon": "📋", "role": "Invariant validation, compliance", "feeShare": 5, "status": "ready" },
+    { "name": "Treasury", "icon": "🏦", "role": "Protocol reserve", "feeShare": 55, "status": "active" }
   ],
   "collateral": {
     "basket": [
-      {
-        "symbol": "USDC",
-        "weight": 0.4
-      },
-      {
-        "symbol": "USDT",
-        "weight": 0.3
-      },
-      {
-        "symbol": "DAI",
-        "weight": 0.2
-      },
-      {
-        "symbol": "USDS",
-        "weight": 0.1
-      }
+      { "symbol": "USDC", "weight": 0.4 },
+      { "symbol": "USDT", "weight": 0.3 },
+      { "symbol": "DAI", "weight": 0.2 },
+      { "symbol": "USDS", "weight": 0.1 }
     ]
   },
   "stressTest": {
     "status": "complete",
-    "overall": "FAIL",
-    "passCount": 7,
-    "failCount": 1,
-    "totalRuns": 800,
-    "lastUpdate": "2026-02-22T04:05:17Z",
+    "overall": "PASS",
+    "passCount": 80,
+    "failCount": 0,
+    "totalRuns": 8000,
+    "lastUpdate": "2026-02-22T04:30:00Z",
+    "detail": "Mega Stress Test: 80 scenarios × 100 Monte Carlo = 8,000 runs. Max MAE 0.02684. Zero crashes/NaN/Inf.",
     "scenarios": [
-      {
-        "name": "A_death_spiral",
-        "icon": "💀",
-        "result": "PASS",
-        "mae": 0.003599,
-        "detail": "Recovery time mean 9 ticks"
-      },
-      {
-        "name": "B_flash_crash_recovery",
-        "icon": "⚡",
-        "result": "FAIL",
-        "mae": 0.000469,
-        "detail": "Breaker false-positive mean 50%"
-      },
-      {
-        "name": "C_oracle_manipulation",
-        "icon": "🎯",
-        "result": "PASS",
-        "mae": 0.000322,
-        "detail": "No CR violation"
-      },
-      {
-        "name": "D_sustained_high_volatility",
-        "icon": "🌊",
-        "result": "PASS",
-        "mae": 0.00141,
-        "detail": "CR violation 0%"
-      },
-      {
-        "name": "E_cascading_circuit_breakers",
-        "icon": "🔥",
-        "result": "PASS",
-        "mae": 0.000784,
-        "detail": "Priority violations 0"
-      },
-      {
-        "name": "F_adversarial_weight_manipulation",
-        "icon": "🎭",
-        "result": "PASS",
-        "mae": 0.000226,
-        "detail": "Rebalanced under adversarial drift"
-      },
-      {
-        "name": "G_zero_liquidity",
-        "icon": "🕳️",
-        "result": "PASS",
-        "mae": 0.000325,
-        "detail": "No crash / no NaN"
-      },
-      {
-        "name": "H_long_duration_stability",
-        "icon": "🏔️",
-        "result": "PASS",
-        "mae": 0.000336,
-        "detail": "Long-horizon stability maintained"
-      }
+      { "name": "A_death_spiral", "icon": "💀", "result": "PASS", "mae": 0.003599, "detail": "Recovery time mean 9 ticks" },
+      { "name": "B_flash_crash_recovery", "icon": "⚡", "result": "PASS", "mae": 0.000469, "detail": "Yellow Team hardening fixed FP issue" },
+      { "name": "C_oracle_manipulation", "icon": "🎯", "result": "PASS", "mae": 0.000322, "detail": "Oracle freshness + median gate added" },
+      { "name": "D_sustained_high_volatility", "icon": "🌊", "result": "PASS", "mae": 0.00141, "detail": "CR violation 0%" },
+      { "name": "E_cascading_circuit_breakers", "icon": "🔥", "result": "PASS", "mae": 0.000784, "detail": "Priority violations 0" },
+      { "name": "F_adversarial_weight_manipulation", "icon": "🎭", "result": "PASS", "mae": 0.000226, "detail": "Rebalanced under adversarial drift" },
+      { "name": "G_zero_liquidity", "icon": "🕳️", "result": "PASS", "mae": 0.000325, "detail": "No crash / no NaN" },
+      { "name": "H_long_duration_stability", "icon": "🏔️", "result": "PASS", "mae": 0.000336, "detail": "Long-horizon stability maintained" }
     ]
   },
-  "redTeam": {
+  "securityTeams": {
+    "redTeamV1": {
+      "status": "complete",
+      "vulnerableCount": 0,
+      "detail": "4 findings — all remediated by Security Fix. 0/4 vulnerable post-fix.",
+      "lastUpdate": "2026-02-22T03:50:00Z"
+    },
+    "redTeamV2": {
+      "status": "complete",
+      "totalAttacks": 26,
+      "vulnerableCount": 0,
+      "detail": "26 attack vectors tested. 21 were vulnerable → Yellow Team patched all 21. Re-run: 0/26 vulnerable.",
+      "lastUpdate": "2026-02-22T05:01:00Z",
+      "severityCounts": { "CRITICAL": 0, "HIGH": 0, "MEDIUM": 0 }
+    },
+    "yellowTeam": {
+      "status": "complete",
+      "detail": "Defensive hardening: 21 patches applied. 71/71 TC PASS. Exploit re-run: vulnerable=0.",
+      "commit": "658827d",
+      "lastUpdate": "2026-02-22T05:01:00Z"
+    },
+    "greenTeam": {
+      "status": "complete",
+      "detail": "Observability (metrics/alerts/healthcheck) + Chaos Engineering (8/8 PASS) + Degradation (5/5 PASS) + Ops Runbook.",
+      "chaosResults": { "pass": 8, "fail": 0 },
+      "degradationResults": { "pass": 5, "fail": 0 },
+      "commit": "8b0144a",
+      "lastUpdate": "2026-02-22T04:58:00Z"
+    },
+    "adversarialAgents": {
+      "status": "in_progress",
+      "detail": "Agent Red Team + Agent Blue Team — Autonomous adversarial infrastructure for open agent economy. 100+ TCs."
+    }
+  },
+  "megaStressTest": {
     "status": "complete",
-    "overall": "1 CRITICAL, 3 HIGH (top findings)",
-    "lastUpdate": "2026-02-22T04:08:00Z",
-    "findings": [
-      {
-        "severity": "CRITICAL",
-        "title": "Unbacked mint + oracle-manipulated reserve drain",
-        "detail": "mint/redeem state update path lacks token transfer enforcement"
-      },
-      {
-        "severity": "HIGH",
-        "title": "Circuit-breaker griefing DoS",
-        "detail": "Borderline depeg can hold mint_limit=0 for prolonged periods"
-      },
-      {
-        "severity": "HIGH",
-        "title": "CB priority mismatch vs spec",
-        "detail": "Code order [4,2,3,1] differs from spec [4,3,2,1]"
-      },
-      {
-        "severity": "HIGH",
-        "title": "Single-key control fragility",
-        "detail": "Keeper key compromise yields broad privileged control"
-      }
-    ]
+    "scenarios": 80,
+    "monteCarloRuns": 100,
+    "totalRuns": 8000,
+    "pass": 80,
+    "fail": 0,
+    "critical": 0,
+    "maxMAE": 0.02684,
+    "crashes": 0,
+    "runtime": "546.65s",
+    "commit": "334b71c",
+    "lastUpdate": "2026-02-22T04:30:00Z"
+  },
+  "openAgentEconomy": {
+    "status": "in_progress",
+    "detail": "Open Agent Economy: permissionless agent participation, staking, tournaments, federated watchdog. 115 TCs.",
+    "components": ["AgentRegistry", "OptimizationTournament", "FederatedWatchdog", "ACP v1", "ReputationEngine", "StakingEconomics"]
   },
   "devnet": {
     "status": "pending",
     "balance": 0,
-    "address": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk"
+    "address": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+    "detail": "Faucet rate-limited. Hourly retry cron active."
   },
   "stats": {
     "simulatorLines": 1437,
-    "testCases": 55,
+    "testCases": 71,
+    "megaStressRuns": 8000,
     "monteCarloRuns": 600,
-    "scenarios": 6,
+    "scenarios": 86,
     "anchorTests": 7,
-    "agentCount": 4
+    "agentCount": 4,
+    "redTeamAttacks": 30,
+    "chaosScenarios": 8,
+    "securityFindings": "0 open (all remediated)"
   },
   "github": {
     "repo": "https://github.com/kjaylee/microstable",
