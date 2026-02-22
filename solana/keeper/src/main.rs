@@ -4,6 +4,7 @@ mod monitor;
 mod optimizer;
 mod oracle;
 mod rebalance;
+mod risk_manager;
 mod tournament;
 mod utils;
 mod watchdog;
@@ -13,6 +14,8 @@ mod wire;
 mod aig_tests;
 #[cfg(test)]
 mod optimizer_tests;
+#[cfg(test)]
+mod risk_manager_tests;
 #[cfg(test)]
 mod tournament_tests;
 
