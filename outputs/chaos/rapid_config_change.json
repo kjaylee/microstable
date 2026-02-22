@@ -1,0 +1,134 @@
+{
+  "details": {
+    "extra": {
+      "fault_ticks": [
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ],
+      "injection_notes": [],
+      "max_value_depth": 0,
+      "metrics": {
+        "agent_health": {
+          "auditor": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 74,
+            "last_response_ms": 54.243,
+            "name": "auditor",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 75
+          },
+          "keeper": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 74,
+            "last_response_ms": 78.316,
+            "name": "keeper",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 75
+          },
+          "watchdog": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 74,
+            "last_response_ms": 70.982,
+            "name": "watchdog",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 75
+          }
+        },
+        "circuit_breaker": {
+          "activation_counts": {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0
+          },
+          "active": [],
+          "consecutive_active_peak": 0,
+          "consecutive_active_ticks": 0
+        },
+        "collateral_ratio": {
+          "avg": 1.2066872334310315,
+          "current": 1.2009999999999998,
+          "max": 1.2665461985951312,
+          "min": 1.2009999999999998
+        },
+        "oracle": {
+          "is_stale": false,
+          "last_fresh_tick": 74,
+          "stale_peak_ticks": 0,
+          "stale_streak_ticks": 0
+        },
+        "peg": {
+          "mae": 0.00036095653466985695,
+          "max_error": 0.000733097913633185,
+          "samples": 75
+        },
+        "system": {
+          "autograd_depth_cap": 256,
+          "cpu_usage_ratio": 0.476416015625,
+          "memory_bytes": 56524800
+        },
+        "tick": 74,
+        "timestamp": "2026-02-22T04:56:23.705265+00:00",
+        "transactions": {
+          "failure_rate": 0.0,
+          "failures": 0,
+          "throughput_per_sec": 1504.3340618140605,
+          "total": 75
+        }
+      },
+      "race_inconsistency": 0,
+      "reject_attempts": 29,
+      "reject_count": 29,
+      "tx_attempts": 75,
+      "tx_failure_rate": 0.0,
+      "tx_failures": 0
+    },
+    "reason": "malicious rapid proposals rejected ratio=1.00"
+  },
+  "impact_scope": {
+    "funds_preserved": true,
+    "max_cb_level": 0,
+    "max_peg_error": 0.000733097913633185,
+    "min_cr": 1.2009999999999998,
+    "mode_counts": {
+      "NORMAL": 75
+    },
+    "tx_failure_rate": 0.0
+  },
+  "name": "rapid_config_change",
+  "passed": true,
+  "recovery_ticks": 5
+}

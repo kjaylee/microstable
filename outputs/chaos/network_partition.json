@@ -1,0 +1,236 @@
+{
+  "details": {
+    "extra": {
+      "fault_ticks": [
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45
+      ],
+      "injection_notes": [
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 20
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 21
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 22
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 23
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 24
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 25
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 26
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 27
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 28
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 29
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 30
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 31
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 32
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 33
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 34
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 35
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 36
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 37
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 38
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 39
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 40
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 41
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 42
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 43
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 44
+        },
+        {
+          "note": "network partition: delayed keeper/watchdog communication",
+          "tick": 45
+        }
+      ],
+      "max_value_depth": 0,
+      "metrics": {
+        "agent_health": {
+          "auditor": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 84,
+            "last_response_ms": 68.146,
+            "name": "auditor",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 85
+          },
+          "keeper": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 84,
+            "last_response_ms": 66.263,
+            "name": "keeper",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 85
+          },
+          "watchdog": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 84,
+            "last_response_ms": 77.879,
+            "name": "watchdog",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 85
+          }
+        },
+        "circuit_breaker": {
+          "activation_counts": {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0
+          },
+          "active": [],
+          "consecutive_active_peak": 0,
+          "consecutive_active_ticks": 0
+        },
+        "collateral_ratio": {
+          "avg": 1.206022727871571,
+          "current": 1.202242439550041,
+          "max": 1.2630156655708331,
+          "min": 1.2009999999999998
+        },
+        "oracle": {
+          "is_stale": false,
+          "last_fresh_tick": 84,
+          "stale_peak_ticks": 0,
+          "stale_streak_ticks": 0
+        },
+        "peg": {
+          "mae": 0.0003743435098235845,
+          "max_error": 0.0006610635863734116,
+          "samples": 85
+        },
+        "system": {
+          "autograd_depth_cap": 256,
+          "cpu_usage_ratio": 0.476416015625,
+          "memory_bytes": 37634048
+        },
+        "tick": 84,
+        "timestamp": "2026-02-22T04:56:23.448007+00:00",
+        "transactions": {
+          "failure_rate": 0.15294117647058825,
+          "failures": 13,
+          "throughput_per_sec": 1695.4258349541803,
+          "total": 85
+        }
+      },
+      "race_inconsistency": 0,
+      "reject_attempts": 0,
+      "reject_count": 0,
+      "tx_attempts": 85,
+      "tx_failure_rate": 0.15294117647058825,
+      "tx_failures": 13
+    },
+    "reason": "partition tolerated with bounded degradation"
+  },
+  "impact_scope": {
+    "funds_preserved": true,
+    "max_cb_level": 0,
+    "max_peg_error": 0.0006610635863734116,
+    "min_cr": 1.2009999999999998,
+    "mode_counts": {
+      "NORMAL": 85
+    },
+    "tx_failure_rate": 0.15294117647058825
+  },
+  "name": "network_partition",
+  "passed": true,
+  "recovery_ticks": 5
+}

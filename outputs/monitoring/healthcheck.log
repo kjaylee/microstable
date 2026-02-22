@@ -1,0 +1,54 @@
+{
+  "checks": [
+    {
+      "detail": "sum(weights)=1.00000000",
+      "name": "weights_sum",
+      "ok": true,
+      "severity": "critical"
+    },
+    {
+      "detail": "cr=1.280000, target=1.200000, hard_min=1.050000",
+      "name": "cr_bounds",
+      "ok": true,
+      "severity": "critical"
+    },
+    {
+      "detail": "supply=1000000.0000, position_supply_sum=1000000.0000",
+      "name": "supply_consistency",
+      "ok": true,
+      "severity": "critical"
+    },
+    {
+      "detail": "alive=['keeper', 'watchdog', 'auditor'] (3/3)",
+      "name": "agent_quorum",
+      "ok": true,
+      "severity": "critical"
+    },
+    {
+      "detail": "stale_streak_ticks=0",
+      "name": "oracle_freshness",
+      "ok": true,
+      "severity": "warning"
+    },
+    {
+      "detail": "url=https://api.devnet.solana.com, detail={\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}\n",
+      "name": "solana_rpc",
+      "ok": true,
+      "severity": "warning"
+    },
+    {
+      "detail": "rss=34455552 bytes",
+      "name": "memory_limit",
+      "ok": true,
+      "severity": "warning"
+    },
+    {
+      "detail": "MAX_AUTOGRAD_DEPTH=256",
+      "name": "autograd_depth_cap",
+      "ok": true,
+      "severity": "warning"
+    }
+  ],
+  "status": "healthy",
+  "timestamp": "2026-02-22T04:57:39.717095+00:00"
+}

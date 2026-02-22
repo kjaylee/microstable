@@ -1,0 +1,121 @@
+{
+  "details": {
+    "extra": {
+      "fault_ticks": [
+        22,
+        34,
+        48
+      ],
+      "injection_notes": [
+        {
+          "note": "simulated concurrent mint/redeem race",
+          "tick": 22
+        },
+        {
+          "note": "simulated concurrent mint/redeem race",
+          "tick": 34
+        },
+        {
+          "note": "simulated concurrent mint/redeem race",
+          "tick": 48
+        }
+      ],
+      "max_value_depth": 0,
+      "metrics": {
+        "agent_health": {
+          "auditor": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 85,
+            "last_response_ms": 68.859,
+            "name": "auditor",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 86
+          },
+          "keeper": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 85,
+            "last_response_ms": 75.051,
+            "name": "keeper",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 86
+          },
+          "watchdog": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 85,
+            "last_response_ms": 55.555,
+            "name": "watchdog",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 86
+          }
+        },
+        "circuit_breaker": {
+          "activation_counts": {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0
+          },
+          "active": [],
+          "consecutive_active_peak": 0,
+          "consecutive_active_ticks": 0
+        },
+        "collateral_ratio": {
+          "avg": 1.2059759407897062,
+          "current": 1.2009999999999998,
+          "max": 1.263153658381193,
+          "min": 1.2009999999999998
+        },
+        "oracle": {
+          "is_stale": false,
+          "last_fresh_tick": 85,
+          "stale_peak_ticks": 0,
+          "stale_streak_ticks": 0
+        },
+        "peg": {
+          "mae": 0.0003153703360215474,
+          "max_error": 0.000765373072646236,
+          "samples": 86
+        },
+        "system": {
+          "autograd_depth_cap": 256,
+          "cpu_usage_ratio": 0.476416015625,
+          "memory_bytes": 57950208
+        },
+        "tick": 85,
+        "timestamp": "2026-02-22T04:56:23.830254+00:00",
+        "transactions": {
+          "failure_rate": 0.0,
+          "failures": 0,
+          "throughput_per_sec": 1270.3297904560661,
+          "total": 86
+        }
+      },
+      "race_inconsistency": 0,
+      "reject_attempts": 0,
+      "reject_count": 0,
+      "tx_attempts": 86,
+      "tx_failure_rate": 0.0,
+      "tx_failures": 0
+    },
+    "reason": "concurrent mint/redeem race preserved supply accounting"
+  },
+  "impact_scope": {
+    "funds_preserved": true,
+    "max_cb_level": 0,
+    "max_peg_error": 0.000765373072646236,
+    "min_cr": 1.2009999999999998,
+    "mode_counts": {
+      "NORMAL": 86
+    },
+    "tx_failure_rate": 0.0
+  },
+  "name": "double_spend_race",
+  "passed": true,
+  "recovery_ticks": 5
+}

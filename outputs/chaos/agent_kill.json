@@ -1,0 +1,272 @@
+{
+  "details": {
+    "extra": {
+      "fault_ticks": [
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55
+      ],
+      "injection_notes": [
+        {
+          "note": "keeper down",
+          "tick": 15
+        },
+        {
+          "note": "keeper down",
+          "tick": 16
+        },
+        {
+          "note": "keeper down",
+          "tick": 17
+        },
+        {
+          "note": "keeper down",
+          "tick": 18
+        },
+        {
+          "note": "keeper down",
+          "tick": 19
+        },
+        {
+          "note": "keeper down",
+          "tick": 20
+        },
+        {
+          "note": "keeper down",
+          "tick": 21
+        },
+        {
+          "note": "keeper down",
+          "tick": 22
+        },
+        {
+          "note": "keeper down",
+          "tick": 23
+        },
+        {
+          "note": "keeper down",
+          "tick": 24
+        },
+        {
+          "note": "keeper down",
+          "tick": 25
+        },
+        {
+          "note": "watchdog down",
+          "tick": 30
+        },
+        {
+          "note": "watchdog down",
+          "tick": 31
+        },
+        {
+          "note": "watchdog down",
+          "tick": 32
+        },
+        {
+          "note": "watchdog down",
+          "tick": 33
+        },
+        {
+          "note": "watchdog down",
+          "tick": 34
+        },
+        {
+          "note": "watchdog down",
+          "tick": 35
+        },
+        {
+          "note": "watchdog down",
+          "tick": 36
+        },
+        {
+          "note": "watchdog down",
+          "tick": 37
+        },
+        {
+          "note": "watchdog down",
+          "tick": 38
+        },
+        {
+          "note": "watchdog down",
+          "tick": 39
+        },
+        {
+          "note": "watchdog down",
+          "tick": 40
+        },
+        {
+          "note": "auditor down",
+          "tick": 45
+        },
+        {
+          "note": "auditor down",
+          "tick": 46
+        },
+        {
+          "note": "auditor down",
+          "tick": 47
+        },
+        {
+          "note": "auditor down",
+          "tick": 48
+        },
+        {
+          "note": "auditor down",
+          "tick": 49
+        },
+        {
+          "note": "auditor down",
+          "tick": 50
+        },
+        {
+          "note": "auditor down",
+          "tick": 51
+        },
+        {
+          "note": "auditor down",
+          "tick": 52
+        },
+        {
+          "note": "auditor down",
+          "tick": 53
+        },
+        {
+          "note": "auditor down",
+          "tick": 54
+        },
+        {
+          "note": "auditor down",
+          "tick": 55
+        }
+      ],
+      "max_value_depth": 0,
+      "metrics": {
+        "agent_health": {
+          "auditor": {
+            "failed_probes": 11,
+            "failure_rate": 0.1375,
+            "last_activity_tick": 79,
+            "last_response_ms": 75.174,
+            "name": "auditor",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 80
+          },
+          "keeper": {
+            "failed_probes": 11,
+            "failure_rate": 0.1375,
+            "last_activity_tick": 79,
+            "last_response_ms": 64.816,
+            "name": "keeper",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 80
+          },
+          "watchdog": {
+            "failed_probes": 11,
+            "failure_rate": 0.1375,
+            "last_activity_tick": 79,
+            "last_response_ms": 59.461,
+            "name": "watchdog",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 80
+          }
+        },
+        "circuit_breaker": {
+          "activation_counts": {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0
+          },
+          "active": [],
+          "consecutive_active_peak": 0,
+          "consecutive_active_ticks": 0
+        },
+        "collateral_ratio": {
+          "avg": 1.2062248870235273,
+          "current": 1.2017185975191929,
+          "max": 1.265355987936884,
+          "min": 1.2009999999999998
+        },
+        "oracle": {
+          "is_stale": false,
+          "last_fresh_tick": 79,
+          "stale_peak_ticks": 0,
+          "stale_streak_ticks": 0
+        },
+        "peg": {
+          "mae": 0.0003340982743167659,
+          "max_error": 0.0005442388442358226,
+          "samples": 80
+        },
+        "system": {
+          "autograd_depth_cap": 256,
+          "cpu_usage_ratio": 0.476416015625,
+          "memory_bytes": 35651584
+        },
+        "tick": 79,
+        "timestamp": "2026-02-22T04:56:23.397387+00:00",
+        "transactions": {
+          "failure_rate": 0.0,
+          "failures": 0,
+          "throughput_per_sec": 1997.6562341860702,
+          "total": 80
+        }
+      },
+      "race_inconsistency": 0,
+      "reject_attempts": 0,
+      "reject_count": 0,
+      "tx_attempts": 69,
+      "tx_failure_rate": 0.0,
+      "tx_failures": 0
+    },
+    "reason": "single-agent failures degraded gracefully"
+  },
+  "impact_scope": {
+    "funds_preserved": true,
+    "max_cb_level": 0,
+    "max_peg_error": 0.0005442388442358226,
+    "min_cr": 1.2009999999999998,
+    "mode_counts": {
+      "NORMAL": 47,
+      "SAFE_MODE": 33
+    },
+    "tx_failure_rate": 0.0
+  },
+  "name": "agent_kill",
+  "passed": true,
+  "recovery_ticks": 5
+}

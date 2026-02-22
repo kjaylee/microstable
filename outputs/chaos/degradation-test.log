@@ -1,0 +1,340 @@
+{
+  "checks": [
+    {
+      "name": "1_agent_down_quorum_2_of_3",
+      "pass": true
+    },
+    {
+      "name": "2_agents_down_safe_mode",
+      "pass": true
+    },
+    {
+      "name": "3_agents_down_frozen_redeem_only",
+      "pass": true
+    },
+    {
+      "name": "oracle_full_failure_cb3",
+      "pass": true
+    },
+    {
+      "name": "funds_preservation_all_paths",
+      "pass": true
+    }
+  ],
+  "evidence": {
+    "one_agent_down_rows": [
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.2621210808367571,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0006234009322453327,
+        "tick": 0
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.2529575631772885,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0005853969374236545,
+        "tick": 1
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.2457150153680556,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0005118085175790377,
+        "tick": 2
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.239518843208258,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0004450294613199679,
+        "tick": 3
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.234312799816417,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0003943161231196868,
+        "tick": 4
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.2280362259809103,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0004853674410044695,
+        "tick": 5
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.224374533869795,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0004252907194699507,
+        "tick": 6
+      },
+      {
+        "alive_count": 2,
+        "cb3": false,
+        "cr": 1.2213881003419962,
+        "funds_preserved": true,
+        "mint_limit": 1.0,
+        "mint_paused_reason": "",
+        "mode": "QUORUM_2_OF_3",
+        "peg_error": 0.0003609421383572453,
+        "tick": 7
+      }
+    ],
+    "oracle_cb3_ticks": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39
+    ],
+    "three_agents_down_rows": [
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.2621210808367571,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0006234009322453327,
+        "tick": 0
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.2529575631772885,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0005853969374236545,
+        "tick": 1
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.2457150153680556,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0005118085175790377,
+        "tick": 2
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.239518843208258,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0004450294613199679,
+        "tick": 3
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.234312799816417,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0003943161231196868,
+        "tick": 4
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.2280362259809103,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0004853674410044695,
+        "tick": 5
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.224374533869795,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0004252907194699507,
+        "tick": 6
+      },
+      {
+        "alive_count": 0,
+        "cb3": false,
+        "cr": 1.2213881003419962,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "FROZEN_REDEEM_ONLY",
+        "mode": "FROZEN",
+        "peg_error": 0.0003609421383572453,
+        "tick": 7
+      }
+    ],
+    "two_agents_down_rows": [
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.2621210808367571,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0006234009322453327,
+        "tick": 0
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.2529575631772885,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0005853969374236545,
+        "tick": 1
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.2457150153680556,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0005118085175790377,
+        "tick": 2
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.239518843208258,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0004450294613199679,
+        "tick": 3
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.234312799816417,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0003943161231196868,
+        "tick": 4
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.2280362259809103,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0004853674410044695,
+        "tick": 5
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.224374533869795,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0004252907194699507,
+        "tick": 6
+      },
+      {
+        "alive_count": 1,
+        "cb3": false,
+        "cr": 1.2213881003419962,
+        "funds_preserved": true,
+        "mint_limit": 0.0,
+        "mint_paused_reason": "",
+        "mode": "SAFE_MODE",
+        "peg_error": 0.0003609421383572453,
+        "tick": 7
+      }
+    ]
+  },
+  "generated_at": "2026-02-22T04:56:08.336152+00:00",
+  "status": "PASS"
+}

@@ -1,0 +1,236 @@
+{
+  "details": {
+    "extra": {
+      "fault_ticks": [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "injection_notes": [
+        {
+          "note": "autograd deep chain stress",
+          "tick": 10
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 11
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 12
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 13
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 14
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 15
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 16
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 17
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 18
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 19
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 20
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 21
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 22
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 23
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 24
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 25
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 26
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 27
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 28
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 29
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 30
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 31
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 32
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 33
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 34
+        },
+        {
+          "note": "autograd deep chain stress",
+          "tick": 35
+        }
+      ],
+      "max_value_depth": 193,
+      "metrics": {
+        "agent_health": {
+          "auditor": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 79,
+            "last_response_ms": 53.38,
+            "name": "auditor",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 80
+          },
+          "keeper": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 79,
+            "last_response_ms": 54.547,
+            "name": "keeper",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 80
+          },
+          "watchdog": {
+            "failed_probes": 0,
+            "failure_rate": 0.0,
+            "last_activity_tick": 79,
+            "last_response_ms": 63.829,
+            "name": "watchdog",
+            "silent_ticks": 0,
+            "status": "healthy",
+            "total_probes": 80
+          }
+        },
+        "circuit_breaker": {
+          "activation_counts": {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0
+          },
+          "active": [],
+          "consecutive_active_peak": 0,
+          "consecutive_active_ticks": 0
+        },
+        "collateral_ratio": {
+          "avg": 1.2063459356193573,
+          "current": 1.2015026265560376,
+          "max": 1.2654669411369888,
+          "min": 1.2009999999999998
+        },
+        "oracle": {
+          "is_stale": false,
+          "last_fresh_tick": 79,
+          "stale_peak_ticks": 0,
+          "stale_streak_ticks": 0
+        },
+        "peg": {
+          "mae": 0.0002756777997300036,
+          "max_error": 0.0005183158201997884,
+          "samples": 80
+        },
+        "system": {
+          "autograd_depth_cap": 256,
+          "cpu_usage_ratio": 0.476416015625,
+          "memory_bytes": 50429952
+        },
+        "tick": 79,
+        "timestamp": "2026-02-22T04:56:23.603803+00:00",
+        "transactions": {
+          "failure_rate": 0.0,
+          "failures": 0,
+          "throughput_per_sec": 747.1117424664122,
+          "total": 80
+        }
+      },
+      "race_inconsistency": 0,
+      "reject_attempts": 0,
+      "reject_count": 0,
+      "tx_attempts": 80,
+      "tx_failure_rate": 0.0,
+      "tx_failures": 0
+    },
+    "reason": "memory pressure respected graph-depth cap"
+  },
+  "impact_scope": {
+    "funds_preserved": true,
+    "max_cb_level": 0,
+    "max_peg_error": 0.0005183158201997884,
+    "min_cr": 1.2009999999999998,
+    "mode_counts": {
+      "NORMAL": 80
+    },
+    "tx_failure_rate": 0.0
+  },
+  "name": "memory_pressure",
+  "passed": true,
+  "recovery_ticks": 5
+}

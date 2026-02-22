@@ -1,0 +1,1623 @@
+{
+  "alerts": [],
+  "generated_at": "2026-02-22T04:56:24.177260+00:00",
+  "healthcheck": {
+    "checks": [
+      {
+        "detail": "sum(weights)=1.00000000",
+        "name": "weights_sum",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "cr=1.280000, target=1.200000, hard_min=1.050000",
+        "name": "cr_bounds",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "supply=1000000.0000, position_supply_sum=1000000.0000",
+        "name": "supply_consistency",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "alive=['keeper', 'watchdog', 'auditor'] (3/3)",
+        "name": "agent_quorum",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "stale_streak_ticks=0",
+        "name": "oracle_freshness",
+        "ok": true,
+        "severity": "warning"
+      },
+      {
+        "detail": "url=https://api.devnet.solana.com, detail={\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}\n",
+        "name": "solana_rpc",
+        "ok": true,
+        "severity": "warning"
+      },
+      {
+        "detail": "rss=62308352 bytes",
+        "name": "memory_limit",
+        "ok": true,
+        "severity": "warning"
+      },
+      {
+        "detail": "MAX_AUTOGRAD_DEPTH=256",
+        "name": "autograd_depth_cap",
+        "ok": true,
+        "severity": "warning"
+      }
+    ],
+    "status": "healthy",
+    "timestamp": "2026-02-22T04:56:24.177247+00:00"
+  },
+  "latest_metrics": {
+    "agent_health": {
+      "auditor": {
+        "failed_probes": 0,
+        "failure_rate": 0.0,
+        "last_activity_tick": 85,
+        "last_response_ms": 68.859,
+        "name": "auditor",
+        "silent_ticks": 0,
+        "status": "healthy",
+        "total_probes": 86
+      },
+      "keeper": {
+        "failed_probes": 0,
+        "failure_rate": 0.0,
+        "last_activity_tick": 85,
+        "last_response_ms": 75.051,
+        "name": "keeper",
+        "silent_ticks": 0,
+        "status": "healthy",
+        "total_probes": 86
+      },
+      "watchdog": {
+        "failed_probes": 0,
+        "failure_rate": 0.0,
+        "last_activity_tick": 85,
+        "last_response_ms": 55.555,
+        "name": "watchdog",
+        "silent_ticks": 0,
+        "status": "healthy",
+        "total_probes": 86
+      }
+    },
+    "circuit_breaker": {
+      "activation_counts": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0
+      },
+      "active": [],
+      "consecutive_active_peak": 0,
+      "consecutive_active_ticks": 0
+    },
+    "collateral_ratio": {
+      "avg": 1.2059759407897062,
+      "current": 1.2009999999999998,
+      "max": 1.263153658381193,
+      "min": 1.2009999999999998
+    },
+    "oracle": {
+      "is_stale": false,
+      "last_fresh_tick": 85,
+      "stale_peak_ticks": 0,
+      "stale_streak_ticks": 0
+    },
+    "peg": {
+      "mae": 0.0003153703360215474,
+      "max_error": 0.000765373072646236,
+      "samples": 86
+    },
+    "system": {
+      "autograd_depth_cap": 256,
+      "cpu_usage_ratio": 0.476416015625,
+      "memory_bytes": 57950208
+    },
+    "tick": 85,
+    "timestamp": "2026-02-22T04:56:23.830254+00:00",
+    "transactions": {
+      "failure_rate": 0.0,
+      "failures": 0,
+      "throughput_per_sec": 1270.3297904560661,
+      "total": 86
+    }
+  },
+  "results": [
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55
+          ],
+          "injection_notes": [
+            {
+              "note": "keeper down",
+              "tick": 15
+            },
+            {
+              "note": "keeper down",
+              "tick": 16
+            },
+            {
+              "note": "keeper down",
+              "tick": 17
+            },
+            {
+              "note": "keeper down",
+              "tick": 18
+            },
+            {
+              "note": "keeper down",
+              "tick": 19
+            },
+            {
+              "note": "keeper down",
+              "tick": 20
+            },
+            {
+              "note": "keeper down",
+              "tick": 21
+            },
+            {
+              "note": "keeper down",
+              "tick": 22
+            },
+            {
+              "note": "keeper down",
+              "tick": 23
+            },
+            {
+              "note": "keeper down",
+              "tick": 24
+            },
+            {
+              "note": "keeper down",
+              "tick": 25
+            },
+            {
+              "note": "watchdog down",
+              "tick": 30
+            },
+            {
+              "note": "watchdog down",
+              "tick": 31
+            },
+            {
+              "note": "watchdog down",
+              "tick": 32
+            },
+            {
+              "note": "watchdog down",
+              "tick": 33
+            },
+            {
+              "note": "watchdog down",
+              "tick": 34
+            },
+            {
+              "note": "watchdog down",
+              "tick": 35
+            },
+            {
+              "note": "watchdog down",
+              "tick": 36
+            },
+            {
+              "note": "watchdog down",
+              "tick": 37
+            },
+            {
+              "note": "watchdog down",
+              "tick": 38
+            },
+            {
+              "note": "watchdog down",
+              "tick": 39
+            },
+            {
+              "note": "watchdog down",
+              "tick": 40
+            },
+            {
+              "note": "auditor down",
+              "tick": 45
+            },
+            {
+              "note": "auditor down",
+              "tick": 46
+            },
+            {
+              "note": "auditor down",
+              "tick": 47
+            },
+            {
+              "note": "auditor down",
+              "tick": 48
+            },
+            {
+              "note": "auditor down",
+              "tick": 49
+            },
+            {
+              "note": "auditor down",
+              "tick": 50
+            },
+            {
+              "note": "auditor down",
+              "tick": 51
+            },
+            {
+              "note": "auditor down",
+              "tick": 52
+            },
+            {
+              "note": "auditor down",
+              "tick": 53
+            },
+            {
+              "note": "auditor down",
+              "tick": 54
+            },
+            {
+              "note": "auditor down",
+              "tick": 55
+            }
+          ],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 11,
+                "failure_rate": 0.1375,
+                "last_activity_tick": 79,
+                "last_response_ms": 75.174,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 80
+              },
+              "keeper": {
+                "failed_probes": 11,
+                "failure_rate": 0.1375,
+                "last_activity_tick": 79,
+                "last_response_ms": 64.816,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 80
+              },
+              "watchdog": {
+                "failed_probes": 11,
+                "failure_rate": 0.1375,
+                "last_activity_tick": 79,
+                "last_response_ms": 59.461,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 80
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 0,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2062248870235273,
+              "current": 1.2017185975191929,
+              "max": 1.265355987936884,
+              "min": 1.2009999999999998
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 79,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0003340982743167659,
+              "max_error": 0.0005442388442358226,
+              "samples": 80
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 35651584
+            },
+            "tick": 79,
+            "timestamp": "2026-02-22T04:56:23.397387+00:00",
+            "transactions": {
+              "failure_rate": 0.0,
+              "failures": 0,
+              "throughput_per_sec": 1997.6562341860702,
+              "total": 80
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 69,
+          "tx_failure_rate": 0.0,
+          "tx_failures": 0
+        },
+        "reason": "single-agent failures degraded gracefully"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 0,
+        "max_peg_error": 0.0005442388442358226,
+        "min_cr": 1.2009999999999998,
+        "mode_counts": {
+          "NORMAL": 47,
+          "SAFE_MODE": 33
+        },
+        "tx_failure_rate": 0.0
+      },
+      "name": "agent_kill",
+      "passed": true,
+      "recovery_ticks": 5
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45
+          ],
+          "injection_notes": [
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 20
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 21
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 22
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 23
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 24
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 25
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 26
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 27
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 28
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 29
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 30
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 31
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 32
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 33
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 34
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 35
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 36
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 37
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 38
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 39
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 40
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 41
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 42
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 43
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 44
+            },
+            {
+              "note": "network partition: delayed keeper/watchdog communication",
+              "tick": 45
+            }
+          ],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 84,
+                "last_response_ms": 68.146,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 85
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 84,
+                "last_response_ms": 66.263,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 85
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 84,
+                "last_response_ms": 77.879,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 85
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 0,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.206022727871571,
+              "current": 1.202242439550041,
+              "max": 1.2630156655708331,
+              "min": 1.2009999999999998
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 84,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0003743435098235845,
+              "max_error": 0.0006610635863734116,
+              "samples": 85
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 37634048
+            },
+            "tick": 84,
+            "timestamp": "2026-02-22T04:56:23.448007+00:00",
+            "transactions": {
+              "failure_rate": 0.15294117647058825,
+              "failures": 13,
+              "throughput_per_sec": 1695.4258349541803,
+              "total": 85
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 85,
+          "tx_failure_rate": 0.15294117647058825,
+          "tx_failures": 13
+        },
+        "reason": "partition tolerated with bounded degradation"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 0,
+        "max_peg_error": 0.0006610635863734116,
+        "min_cr": 1.2009999999999998,
+        "mode_counts": {
+          "NORMAL": 85
+        },
+        "tx_failure_rate": 0.15294117647058825
+      },
+      "name": "network_partition",
+      "passed": true,
+      "recovery_ticks": 5
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42
+          ],
+          "injection_notes": [],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 89,
+                "last_response_ms": 61.716,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 90
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 89,
+                "last_response_ms": 51.713,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 90
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 89,
+                "last_response_ms": 51.024,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 90
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 1,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 29,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2956883241709756,
+              "current": 1.203549484409434,
+              "max": 1.3796133046220442,
+              "min": 1.203549484409434
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 89,
+              "stale_peak_ticks": 25,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0005824212953551399,
+              "max_error": 0.001215335035744225,
+              "samples": 90
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 43728896
+            },
+            "tick": 89,
+            "timestamp": "2026-02-22T04:56:23.496523+00:00",
+            "transactions": {
+              "failure_rate": 0.0,
+              "failures": 0,
+              "throughput_per_sec": 1862.0018546652723,
+              "total": 90
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 61,
+          "tx_failure_rate": 0.0,
+          "tx_failures": 0
+        },
+        "reason": "oracle freeze triggered CB-3 and mint halt"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 3,
+        "max_peg_error": 0.001215335035744225,
+        "min_cr": 1.203549484409434,
+        "mode_counts": {
+          "NORMAL": 90
+        },
+        "tx_failure_rate": 0.0
+      },
+      "name": "oracle_freeze",
+      "passed": true,
+      "recovery_ticks": 9
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35
+          ],
+          "injection_notes": [
+            {
+              "note": "autograd deep chain stress",
+              "tick": 10
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 11
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 12
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 13
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 14
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 15
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 16
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 17
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 18
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 19
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 20
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 21
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 22
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 23
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 24
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 25
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 26
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 27
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 28
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 29
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 30
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 31
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 32
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 33
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 34
+            },
+            {
+              "note": "autograd deep chain stress",
+              "tick": 35
+            }
+          ],
+          "max_value_depth": 193,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 79,
+                "last_response_ms": 53.38,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 80
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 79,
+                "last_response_ms": 54.547,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 80
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 79,
+                "last_response_ms": 63.829,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 80
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 0,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2063459356193573,
+              "current": 1.2015026265560376,
+              "max": 1.2654669411369888,
+              "min": 1.2009999999999998
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 79,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0002756777997300036,
+              "max_error": 0.0005183158201997884,
+              "samples": 80
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 50429952
+            },
+            "tick": 79,
+            "timestamp": "2026-02-22T04:56:23.603803+00:00",
+            "transactions": {
+              "failure_rate": 0.0,
+              "failures": 0,
+              "throughput_per_sec": 747.1117424664122,
+              "total": 80
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 80,
+          "tx_failure_rate": 0.0,
+          "tx_failures": 0
+        },
+        "reason": "memory pressure respected graph-depth cap"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 0,
+        "max_peg_error": 0.0005183158201997884,
+        "min_cr": 1.2009999999999998,
+        "mode_counts": {
+          "NORMAL": 80
+        },
+        "tx_failure_rate": 0.0
+      },
+      "name": "memory_pressure",
+      "passed": true,
+      "recovery_ticks": 5
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38
+          ],
+          "injection_notes": [],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 81,
+                "last_response_ms": 75.165,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 105
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 81,
+                "last_response_ms": 78.334,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 105
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 81,
+                "last_response_ms": 70.525,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 105
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 0,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2059351780355019,
+              "current": 1.2009999999999998,
+              "max": 1.264772576853058,
+              "min": 1.2009999999999998
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 81,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0003235306308484034,
+              "max_error": 0.00036996019918666967,
+              "samples": 82
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 55312384
+            },
+            "tick": 81,
+            "timestamp": "2026-02-22T04:56:23.655235+00:00",
+            "transactions": {
+              "failure_rate": 0.08536585365853659,
+              "failures": 7,
+              "throughput_per_sec": 1599.7550036978291,
+              "total": 82
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 82,
+          "tx_failure_rate": 0.08536585365853659,
+          "tx_failures": 7
+        },
+        "reason": "clock skew did not break consensus safety envelopes"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 0,
+        "max_peg_error": 0.00036996019918666967,
+        "min_cr": 1.2009999999999998,
+        "mode_counts": {
+          "NORMAL": 82
+        },
+        "tx_failure_rate": 0.08536585365853659
+      },
+      "name": "clock_skew",
+      "passed": true,
+      "recovery_ticks": 5
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ],
+          "injection_notes": [],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 74,
+                "last_response_ms": 54.243,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 75
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 74,
+                "last_response_ms": 78.316,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 75
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 74,
+                "last_response_ms": 70.982,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 75
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 0,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2066872334310315,
+              "current": 1.2009999999999998,
+              "max": 1.2665461985951312,
+              "min": 1.2009999999999998
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 74,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.00036095653466985695,
+              "max_error": 0.000733097913633185,
+              "samples": 75
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 56524800
+            },
+            "tick": 74,
+            "timestamp": "2026-02-22T04:56:23.705265+00:00",
+            "transactions": {
+              "failure_rate": 0.0,
+              "failures": 0,
+              "throughput_per_sec": 1504.3340618140605,
+              "total": 75
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 29,
+          "reject_count": 29,
+          "tx_attempts": 75,
+          "tx_failure_rate": 0.0,
+          "tx_failures": 0
+        },
+        "reason": "malicious rapid proposals rejected ratio=1.00"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 0,
+        "max_peg_error": 0.000733097913633185,
+        "min_cr": 1.2009999999999998,
+        "mode_counts": {
+          "NORMAL": 75
+        },
+        "tx_failure_rate": 0.0
+      },
+      "name": "rapid_config_change",
+      "passed": true,
+      "recovery_ticks": 5
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44
+          ],
+          "injection_notes": [
+            {
+              "note": "two collateral assets impaired",
+              "tick": 20
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 21
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 22
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 23
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 24
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 25
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 26
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 27
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 28
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 29
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 30
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 31
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 32
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 33
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 34
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 35
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 36
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 37
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 38
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 39
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 40
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 41
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 42
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 43
+            },
+            {
+              "note": "two collateral assets impaired",
+              "tick": 44
+            }
+          ],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 87,
+                "last_response_ms": 61.079,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 88
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 87,
+                "last_response_ms": 56.081,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 88
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 87,
+                "last_response_ms": 58.887,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 88
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 1,
+                "2": 1,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 53,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2841808007483093,
+              "current": 1.2505317105860603,
+              "max": 1.3604572575999885,
+              "min": 1.2025390397479958
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 87,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0016871866200951857,
+              "max_error": 0.005816822708626157,
+              "samples": 88
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 56524800
+            },
+            "tick": 87,
+            "timestamp": "2026-02-22T04:56:23.762359+00:00",
+            "transactions": {
+              "failure_rate": 0.0,
+              "failures": 0,
+              "throughput_per_sec": 1545.7561792764948,
+              "total": 88
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 63,
+          "tx_failure_rate": 0.0,
+          "tx_failures": 0
+        },
+        "reason": "partial collateral failure contained by breakers"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 2,
+        "max_peg_error": 0.005816822708626157,
+        "min_cr": 1.2025390397479958,
+        "mode_counts": {
+          "NORMAL": 88
+        },
+        "tx_failure_rate": 0.0
+      },
+      "name": "partial_collateral_failure",
+      "passed": true,
+      "recovery_ticks": 33
+    },
+    {
+      "details": {
+        "extra": {
+          "fault_ticks": [
+            22,
+            34,
+            48
+          ],
+          "injection_notes": [
+            {
+              "note": "simulated concurrent mint/redeem race",
+              "tick": 22
+            },
+            {
+              "note": "simulated concurrent mint/redeem race",
+              "tick": 34
+            },
+            {
+              "note": "simulated concurrent mint/redeem race",
+              "tick": 48
+            }
+          ],
+          "max_value_depth": 0,
+          "metrics": {
+            "agent_health": {
+              "auditor": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 85,
+                "last_response_ms": 68.859,
+                "name": "auditor",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 86
+              },
+              "keeper": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 85,
+                "last_response_ms": 75.051,
+                "name": "keeper",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 86
+              },
+              "watchdog": {
+                "failed_probes": 0,
+                "failure_rate": 0.0,
+                "last_activity_tick": 85,
+                "last_response_ms": 55.555,
+                "name": "watchdog",
+                "silent_ticks": 0,
+                "status": "healthy",
+                "total_probes": 86
+              }
+            },
+            "circuit_breaker": {
+              "activation_counts": {
+                "1": 0,
+                "2": 0,
+                "3": 0,
+                "4": 0
+              },
+              "active": [],
+              "consecutive_active_peak": 0,
+              "consecutive_active_ticks": 0
+            },
+            "collateral_ratio": {
+              "avg": 1.2059759407897062,
+              "current": 1.2009999999999998,
+              "max": 1.263153658381193,
+              "min": 1.2009999999999998
+            },
+            "oracle": {
+              "is_stale": false,
+              "last_fresh_tick": 85,
+              "stale_peak_ticks": 0,
+              "stale_streak_ticks": 0
+            },
+            "peg": {
+              "mae": 0.0003153703360215474,
+              "max_error": 0.000765373072646236,
+              "samples": 86
+            },
+            "system": {
+              "autograd_depth_cap": 256,
+              "cpu_usage_ratio": 0.476416015625,
+              "memory_bytes": 57950208
+            },
+            "tick": 85,
+            "timestamp": "2026-02-22T04:56:23.830254+00:00",
+            "transactions": {
+              "failure_rate": 0.0,
+              "failures": 0,
+              "throughput_per_sec": 1270.3297904560661,
+              "total": 86
+            }
+          },
+          "race_inconsistency": 0,
+          "reject_attempts": 0,
+          "reject_count": 0,
+          "tx_attempts": 86,
+          "tx_failure_rate": 0.0,
+          "tx_failures": 0
+        },
+        "reason": "concurrent mint/redeem race preserved supply accounting"
+      },
+      "impact_scope": {
+        "funds_preserved": true,
+        "max_cb_level": 0,
+        "max_peg_error": 0.000765373072646236,
+        "min_cr": 1.2009999999999998,
+        "mode_counts": {
+          "NORMAL": 86
+        },
+        "tx_failure_rate": 0.0
+      },
+      "name": "double_spend_race",
+      "passed": true,
+      "recovery_ticks": 5
+    }
+  ]
+}

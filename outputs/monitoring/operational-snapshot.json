@@ -1,0 +1,156 @@
+{
+  "alerts": [
+    {
+      "code": "AGENT_UNRESPONSIVE_KEEPER",
+      "message": "Agent keeper unresponsive for more than 5 ticks",
+      "severity": "WARNING",
+      "threshold": 5.0,
+      "value": 90.0
+    },
+    {
+      "code": "AGENT_UNRESPONSIVE_WATCHDOG",
+      "message": "Agent watchdog unresponsive for more than 5 ticks",
+      "severity": "WARNING",
+      "threshold": 5.0,
+      "value": 90.0
+    },
+    {
+      "code": "AGENT_UNRESPONSIVE_AUDITOR",
+      "message": "Agent auditor unresponsive for more than 5 ticks",
+      "severity": "WARNING",
+      "threshold": 5.0,
+      "value": 90.0
+    }
+  ],
+  "generated_at": "2026-02-22T04:56:47.690755+00:00",
+  "healthcheck": {
+    "checks": [
+      {
+        "detail": "sum(weights)=1.00000000",
+        "name": "weights_sum",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "cr=1.280000, target=1.200000, hard_min=1.050000",
+        "name": "cr_bounds",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "supply=1000000.0000, position_supply_sum=1000000.0000",
+        "name": "supply_consistency",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "alive=['keeper', 'watchdog', 'auditor'] (3/3)",
+        "name": "agent_quorum",
+        "ok": true,
+        "severity": "critical"
+      },
+      {
+        "detail": "stale_streak_ticks=0",
+        "name": "oracle_freshness",
+        "ok": true,
+        "severity": "warning"
+      },
+      {
+        "detail": "url=https://api.devnet.solana.com, detail={\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}\n",
+        "name": "solana_rpc",
+        "ok": true,
+        "severity": "warning"
+      },
+      {
+        "detail": "rss=35012608 bytes",
+        "name": "memory_limit",
+        "ok": true,
+        "severity": "warning"
+      },
+      {
+        "detail": "MAX_AUTOGRAD_DEPTH=256",
+        "name": "autograd_depth_cap",
+        "ok": true,
+        "severity": "warning"
+      }
+    ],
+    "status": "healthy",
+    "timestamp": "2026-02-22T04:56:47.690742+00:00"
+  },
+  "metrics": {
+    "agent_health": {
+      "auditor": {
+        "failed_probes": 0,
+        "failure_rate": 0.0,
+        "last_activity_tick": -1,
+        "last_response_ms": 0.0,
+        "name": "auditor",
+        "silent_ticks": 90,
+        "status": "critical",
+        "total_probes": 0
+      },
+      "keeper": {
+        "failed_probes": 0,
+        "failure_rate": 0.0,
+        "last_activity_tick": -1,
+        "last_response_ms": 0.0,
+        "name": "keeper",
+        "silent_ticks": 90,
+        "status": "critical",
+        "total_probes": 0
+      },
+      "watchdog": {
+        "failed_probes": 0,
+        "failure_rate": 0.0,
+        "last_activity_tick": -1,
+        "last_response_ms": 0.0,
+        "name": "watchdog",
+        "silent_ticks": 90,
+        "status": "critical",
+        "total_probes": 0
+      }
+    },
+    "circuit_breaker": {
+      "activation_counts": {
+        "1": 0,
+        "2": 0,
+        "3": 1,
+        "4": 0
+      },
+      "active": [],
+      "consecutive_active_peak": 29,
+      "consecutive_active_ticks": 0
+    },
+    "collateral_ratio": {
+      "avg": 1.2956883241709756,
+      "current": 1.203549484409434,
+      "max": 1.3796133046220442,
+      "min": 1.203549484409434
+    },
+    "oracle": {
+      "is_stale": false,
+      "last_fresh_tick": 89,
+      "stale_peak_ticks": 25,
+      "stale_streak_ticks": 0
+    },
+    "peg": {
+      "mae": 0.0005824212953551399,
+      "max_error": 0.001215335035744225,
+      "samples": 90
+    },
+    "system": {
+      "autograd_depth_cap": 256,
+      "cpu_usage_ratio": 0.40947265625,
+      "memory_bytes": 29081600
+    },
+    "tick": 89,
+    "timestamp": "2026-02-22T04:56:47.343918+00:00",
+    "transactions": {
+      "failure_rate": 0.0,
+      "failures": 0,
+      "throughput_per_sec": 592601.8210361068,
+      "total": 90
+    }
+  },
+  "scenario": "oracle_freeze"
+}
