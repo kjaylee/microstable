@@ -1,0 +1,129 @@
+{
+  "test_summary": {
+    "total": 100,
+    "passed": 100,
+    "failed": 0,
+    "skipped": 0,
+    "source_log": "outputs/adversarial-test-run.log",
+    "summary_line": "============================= 100 passed in 10.00s ============================="
+  },
+  "campaign_100_rounds": {
+    "immunity_score": 1.0,
+    "attack_success_rate": 0.0,
+    "mttd": 1.02,
+    "mttr": 2.29,
+    "peg_mae": 0.009999999999999998,
+    "uptime": 0.999
+  },
+  "security_findings_low_defense": {
+    "runs": 300,
+    "successful_attacks": 39,
+    "top_unblocked_vectors": [
+      {
+        "vector": "sybil",
+        "count": 8
+      },
+      {
+        "vector": "mev",
+        "count": 7
+      },
+      {
+        "vector": "timing",
+        "count": 5
+      },
+      {
+        "vector": "eclipse",
+        "count": 4
+      },
+      {
+        "vector": "collusion",
+        "count": 4
+      }
+    ],
+    "sample_successes": [
+      {
+        "attack_id": "F9_compute_budget_exhaustion-m000009",
+        "vector": "sybil",
+        "tier": 3,
+        "scale": 10000,
+        "timing": "boundary"
+      },
+      {
+        "attack_id": "F12_cpi_chain_takeover-m000012",
+        "vector": "eclipse",
+        "tier": 4,
+        "scale": 10000,
+        "timing": "normal"
+      },
+      {
+        "attack_id": "E1_time_weighted_manipulation-m000027",
+        "vector": "sybil",
+        "tier": 1,
+        "scale": 10000,
+        "timing": "normal"
+      },
+      {
+        "attack_id": "E2_collateral_substitution-m000028",
+        "vector": "collusion",
+        "tier": 1,
+        "scale": 10000,
+        "timing": "post_epoch"
+      },
+      {
+        "attack_id": "H22_precision_cascade-m000048",
+        "vector": "oracle",
+        "tier": 5,
+        "scale": 1000,
+        "timing": "post_epoch"
+      },
+      {
+        "attack_id": "I23_regulatory_arbitrage-m000049",
+        "vector": "governance",
+        "tier": 5,
+        "scale": 1,
+        "timing": "post_epoch"
+      },
+      {
+        "attack_id": "E5_correlation_blindspot-m000057",
+        "vector": "timing",
+        "tier": 1,
+        "scale": 100,
+        "timing": "boundary"
+      },
+      {
+        "attack_id": "F11_upgrade_authority-m000063",
+        "vector": "drain",
+        "tier": 3,
+        "scale": 1000,
+        "timing": "boundary"
+      },
+      {
+        "attack_id": "G13_sybil_agents-m000065",
+        "vector": "timing",
+        "tier": 2,
+        "scale": 10000,
+        "timing": "normal"
+      },
+      {
+        "attack_id": "H22_precision_cascade-m000074",
+        "vector": "oracle",
+        "tier": 5,
+        "scale": 100,
+        "timing": "normal"
+      }
+    ]
+  },
+  "report_snapshot": {
+    "total_attacks": 100,
+    "successful_attacks": 0,
+    "immunity_score": 1.0,
+    "mttd": 1.02,
+    "mttr": 2.29,
+    "fpr": 0.01,
+    "tpr": 0.0,
+    "downtime": 0.0,
+    "financial_impact": 0.0,
+    "defense_coverage": 0.0,
+    "signature_db_size": 0
+  }
+}
