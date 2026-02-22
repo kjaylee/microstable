@@ -117,8 +117,8 @@ describe("microstable", () => {
 
     const protocol = await program.account.protocolState.fetch(protocolState);
     const user = await program.account.userPosition.fetch(userPosition);
-    expect(protocol.totalSupply.toNumber()).to.eq(998_000);
-    expect(user.usdBalance.toNumber()).to.eq(998_000);
+    expect(protocol.totalSupply.toNumber()).to.eq(831_666);
+    expect(user.usdBalance.toNumber()).to.eq(831_666);
   });
 
   it("redeem flow (burn µSD -> receive collateral)", async () => {
@@ -135,8 +135,8 @@ describe("microstable", () => {
 
     const protocol = await program.account.protocolState.fetch(protocolState);
     const user = await program.account.userPosition.fetch(userPosition);
-    expect(protocol.totalSupply.toNumber()).to.eq(498_000);
-    expect(user.usdBalance.toNumber()).to.eq(498_000);
+    expect(protocol.totalSupply.toNumber()).to.eq(331_666);
+    expect(user.usdBalance.toNumber()).to.eq(331_666);
     expect(user.collateralRedeemed[0].toNumber()).to.be.greaterThan(0);
   });
 

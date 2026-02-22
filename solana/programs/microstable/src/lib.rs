@@ -183,8 +183,9 @@ pub mod microstable {
         };
 
         let gross_musd = mul_div_floor(collateral_amount, price, SCALE)?;
-        let fee = mul_div_ceil(gross_musd, ctx.accounts.protocol_state.fee_rate, SCALE)?;
-        let minted_musd = gross_musd
+        let max_mintable_by_cr = mul_div_floor(gross_musd, SCALE, ctx.accounts.protocol_state.cr_target)?;
+        let fee = mul_div_ceil(max_mintable_by_cr, ctx.accounts.protocol_state.fee_rate, SCALE)?;
+        let minted_musd = max_mintable_by_cr
             .checked_sub(fee)
             .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
         require!(minted_musd > 0, ErrorCode::InvalidAmount);
