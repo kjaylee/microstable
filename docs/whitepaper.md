@@ -328,7 +328,7 @@ In that sense, microstable follows the same engineering ethos that inspired it: 
 
 ## 11. Reproducibility
 
-- All results generated at commit: `2bff8d6` (and regenerated from this working tree update)
+- All results generated at commit: `d555977`
 - Command: `python3 test_microstable.py`
 - Environment: Python 3.x, no external dependencies
 
