@@ -1,3 +1,4 @@
+mod agent_loop;
 mod aig;
 mod config;
 mod monitor;
@@ -11,6 +12,8 @@ mod watchdog;
 mod wire;
 
 #[cfg(test)]
+mod agent_loop_tests;
+#[cfg(test)]
 mod aig_tests;
 #[cfg(test)]
 mod optimizer_tests;
@@ -19,6 +22,7 @@ mod risk_manager_tests;
 #[cfg(test)]
 mod tournament_tests;
 
+use agent_loop::AgentLoopState;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use config::KeeperConfig;
@@ -131,6 +135,7 @@ async fn main() -> Result<()> {
     let mut monitor_memory = MonitorMemory::default();
     let mut rebalance_memory = RebalanceMemory::default();
     let mut watchdog_memory = WatchdogMemory::default();
+    let mut agent_loop_state = AgentLoopState::default();
 
     if cli.once {
         let secondary_runtime = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
@@ -144,6 +149,7 @@ async fn main() -> Result<()> {
             &mut monitor_memory,
             &mut rebalance_memory,
             &mut watchdog_memory,
+            &mut agent_loop_state,
         )?;
         return Ok(());
     }
@@ -174,6 +180,7 @@ async fn main() -> Result<()> {
                         &mut monitor_memory,
                         &mut rebalance_memory,
                         &mut watchdog_memory,
+                        &mut agent_loop_state,
                     ) {
                         Ok(()) => {
                             if consecutive_failed_cycles > 0 {
@@ -226,6 +233,7 @@ async fn main() -> Result<()> {
                         &mut monitor_memory,
                         &mut rebalance_memory,
                         &mut watchdog_memory,
+                        &mut agent_loop_state,
                     ) {
                         Ok(()) => {
                             if consecutive_failed_cycles > 0 {
@@ -298,6 +306,7 @@ fn run_cycle(
     monitor_memory: &mut MonitorMemory,
     rebalance_memory: &mut RebalanceMemory,
     watchdog_memory: &mut WatchdogMemory,
+    agent_loop_state: &mut AgentLoopState,
 ) -> Result<()> {
     info!(secondary_mode = ?secondary_mode, "cycle start");
 
@@ -334,6 +343,22 @@ fn run_cycle(
         Err(err) => {
             failed_steps.push("rebalance");
             warn!(error = %err, "rebalance step failed");
+        }
+    }
+
+    match agent_loop::maybe_run_aig_cycle(cfg, agent_loop_state) {
+        Ok(()) => {}
+        Err(err) => {
+            failed_steps.push("aig");
+            warn!(error = %err, "aig step failed");
+        }
+    }
+
+    match agent_loop::maybe_run_tournament_cycle(cfg, agent_loop_state) {
+        Ok(()) => {}
+        Err(err) => {
+            failed_steps.push("tournament");
+            warn!(error = %err, "tournament step failed");
         }
     }
 
