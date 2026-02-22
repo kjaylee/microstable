@@ -1,3 +1,4 @@
+mod aig;
 mod config;
 mod monitor;
 mod optimizer;
@@ -7,6 +8,8 @@ mod utils;
 mod watchdog;
 mod wire;
 
+#[cfg(test)]
+mod aig_tests;
 #[cfg(test)]
 mod optimizer_tests;
 
