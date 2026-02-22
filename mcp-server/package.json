@@ -1,5 +1,5 @@
 {
-  "name": "@microstable/mcp-server",
+  "name": "microstable-mcp-server",
   "version": "0.1.0",
   "description": "MCP server wrapper for the Microstable protocol",
   "license": "MIT",

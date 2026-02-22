@@ -507,7 +507,9 @@ def test_response_engine(case_id):
 
     elif case_id == "TC-RE-008":
         re.safe_mode = True
-        out = re.recover_from_safe_mode(epochs_elapsed=6)
+        # FIX RTV3-A31: recovery requires health context
+        healthy_context = {"cr": 1.5, "peg": 0.0, "oracle_fresh": True}
+        out = re.recover_from_safe_mode(epochs_elapsed=6, health=healthy_context)
         assert out["safe_mode"] is False
 
     elif case_id == "TC-RE-009":

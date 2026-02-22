@@ -457,19 +457,24 @@ def test_pt018_post_cumulative_window_guard():
     keeper = ms.Keeper()
     state.begin_tick()
 
-    def mk_prop(w: List[float], proof: str | None) -> Dict[str, Any]:
-        return {
+    # FIX RTV3-A24: use real proof generation instead of legacy dummy string
+    def mk_prop(w: List[float], use_proof: bool) -> Dict[str, Any]:
+        p_args = {
             "weights": w,
             "mint_fee": state.mint_fee,
             "proposal_epoch": state.market_epoch,
             "state_hash": state.market_state_hash,
+        }
+        proof = state.expected_rebalance_commit(**p_args) if use_proof else None
+        return {
+            **p_args,
             "expiry_epoch": state.market_epoch + 2,
             **({"commit_proof": proof} if proof is not None else {}),
         }
 
-    p1 = mk_prop([0.42, 0.28, 0.20, 0.10], f"{state.market_epoch}:{state.market_state_hash}")
-    p2 = mk_prop([0.44, 0.26, 0.20, 0.10], f"{state.market_epoch}:{state.market_state_hash}")
-    p3 = mk_prop([0.46, 0.24, 0.20, 0.10], None)
+    p1 = mk_prop([0.42, 0.28, 0.20, 0.10], True)
+    p2 = mk_prop([0.44, 0.26, 0.20, 0.10], True)
+    p3 = mk_prop([0.46, 0.24, 0.20, 0.10], False)
 
     assert keeper.submit_update_proposal(state, p1)["status"] == "APPLIED"
     assert keeper.submit_update_proposal(state, p2)["status"] == "APPLIED"

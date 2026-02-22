@@ -465,6 +465,8 @@ class ProtocolState:
     # // BLUE-TEAM: G16 - bind keeper proposals to epoch + state hash to block replay.
     market_epoch: int = 0
     market_state_hash: str = "GENESIS"
+    # FIX RTV3-A24: hidden per-epoch commit secret for keeper proof validation.
+    _rebalance_commit_secret: str = field(default_factory=lambda: secrets.token_hex(16), repr=False)
 
     # // BLUE-TEAM: runtime accounting mirror for invariant monitor.
     position_supply_sum: float = 1_000_000.0
@@ -499,6 +501,7 @@ class ProtocolState:
             rebalance_commit_threshold=self.rebalance_commit_threshold,
             market_epoch=self.market_epoch,
             market_state_hash=self.market_state_hash,
+            _rebalance_commit_secret=self._rebalance_commit_secret,
             position_supply_sum=self.position_supply_sum,
         )
 
@@ -506,6 +509,26 @@ class ProtocolState:
         self.prev_weights = self.weights[:]
         self.market_epoch += 1
         self.market_state_hash = self._compute_state_hash(prices_hint=None, oracle_q_hint=None)
+        # FIX RTV3-A24: rotate keeper commit secret every epoch.
+        self._rebalance_commit_secret = secrets.token_hex(16)
+
+    def expected_rebalance_commit(
+        self,
+        *,
+        weights: Sequence[float],
+        mint_fee: float,
+        proposal_epoch: int,
+        state_hash: str,
+    ) -> str:
+        payload = "|".join(
+            [
+                str(proposal_epoch),
+                str(state_hash),
+                ",".join(f"{float(w):.10f}" for w in weights),
+                f"{float(mint_fee):.10f}",
+            ]
+        )
+        return hashlib.sha256(f"{self._rebalance_commit_secret}:{payload}".encode("utf-8")).hexdigest()
 
     def reset_dynamic_policy(self) -> None:
         self.w_caps = self.base_w_caps[:]
@@ -1225,8 +1248,13 @@ class Keeper:
             "proposal_epoch": state.market_epoch,
             "state_hash": state.market_state_hash,
             "expiry_epoch": state.market_epoch + 2,
-            # FIX PT-018: cumulative large rebalance requires bound commit-reveal proof.
-            "commit_proof": f"{state.market_epoch}:{state.market_state_hash}",
+            # FIX PTV2-022 / RTV3-A24: unpredictable per-epoch commit proof.
+            "commit_proof": state.expected_rebalance_commit(
+                weights=new_w,
+                mint_fee=new_fee,
+                proposal_epoch=state.market_epoch,
+                state_hash=state.market_state_hash,
+            ),
         }
 
     def submit_update_proposal(self, state: ProtocolState, proposal: Dict[str, object]) -> Dict[str, object]:
@@ -1262,7 +1290,12 @@ class Keeper:
         window = (state.rebalance_turnover_window + [delta_mag])[-max(1, int(state.rebalance_window_size)):]
         cumulative = sum(window)
         if cumulative > float(state.rebalance_commit_threshold) + 1e-12:
-            expected_commit = f"{state.market_epoch}:{state.market_state_hash}"
+            expected_commit = state.expected_rebalance_commit(
+                weights=w,
+                mint_fee=fee,
+                proposal_epoch=state.market_epoch,
+                state_hash=state.market_state_hash,
+            )
             if str(proposal.get("commit_proof", "")) != expected_commit:
                 return {"status": "REJECTED", "reason": "missing_commit_reveal_proof"}
 
@@ -1510,10 +1543,11 @@ def secure_mint_amount(
     if not collateral_quality_ok(quality_score):
         return 0
 
-    # FIX PT-019: apply explicit risk-gate so toxic collateral cannot mint at baseline CR.
+    # FIX PT-019 / RTV3-A25: hard-reject toxic collateral beyond risk threshold.
+    if (not math.isfinite(float(risk_score))) or float(risk_score) >= float(risk_reject_threshold):
+        return 0
+
     effective_cr_target = int(cr_target_ppm)
-    if float(risk_score) > float(risk_reject_threshold):
-        effective_cr_target += int(risk_cr_penalty_ppm)
 
     gross = mul_div_floor(collateral_units, int(price * 1_000_000), 1_000_000)
     max_mint = mul_div_floor(gross, 1_000_000, max(1, effective_cr_target))
@@ -1593,16 +1627,27 @@ class RedemptionQueue:
         # FIX PT-015: rounding residual is captured by treasury, not last queue entry.
         self.treasury_residual_units: List[int] = []
 
-    def enqueue(self, account: str, burn_amount: int, requested_discount_ppm: int) -> None:
-        clamped_discount = max(0, min(int(requested_discount_ppm), self.max_discount_ppm))
+    def enqueue(self, account: str, burn_amount: int, requested_discount_ppm: int) -> bool:
+        try:
+            burn_f = float(burn_amount)
+            discount_f = float(requested_discount_ppm)
+        except Exception:
+            return False
+
+        # FIX RTV3-A20: reject NaN/inf enqueue inputs without raising.
+        if (not math.isfinite(burn_f)) or (not math.isfinite(discount_f)):
+            return False
+
+        clamped_discount = max(0, min(int(discount_f), self.max_discount_ppm))
         self._pending.append(
             RedemptionRequest(
                 account=str(account),
-                burn_amount=max(0, int(burn_amount)),
+                burn_amount=max(0, int(burn_f)),
                 # FIX PT-014: clamp request discount at enqueue boundary.
                 requested_discount_ppm=clamped_discount,
             )
         )
+        return True
 
     def settle(
         self,
@@ -1732,29 +1777,39 @@ class InsuranceFund:
         self.refill_trigger = float(refill_trigger)
         self.refill_amount = float(refill_amount)
         self._last_claim_tick: Dict[str, int] = {}
+        self._last_global_claim_tick: Optional[int] = None
         self._epoch_index = -1
         self._epoch_claimed = 0.0
+        self._refill_done_epoch: Optional[int] = None
 
     def _refresh_epoch(self, tick: int) -> None:
         idx = int(tick) // self.epoch_length_ticks
         if idx != self._epoch_index:
             self._epoch_index = idx
             self._epoch_claimed = 0.0
+            self._refill_done_epoch = None
 
-    def _auto_refill(self) -> None:
-        if self.treasury <= self.refill_trigger:
+    def _auto_refill(self, tick: int) -> None:
+        # FIX PTV2-021: only one auto-refill per epoch to avoid infinite refill loops.
+        if self.treasury <= self.refill_trigger and self._refill_done_epoch != self._epoch_index:
             self.treasury += self.refill_amount
+            self._refill_done_epoch = self._epoch_index
 
     def claim(self, claimant: str, amount: float, tick: int) -> Dict[str, object]:
-        self._refresh_epoch(int(tick))
-        self._auto_refill()
+        tick_i = int(tick)
+        self._refresh_epoch(tick_i)
+        self._auto_refill(tick_i)
 
         amt = float(amount)
-        if amt < self.min_claim:
+        if (not math.isfinite(amt)) or amt < self.min_claim:
             return {"approved": False, "reason": "below_min_claim"}
 
+        # FIX PTV2-021: global cooldown prevents sybil rotation bypass.
+        if self._last_global_claim_tick is not None and tick_i - self._last_global_claim_tick < self.cooldown_ticks:
+            return {"approved": False, "reason": "global_cooldown"}
+
         last = self._last_claim_tick.get(claimant)
-        if last is not None and int(tick) - last < self.cooldown_ticks:
+        if last is not None and tick_i - last < self.cooldown_ticks:
             return {"approved": False, "reason": "cooldown"}
 
         if self._epoch_claimed + amt > self.epoch_claim_cap:
@@ -1765,7 +1820,8 @@ class InsuranceFund:
 
         self.treasury -= amt
         self._epoch_claimed += amt
-        self._last_claim_tick[claimant] = int(tick)
+        self._last_claim_tick[claimant] = tick_i
+        self._last_global_claim_tick = tick_i
         return {"approved": True, "reason": "ok", "treasury": self.treasury}
 
 

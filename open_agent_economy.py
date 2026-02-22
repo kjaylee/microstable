@@ -175,6 +175,7 @@ class AgentRegistry:
         stake: float,
         epoch: Optional[int] = None,
         challenge_exam_passed: Optional[bool] = None,
+        public_key: Optional[str] = None,
     ) -> bool:
         if agent_type not in AGENT_TYPES:
             return False
@@ -210,6 +211,12 @@ class AgentRegistry:
         )
         if agent_id in self.cooldowns:
             self.cooldowns.pop(agent_id, None)
+
+        # FIX PTV2-018: bind ACP key at registration time and lock by default.
+        if public_key is not None and str(public_key).strip():
+            self.set_meta(agent_id, public_key=str(public_key).strip(), public_key_locked=True)
+        else:
+            self.set_meta(agent_id, public_key_locked=True)
         return True
 
     def deregister(self, agent_id: str, epoch: Optional[int] = None) -> bool:
@@ -286,10 +293,44 @@ class AgentRegistry:
             self.meta[agent_id] = {}
         self.meta[agent_id].update(kwargs)
 
-    def set_public_key(self, agent_id: str, public_key: str) -> None:
-        """Register per-agent ACP verification key (Ed25519-like public key slot)."""
-        # FIX PT-012: bind ACP verification to per-agent registry key, not shared secret.
-        self.set_meta(agent_id, public_key=str(public_key))
+    def set_public_key(
+        self,
+        agent_id: str,
+        public_key: str,
+        *,
+        actor_id: Optional[str] = None,
+        rotate_token: Optional[str] = None,
+    ) -> bool:
+        """Register/rotate per-agent ACP verification key.
+
+        Security model: key assignment is self-service only (actor_id must match agent_id),
+        and rotation requires a token signed with the current key.
+        """
+        rec = self.records.get(agent_id)
+        if rec is None or rec.status not in {"Active", "Cooldown"}:
+            return False
+
+        new_key = str(public_key).strip()
+        if not new_key:
+            return False
+
+        meta = self.meta.setdefault(agent_id, {})
+        current = meta.get("public_key")
+        actor = str(actor_id or "")
+
+        # FIX RTV3-A17: prevent unauthenticated key takeover.
+        if actor != agent_id:
+            return False
+
+        if current:
+            payload = canonical_json({"agent_id": agent_id, "new_key": new_key})
+            expected = hmac_sha256_hex(str(current), payload)
+            if rotate_token is None or not hmac.compare_digest(str(rotate_token), expected):
+                return False
+
+        meta["public_key"] = new_key
+        meta["public_key_locked"] = True
+        return True
 
     def get_public_key(self, agent_id: str) -> Optional[str]:
         return str(self.meta.get(agent_id, {}).get("public_key")) if agent_id in self.meta and "public_key" in self.meta[agent_id] else None
@@ -439,12 +480,16 @@ class StakingEconomics:
         return withdrawable
 
     def slash(self, agent_id: str, amount: float, epoch: int) -> float:
+        if (not math.isfinite(float(amount))) or float(amount) < 0.0:
+            # FIX RTV3-A03: reject negative/non-finite slash parameters.
+            return 0.0
+
         balance = self.balances.get(agent_id, 0.0)
         locked_before = self.locked.get(agent_id, 0.0)
         available_before = max(0.0, balance - locked_before)
 
         slash_amt = balance * amount if amount <= 1.0 else amount
-        slash_amt = min(slash_amt, balance)
+        slash_amt = max(0.0, min(slash_amt, balance))
         self.balances[agent_id] = balance - slash_amt
 
         # FIX PT-002: slash also burns locked withdrawal capacity when needed.
@@ -483,10 +528,19 @@ class StakingEconomics:
         return hmac_sha256_hex(self.claim_signing_key, self._reward_claim_payload(agent_id, amount, claim_id, epoch))
 
     def claim_reward(self, agent_id: str, amount: float, claim_id: str, epoch: int, proof: Optional[str] = None) -> bool:
-        if amount <= 0.0 or claim_id in self.claimed:
+        # FIX RTV3-A01: only registered active agents can claim rewards.
+        rec = self.registry.get_record(agent_id)
+        if rec is None or rec.status != "Active":
+            return False
+
+        if (not math.isfinite(float(amount))) or amount <= 0.0 or claim_id in self.claimed:
+            # FIX PTV2-020 / RTV3-A02: reject NaN/inf reward claims.
             return False
 
         used = self.claimed_by_epoch.get(epoch, 0.0)
+        if not math.isfinite(float(used)):
+            used = 0.0
+
         # FIX PT-001: enforce strict epoch reward budget cap.
         if used + amount > self.reward_epoch_cap + EPS:
             return False
@@ -565,11 +619,16 @@ class ACPMessage:
         registry: Optional[AgentRegistry],
     ) -> Optional[str]:
         agent_id = str(msg.params.get("agent_id", ""))
-        # FIX PT-012: prefer per-agent registry key over shared secret.
+        # FIX PTV2-018 / RTV3-A17: when registry is present, require registered
+        # identity with bound key; do not silently fall back to caller-provided secret.
         if registry is not None and agent_id:
+            rec = registry.get_record(agent_id)
+            if rec is None or rec.status == "Deregistered":
+                return None
             pub = registry.get_public_key(agent_id)
-            if pub:
-                return pub
+            if not pub:
+                return None
+            return pub
         return secret
 
     @staticmethod
@@ -582,7 +641,7 @@ class ACPMessage:
         expected_epoch: Optional[int] = None,
         seen_nonces: Optional[Set[str]] = None,
         max_future_drift: int = 1,
-        allow_legacy: bool = True,
+        allow_legacy: bool = False,
     ) -> bool:
         params = dict(msg.params)
         signature = params.pop("signature", None)
@@ -603,6 +662,7 @@ class ACPMessage:
         has_replay_fields = nonce is not None and expiry is not None and signed_epoch is not None
 
         if not has_replay_fields:
+            # FIX PTV2-019 / RTV3-A16: legacy ACP is opt-in only.
             return bool(allow_legacy)
 
         try:
@@ -820,12 +880,16 @@ class OptimizationTournament:
         weights = [float(w) for w in proposal.weights]
         if len(weights) != len(self.current_params.get("weights", [])):
             return False
+        # FIX RTV3-A08: reject non-finite winner parameters (NaN/inf).
+        if any((not math.isfinite(w)) for w in weights):
+            return False
         if any((w < 0.0 or w > 1.0) for w in weights):
             return False
-        if abs(sum(weights) - 1.0) > 1e-6:
+        total_w = sum(weights)
+        if not math.isfinite(total_w) or abs(total_w - 1.0) > 1e-6:
             return False
         fee = float(proposal.mint_fee)
-        if fee < 0.0 or fee > self.max_mint_fee:
+        if (not math.isfinite(fee)) or fee < 0.0 or fee > self.max_mint_fee:
             return False
         return True
 
@@ -862,14 +926,35 @@ class OptimizationTournament:
         if self.staking:
             self.staking.reward(winner.agent_id, winner_share, self.current_epoch)
             runner = next((p for p in ranked if p.agent_id != winner.agent_id), None)
+
+            # FIX RTV3-A10: when proposal volume spikes, suppress near-clone runner payouts.
             if runner_share > 0.0 and runner is not None:
-                self.staking.reward(runner.agent_id, runner_share, self.current_epoch)
+                if len(self.proposal_agents) > 10:
+                    sim = safe_cosine_similarity(runner.weights, winner.weights)
+                    if sim >= 0.995:
+                        runner_share = 0.0
+                if runner_share > 0.0:
+                    self.staking.reward(runner.agent_id, runner_share, self.current_epoch)
 
             # FIX PT-007: split participant pool by unique agent count.
             if participant_pool > 0 and self.proposal_agents:
-                per = participant_pool / len(self.proposal_agents)
-                for agent_id in self.proposal_agents:
-                    self.staking.reward(agent_id, per, self.current_epoch)
+                # FIX RTV3-A10: anti-sybil dampening by proposal fingerprint clusters
+                # under large-participant epochs.
+                if len(self.proposal_agents) > 10:
+                    buckets: Dict[Tuple[float, ...], List[str]] = {}
+                    for p in self.proposals:
+                        fp = tuple(round(float(w), 2) for w in p.weights)
+                        buckets.setdefault(fp, []).append(p.agent_id)
+                    if buckets:
+                        per_bucket = participant_pool / len(buckets)
+                        for members in buckets.values():
+                            per_agent = per_bucket / len(members)
+                            for aid in members:
+                                self.staking.reward(aid, per_agent, self.current_epoch)
+                else:
+                    per = participant_pool / len(self.proposal_agents)
+                    for agent_id in self.proposal_agents:
+                        self.staking.reward(agent_id, per, self.current_epoch)
 
         self.reputation.add(winner.agent_id, 10)
         rec = self.registry.get_record(winner.agent_id)
@@ -915,7 +1000,17 @@ class FederatedWatchdog:
         if not evidence or "snapshot" not in evidence or "oracle" not in evidence or "timestamp" not in evidence:
             return False
 
-        ts = int(evidence["timestamp"])
+        raw_ts = evidence.get("timestamp")
+        if raw_ts is None:
+            return False
+        try:
+            ts_f = float(raw_ts)
+        except Exception:
+            return False
+        # FIX RTV3-A14: reject NaN/inf timestamps without throwing.
+        if not math.isfinite(ts_f):
+            return False
+        ts = int(ts_f)
         if epoch - ts > self.max_evidence_age:
             return False
         # FIX PT-009: reject future timestamp beyond bounded drift.
@@ -957,6 +1052,9 @@ class FederatedWatchdog:
             return
 
         if is_true:
+            # FIX RTV3-A12: true-resolution requires quorum consensus.
+            if not self.consensus(alert_type, epoch):
+                return
             order = self.report_order.get(key, {})
             if order:
                 first = min(order.items(), key=lambda kv: kv[1])[0]

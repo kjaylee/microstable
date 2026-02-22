@@ -9,6 +9,8 @@ const SCALE: u64 = 1_000_000;
 const WEIGHT_STEP_LIMIT: u64 = 20_000; // 2%
 const TURNOVER_LIMIT: u64 = 150_000; // 15%
 const ORACLE_STALENESS_MAX: u64 = 120;
+// FIX PTV2-002: enforce publish_time freshness for Pyth price updates.
+const PYTH_PUBLISH_TIME_MAX_AGE: i64 = 60;
 const ORACLE_CONFIDENCE_MAX: u64 = 50_000; // 5%
 const DEPEG_ON_THRESHOLD: u64 = 20_000; // 2%
 const DEPEG_OFF_THRESHOLD: u64 = 5_000; // 0.5%
@@ -21,6 +23,20 @@ const ADAPTIVE_RECOVERY_BPS_MAX: u64 = 15_000; // +1.5%
 // // BLUE-TEAM: F12 - restrict initializer to trusted deploy authority.
 const TRUSTED_INITIALIZER: Pubkey = pubkey!("3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk");
 const PYTH_RECEIVER_PROGRAM: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+// FIX PTV2-011: enforce canonical 6-decimal collateral mints.
+const COLLATERAL_DECIMALS_EXPECTED: u8 = 6;
+// FIX PTV2-005: collateral-index feed allowlist.
+const PYTH_USDC_USD: Pubkey = pubkey!("Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX");
+const PYTH_USDT_USD: Pubkey = pubkey!("HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM");
+const PYTH_DAI_USD: Pubkey = pubkey!("FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN");
+const PYTH_USDS_USD: Pubkey = pubkey!("9h4r3d4s8Jc8k5YfVY6Bnd3ETf6gVfGvSzj8Pzpo7aQw");
+// FIX PTV2-003: expected feed-id binding per collateral.
+const PYTH_FEED_ID_USDC: [u8; 32] = [0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71, 0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89, 0x4a, 0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc, 0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9, 0xc9, 0x4a];
+const PYTH_FEED_ID_USDT: [u8; 32] = [0x2b, 0x89, 0xb9, 0xdc, 0x8f, 0xdf, 0x9f, 0x34, 0x70, 0x9a, 0x5b, 0x10, 0x6b, 0x47, 0x2f, 0x0f, 0x39, 0xbb, 0x6c, 0xa9, 0xce, 0x04, 0xb0, 0xfd, 0x7f, 0x2e, 0x97, 0x16, 0x88, 0xe2, 0xe5, 0x3b];
+const PYTH_FEED_ID_DAI: [u8; 32] = [0xb0, 0x94, 0x8a, 0x5e, 0x53, 0x13, 0x20, 0x0c, 0x63, 0x2b, 0x51, 0xbb, 0x5c, 0xa3, 0x2f, 0x6d, 0xe0, 0xd3, 0x6e, 0x99, 0x50, 0xa9, 0x42, 0xd1, 0x97, 0x51, 0xe8, 0x33, 0xf7, 0x0d, 0xab, 0xfd];
+const PYTH_FEED_ID_USDS: [u8; 32] = [0xc2, 0xf5, 0xc9, 0xb4, 0xd9, 0xe7, 0xa1, 0xfc, 0xb5, 0xa8, 0x0c, 0x7a, 0x2c, 0x3e, 0xc0, 0xf8, 0x4a, 0xb1, 0xde, 0x9f, 0x77, 0x8c, 0x0d, 0xf1, 0xb6, 0xe9, 0xc7, 0xab, 0x4f, 0x1e, 0x0d, 0x9a];
+// FIX PTV2-004: bind accepted updates to trusted write authority.
+const PYTH_TRUSTED_WRITE_AUTHORITY: Pubkey = TRUSTED_INITIALIZER;
 
 // // BLUE-TEAM: INPUT-HARDEN - strict bounds for external numeric inputs.
 const PRICE_MIN: u64 = 500_000; // $0.50
@@ -54,6 +70,12 @@ pub mod microstable {
                 .any(|k| *k == ctx.accounts.authority.key()),
             ErrorCode::InvalidKeeperSet
         );
+
+        // FIX PTV2-011: collateral mint decimals must remain invariant.
+        require_collateral_decimals(&ctx.accounts.usdc_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+        require_collateral_decimals(&ctx.accounts.usdt_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+        require_collateral_decimals(&ctx.accounts.dai_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+        require_collateral_decimals(&ctx.accounts.usds_mint, COLLATERAL_DECIMALS_EXPECTED)?;
 
         let protocol = &mut ctx.accounts.protocol_state;
         protocol.weights = [400_000, 300_000, 200_000, 100_000];
@@ -153,6 +175,12 @@ pub mod microstable {
             ErrorCode::InvalidKeeperSet
         );
 
+        // FIX PTV2-011: collateral mint decimals must remain invariant.
+        require_collateral_decimals(&ctx.accounts.usdc_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+        require_collateral_decimals(&ctx.accounts.usdt_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+        require_collateral_decimals(&ctx.accounts.dai_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+        require_collateral_decimals(&ctx.accounts.usds_mint, COLLATERAL_DECIMALS_EXPECTED)?;
+
         let program_id = ctx.program_id;
         let slot = Clock::get()?.slot;
 
@@ -168,6 +196,18 @@ pub mod microstable {
             *program_id,
             ErrorCode::InvalidLegacyAccount
         );
+        {
+            let data = ctx
+                .accounts
+                .protocol_state
+                .to_account_info()
+                .try_borrow_data()
+                .map_err(|_| error!(ErrorCode::InvalidLegacyAccount))?;
+            // FIX PTV2-007: migration is one-shot; reject reruns on initialized state.
+            if data.len() >= 8 && data[..8] == ProtocolState::DISCRIMINATOR {
+                return err!(ErrorCode::MigrationAlreadyCompleted);
+            }
+        }
         ensure_account_space(
             &ctx.accounts.protocol_state.to_account_info(),
             &ctx.accounts.authority,
@@ -179,6 +219,7 @@ pub mod microstable {
             weights: [400_000, 300_000, 200_000, 100_000],
             fee_rate: 2_000,
             cr_target: 1_200_000,
+            // FIX PTV2-008: guarded one-shot migration is restricted to pre-launch state.
             total_supply: 0,
             last_update_slot: slot,
             keeper_set,
@@ -359,6 +400,27 @@ pub mod microstable {
             ErrorCode::PythFeedNotConfigured
         );
 
+        // FIX PTV2-005: enforce per-collateral feed allowlist.
+        let expected_feed = expected_pyth_feed_account(collateral_index)?;
+        require_keys_eq!(
+            pyth_price_feed,
+            expected_feed,
+            ErrorCode::InvalidPythFeedAccount
+        );
+
+        // FIX PTV2-006: prevent assigning one feed account to multiple vaults.
+        let existing = [
+            ctx.accounts.vault_usdc.pyth_price_feed,
+            ctx.accounts.vault_usdt.pyth_price_feed,
+            ctx.accounts.vault_dai.pyth_price_feed,
+            ctx.accounts.vault_usds.pyth_price_feed,
+        ];
+        for (i, feed) in existing.iter().enumerate() {
+            if i != collateral_index as usize && *feed == pyth_price_feed && *feed != Pubkey::default() {
+                return err!(ErrorCode::DuplicatePythFeed);
+            }
+        }
+
         match collateral_index {
             0 => ctx.accounts.vault_usdc.pyth_price_feed = pyth_price_feed,
             1 => ctx.accounts.vault_usdt.pyth_price_feed = pyth_price_feed,
@@ -379,34 +441,52 @@ pub mod microstable {
     }
 
     pub fn update_oracle_pyth(ctx: Context<UpdateOraclePyth>, collateral_index: u8) -> Result<()> {
+        // FIX PTV2-001 / RTV3-A34: require keeper quorum for Pyth oracle updates.
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
         require!(
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
         );
 
-        let slot = Clock::get()?.slot;
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+        let unix_timestamp = clock.unix_timestamp;
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
+        // FIX PTV2-003: bind updates to expected feed-id per collateral.
+        let expected_feed_id = expected_pyth_feed_id(collateral_index)?;
         match collateral_index {
             0 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_usdc,
                 &ctx.accounts.pyth_price_account,
                 slot,
+                unix_timestamp,
+                expected_feed_id,
             )?,
             1 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_usdt,
                 &ctx.accounts.pyth_price_account,
                 slot,
+                unix_timestamp,
+                expected_feed_id,
             )?,
             2 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_dai,
                 &ctx.accounts.pyth_price_account,
                 slot,
+                unix_timestamp,
+                expected_feed_id,
             )?,
             3 => update_vault_oracle_from_pyth(
                 &mut ctx.accounts.vault_usds,
                 &ctx.accounts.pyth_price_account,
                 slot,
+                unix_timestamp,
+                expected_feed_id,
             )?,
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         }
@@ -423,6 +503,8 @@ pub mod microstable {
     }
 
     pub fn mint(ctx: Context<Mint>, collateral_index: u8, collateral_amount: u64) -> Result<()> {
+        // FIX PTV2-012: simulation-only ledger update; production must mint/burn MSTB SPL
+        // with protocol_state PDA as mint authority to keep on-chain supply consistent.
         require!(collateral_index < 4, ErrorCode::InvalidCollateralIndex);
         require!(collateral_amount > 0, ErrorCode::InvalidAmount);
         require!(
@@ -651,6 +733,8 @@ pub mod microstable {
     }
 
     pub fn redeem(ctx: Context<Redeem>, musd_amount: u64) -> Result<()> {
+        // FIX PTV2-012: simulation-only ledger burn; production must burn MSTB SPL
+        // via PDA-controlled mint authority to prevent supply divergence.
         require!(musd_amount > 0, ErrorCode::InvalidAmount);
         require!(
             musd_amount <= MAX_COLLATERAL_AMOUNT,
@@ -1200,8 +1284,12 @@ pub mod microstable {
     }
 
     pub fn emergency_shutdown(ctx: Context<EmergencyShutdown>) -> Result<()> {
-        // FIX HI-04: any single authorized keeper can trigger emergency shutdown.
-        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+        // FIX PTV2-013: require 2-of-3 keeper quorum for global shutdown.
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
 
         let protocol = &mut ctx.accounts.protocol_state;
         protocol.emergency_shutdown = true;
@@ -1211,6 +1299,39 @@ pub mod microstable {
         circuit.mint_rate_limit = 0;
         circuit.optimizer_enabled = false;
 
+        Ok(())
+    }
+
+    pub fn resume_from_shutdown(ctx: Context<EmergencyShutdown>) -> Result<()> {
+        // FIX PTV2-014: explicit keeper-quorum recovery path from shutdown.
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
+        let protocol = &mut ctx.accounts.protocol_state;
+        protocol.emergency_shutdown = false;
+        protocol.last_update_slot = Clock::get()?.slot;
+
+        let circuit = &mut ctx.accounts.circuit_breaker;
+        circuit.mint_rate_limit = SCALE;
+        circuit.optimizer_enabled = true;
+        Ok(())
+    }
+
+    pub fn rotate_keeper_set(
+        ctx: Context<EmergencyShutdown>,
+        new_keeper_set: [Pubkey; 3],
+    ) -> Result<()> {
+        // FIX PTV2-015: keeper rotation path guarded by existing quorum and set validation.
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
+        validate_keeper_set(&new_keeper_set)?;
+        ctx.accounts.protocol_state.keeper_set = new_keeper_set;
+        ctx.accounts.protocol_state.last_update_slot = Clock::get()?.slot;
         Ok(())
     }
 }
@@ -1382,6 +1503,10 @@ pub struct UpdateOraclePyth<'info> {
 
     #[account(mut, seeds = [b"collateral_vault".as_ref(), [3u8].as_ref()], bump = vault_usds.bump)]
     pub vault_usds: Account<'info, CollateralVault>,
+
+    // FIX PTV2-001 / RTV3-A34: keeper quorum signer set.
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
 
     /// CHECK: ownership and feed binding are validated in instruction logic.
     pub pyth_price_account: UncheckedAccount<'info>,
@@ -1563,7 +1688,8 @@ pub struct EmergencyShutdown<'info> {
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(mut, seeds = [b"circuit_breaker"], bump = circuit_breaker.bump)]
     pub circuit_breaker: Account<'info, CircuitBreakerState>,
-    pub keeper: Signer<'info>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
 }
 
 #[account]
@@ -1715,6 +1841,10 @@ pub enum ErrorCode {
     InvalidKeeperSet,
     #[msg("Invalid collateral mint binding")]
     InvalidCollateralMint,
+    #[msg("Invalid collateral mint decimals")]
+    InvalidCollateralDecimals,
+    #[msg("Duplicate Pyth feed assignment")]
+    DuplicatePythFeed,
     #[msg("Invalid token account")]
     InvalidTokenAccount,
     #[msg("Emergency shutdown is active")]
@@ -1743,6 +1873,10 @@ pub enum ErrorCode {
     PythFeedNotConfigured,
     #[msg("Pyth feed account does not match configured vault feed")]
     InvalidPythFeedAccount,
+    #[msg("Pyth feed id does not match expected collateral feed")]
+    InvalidPythFeedId,
+    #[msg("Pyth update write authority is invalid")]
+    InvalidPythWriteAuthority,
     #[msg("Pyth feed account owner is invalid")]
     InvalidPythFeedOwner,
     #[msg("Pyth price account data is invalid")]
@@ -1755,6 +1889,8 @@ pub enum ErrorCode {
     PythScaleOverflow,
     #[msg("Legacy state account is invalid")]
     InvalidLegacyAccount,
+    #[msg("Legacy migration already completed")]
+    MigrationAlreadyCompleted,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
@@ -1921,6 +2057,8 @@ fn update_vault_oracle_from_pyth(
     vault: &mut Account<CollateralVault>,
     pyth_price_account: &UncheckedAccount,
     current_slot: u64,
+    current_timestamp: i64,
+    expected_feed_id: [u8; 32],
 ) -> Result<()> {
     require!(
         vault.pyth_price_feed != Pubkey::default(),
@@ -1932,7 +2070,16 @@ fn update_vault_oracle_from_pyth(
         ErrorCode::InvalidPythFeedAccount
     );
 
-    let (price, confidence, observed_slot) = read_pyth_price_update(pyth_price_account)?;
+    let (price, confidence, observed_slot, publish_time, feed_id) =
+        read_pyth_price_update(pyth_price_account)?;
+
+    // FIX PTV2-003: ensure feed-id matches configured collateral.
+    require!(feed_id == expected_feed_id, ErrorCode::InvalidPythFeedId);
+
+    // FIX PTV2-002: enforce publish_time freshness (<= 60s).
+    require!(publish_time <= current_timestamp, ErrorCode::OracleStale);
+    let age = current_timestamp - publish_time;
+    require!(age <= PYTH_PUBLISH_TIME_MAX_AGE, ErrorCode::OracleStale);
 
     require!(
         price >= PRICE_MIN && price <= PRICE_MAX,
@@ -1954,7 +2101,9 @@ fn update_vault_oracle_from_pyth(
     update_vault_oracle(vault, price, confidence, observed_slot)
 }
 
-fn read_pyth_price_update(pyth_price_account: &UncheckedAccount) -> Result<(u64, u64, u64)> {
+fn read_pyth_price_update(
+    pyth_price_account: &UncheckedAccount,
+) -> Result<(u64, u64, u64, i64, [u8; 32])> {
     let info = pyth_price_account.to_account_info();
     require_keys_eq!(
         *info.owner,
@@ -1976,6 +2125,13 @@ fn read_pyth_price_update(pyth_price_account: &UncheckedAccount) -> Result<(u64,
         _ => return err!(ErrorCode::PythVerificationLevelTooLow),
     }
 
+    // FIX PTV2-004: enforce trusted write authority on Pyth updates.
+    require_keys_eq!(
+        price_update.write_authority,
+        PYTH_TRUSTED_WRITE_AUTHORITY,
+        ErrorCode::InvalidPythWriteAuthority
+    );
+
     require!(
         price_update.price_message.price > 0,
         ErrorCode::PythPriceNonPositive
@@ -1989,8 +2145,16 @@ fn read_pyth_price_update(pyth_price_account: &UncheckedAccount) -> Result<(u64,
         u128::from(price_update.price_message.conf),
         price_update.price_message.exponent,
     )?;
+    let feed_id = price_update.price_message.feed_id;
+    let publish_time = price_update.price_message.publish_time;
 
-    Ok((price, confidence, price_update.posted_slot))
+    Ok((
+        price,
+        confidence,
+        price_update.posted_slot,
+        publish_time,
+        feed_id,
+    ))
 }
 
 fn scale_signed_to_six_decimals(value: i128, exponent: i32) -> Result<u64> {
@@ -2028,6 +2192,36 @@ fn pow10_u128(exp: u32) -> Result<u128> {
             .ok_or_else(|| error!(ErrorCode::PythScaleOverflow))?;
     }
     Ok(acc)
+}
+
+fn require_collateral_decimals(mint: &Account<TokenMint>, expected: u8) -> Result<()> {
+    if mint.decimals != expected {
+        return err!(ErrorCode::InvalidCollateralDecimals);
+    }
+    Ok(())
+}
+
+fn expected_pyth_feed_account(collateral_index: u8) -> Result<Pubkey> {
+    let feed = match collateral_index {
+        0 => PYTH_USDC_USD,
+        1 => PYTH_USDT_USD,
+        2 => PYTH_DAI_USD,
+        3 => PYTH_USDS_USD,
+        _ => return err!(ErrorCode::InvalidCollateralIndex),
+    };
+    Ok(feed)
+}
+
+fn expected_pyth_feed_id(collateral_index: u8) -> Result<[u8; 32]> {
+    // FIX PTV2-003: expected feed-id binding per collateral.
+    let feed_id = match collateral_index {
+        0 => PYTH_FEED_ID_USDC,
+        1 => PYTH_FEED_ID_USDT,
+        2 => PYTH_FEED_ID_DAI,
+        3 => PYTH_FEED_ID_USDS,
+        _ => return err!(ErrorCode::InvalidCollateralIndex),
+    };
+    Ok(feed_id)
 }
 
 fn validate_keeper_set(keeper_set: &[Pubkey; 3]) -> Result<()> {

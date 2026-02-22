@@ -1,9 +1,9 @@
 {
   "summary": {
     "total_attempts": 36,
-    "successful_exploits": 16,
-    "blocked_attempts": 20,
-    "success_rate": 0.4444444444444444
+    "successful_exploits": 0,
+    "blocked_attempts": 36,
+    "success_rate": 0.0
   },
   "attempts": [
     {
@@ -11,10 +11,10 @@
       "title": "Reward proof forgery to unregistered ghost agent",
       "target": "OAE staking",
       "severity": "CRITICAL",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-001",
       "financial_impact_estimate": "Up to reward_epoch_cap per epoch; ~100% incentive pool drain",
-      "evidence": "claim_ok=True, ghost_balance=900.0",
+      "evidence": "claim_ok=False, ghost_balance=0.0",
       "narrative": "Forge signed reward claims for non-registered identity and mint rewards to ghost balance."
     },
     {
@@ -22,10 +22,10 @@
       "title": "NaN reward-claim poisoning bypasses epoch cap",
       "target": "OAE staking",
       "severity": "CRITICAL",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-001",
       "financial_impact_estimate": "Unlimited rewards after poisoning; theoretical full treasury drain",
-      "evidence": "nan_claim=True, post_nan_large_claim=True, epoch_used=nan",
+      "evidence": "nan_claim=False, post_nan_large_claim=False, epoch_used=None",
       "narrative": "Inject NaN claim to poison epoch accounting then claim beyond cap."
     },
     {
@@ -33,10 +33,10 @@
       "title": "Negative slash parameter increases attacker balance",
       "target": "OAE staking",
       "severity": "CRITICAL",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": null,
       "financial_impact_estimate": "Direct 2x stake inflation per call",
-      "evidence": "before=100.0, slash_amt=-100.0, after=200.0",
+      "evidence": "before=100.0, slash_amt=0.0, after=100.0",
       "narrative": "Call slash with negative ratio to turn penalty into mint."
     },
     {
@@ -88,10 +88,10 @@
       "title": "NaN proposal passes winner invariants",
       "target": "Tournament evaluate",
       "severity": "HIGH",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-006",
       "financial_impact_estimate": "Corrupt protocol params; possible cascading failures",
-      "evidence": "winner=evil, mint_fee=nan, weights=[nan, 0.3, 0.3, 0.4]",
+      "evidence": "winner=None, mint_fee=0.002, weights=[0.25, 0.25, 0.25, 0.25]",
       "narrative": "Use NaN weights/fee to pass validation and win."
     },
     {
@@ -110,10 +110,10 @@
       "title": "Multi-identity sybil captures participant pool",
       "target": "Tournament economics",
       "severity": "HIGH",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-007",
       "financial_impact_estimate": "Large share of participant rewards; 5-20%/epoch pool capture",
-      "evidence": "sybil_rewards=14.7619, honest_rewards=30.2381",
+      "evidence": "sybil_rewards=2.5000, honest_rewards=32.5000",
       "narrative": "Use many funded optimizer IDs to capture participant rewards."
     },
     {
@@ -132,10 +132,10 @@
       "title": "Watchdog resolve without consensus",
       "target": "Watchdog settlement",
       "severity": "HIGH",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-008",
       "financial_impact_estimate": "Unilateral bounty extraction each epoch",
-      "evidence": "consensus=False, before=5.0, after=6.0",
+      "evidence": "consensus=False, before=5.0, after=5.0",
       "narrative": "Call resolve(true) despite consensus false."
     },
     {
@@ -154,10 +154,10 @@
       "title": "NaN timestamp crash (DoS)",
       "target": "Watchdog evidence validation",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-009",
       "financial_impact_estimate": "Monitoring loop crash / request-level DoS",
-      "evidence": "ValueError:cannot convert float NaN to integer",
+      "evidence": "no_exception",
       "narrative": "Submit NaN timestamp to trigger unhandled exception."
     },
     {
@@ -176,10 +176,10 @@
       "title": "Legacy ACP replay accepted by default",
       "target": "ACP auth",
       "severity": "HIGH",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-011",
       "financial_impact_estimate": "Replay signed control messages",
-      "evidence": "verify1=True, verify2=True",
+      "evidence": "verify1=False, verify2=False",
       "narrative": "Replay legacy message when allow_legacy default remains true."
     },
     {
@@ -187,10 +187,10 @@
       "title": "Public-key registry hijack enables impersonation",
       "target": "ACP auth / registry",
       "severity": "CRITICAL",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-012",
       "financial_impact_estimate": "Full impersonation of victim agent",
-      "evidence": "impersonation_verify=True",
+      "evidence": "impersonation_verify=False",
       "narrative": "Overwrite victim public key then sign as victim."
     },
     {
@@ -220,10 +220,10 @@
       "title": "NaN burn amount enqueue crash",
       "target": "Redemption queue",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-014",
       "financial_impact_estimate": "Queue DoS",
-      "evidence": "ValueError:cannot convert float NaN to integer",
+      "evidence": "no_exception",
       "narrative": "Pass NaN burn amount into enqueue path."
     },
     {
@@ -264,10 +264,10 @@
       "title": "Predictable commit_proof bypass for split rebalances",
       "target": "Keeper rebalance guard",
       "severity": "HIGH",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-018",
       "financial_impact_estimate": "Policy manipulation; potential multi-% TVL adverse allocation",
-      "evidence": "result={'status': 'APPLIED', 'weights': [0.46, 0.24, 0.2, 0.1], 'mint_fee': 0.002}, turnover_window=[0.039999999999999925, 0.040000000000000036, 0.040000000000000036]",
+      "evidence": "result={'status': 'REJECTED', 'reason': 'delta_violation_0'}, turnover_window=[0.039999999999999925]",
       "narrative": "Satisfy commit proof with public epoch/hash string (no pre-commit)."
     },
     {
@@ -275,10 +275,10 @@
       "title": "Toxic collateral still mints nontrivial amount",
       "target": "Mint risk gate",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-019",
       "financial_impact_estimate": "Undercollateralized mint pressure; 1-10% TVL in stress",
-      "evidence": "minted=767691",
+      "evidence": "minted=0",
       "narrative": "Set extreme risk score and verify mint remains >0."
     },
     {
@@ -311,7 +311,7 @@
       "outcome": "BLOCKED",
       "bypasses_fix": "PT-022",
       "financial_impact_estimate": "Forensic evade via bucket collision",
-      "evidence": "sig_a=b493e196a13d76fa, sig_b=53aada4958229af5",
+      "evidence": "sig_a=9b57980ca3349cc0, sig_b=27c96020eaa02134",
       "narrative": "Use close intensities to force same signature bucket."
     },
     {
@@ -341,10 +341,10 @@
       "title": "Safe-mode release without health context",
       "target": "Response safety gate",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-025",
       "financial_impact_estimate": "Premature recovery under unhealthy state",
-      "evidence": "result={'safe_mode': False, 'registration_frozen': False, 'rate_limit_enabled': False}",
+      "evidence": "result={'safe_mode': True, 'registration_frozen': False, 'rate_limit_enabled': False}",
       "narrative": "Invoke recovery with health=None after cooldown."
     },
     {
@@ -352,10 +352,10 @@
       "title": "Case/format signature bypass",
       "target": "Forensics \u2194 executor blocklist",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-026",
       "financial_impact_estimate": "Bypass blocked signatures",
-      "evidence": "status=partial_success, success=True, blocked_entry=uppercase",
+      "evidence": "status=blocked, success=False, blocked_entry=uppercase",
       "narrative": "Insert uppercase blocked signature and execute lower-case signature path."
     },
     {
@@ -363,10 +363,10 @@
       "title": "Chain-content morph collision",
       "target": "Forensic signature robustness",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": "PT-027",
       "financial_impact_estimate": "Variant attacks evade blocklist despite same signature",
-      "evidence": "sig_a=82d26edc9519934771eb, sig_b=82d26edc9519934771eb",
+      "evidence": "sig_a=9e7f19829b1ed23bb183, sig_b=714f3ae6cb036a5a81c0",
       "narrative": "Alter chain internals while preserving chain depth."
     },
     {
@@ -374,10 +374,10 @@
       "title": "Permissionless Pyth oracle update surface",
       "target": "Solana on-chain oracle path",
       "severity": "MEDIUM",
-      "outcome": "SUCCESS",
+      "outcome": "BLOCKED",
       "bypasses_fix": null,
       "financial_impact_estimate": "Potential grief/MEV surface if feed account compromised",
-      "evidence": "has_quorum_call=False, has_keeper_signers=False",
+      "evidence": "has_quorum_call=True, has_keeper_signers=False",
       "narrative": "Static check: update_oracle_pyth lacks keeper quorum + signer accounts."
     },
     {

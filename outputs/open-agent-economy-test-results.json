@@ -1,0 +1,750 @@
+{
+  "total": 115,
+  "passed": 115,
+  "failed": 0,
+  "skipped": 0,
+  "elapsed_sec": 4.186604976654053,
+  "category_summary": {
+    "AgentRegistry": {
+      "PASS": 15,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "OptimizationTournament": {
+      "PASS": 20,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "FederatedWatchdog": {
+      "PASS": 15,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "Staking": {
+      "PASS": 15,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "Reputation": {
+      "PASS": 10,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "Security": {
+      "PASS": 20,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "Integration": {
+      "PASS": 10,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "MonteCarlo": {
+      "PASS": 10,
+      "FAIL": 0,
+      "SKIP": 0
+    }
+  },
+  "monte_carlo": {
+    "peg_mae": {
+      "mean": 0.001790780594751011,
+      "median": 0.0017862649201766537,
+      "p5": 0.001518875693276878,
+      "p95": 0.0020731046402288882,
+      "worst": 0.0022773813108257174
+    }
+  },
+  "results": [
+    {
+      "id": "TC-AR-001",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "registered"
+    },
+    {
+      "id": "TC-AR-002",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "rejected"
+    },
+    {
+      "id": "TC-AR-003",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "all types registered"
+    },
+    {
+      "id": "TC-AR-004",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "cooldown ok"
+    },
+    {
+      "id": "TC-AR-005",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "cooldown reject"
+    },
+    {
+      "id": "TC-AR-006",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "re-register"
+    },
+    {
+      "id": "TC-AR-007",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "slash reduced"
+    },
+    {
+      "id": "TC-AR-008",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "auto-deregister"
+    },
+    {
+      "id": "TC-AR-009",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "reward added"
+    },
+    {
+      "id": "TC-AR-010",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "max cap"
+    },
+    {
+      "id": "TC-AR-011",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "duplicate reject"
+    },
+    {
+      "id": "TC-AR-012",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "status transitions"
+    },
+    {
+      "id": "TC-AR-013",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "slashed"
+    },
+    {
+      "id": "TC-AR-014",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "last_active updated"
+    },
+    {
+      "id": "TC-AR-015",
+      "category": "AgentRegistry",
+      "status": "PASS",
+      "detail": "consistent"
+    },
+    {
+      "id": "TC-OT-001",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "single wins"
+    },
+    {
+      "id": "TC-OT-002",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "lowest loss wins"
+    },
+    {
+      "id": "TC-OT-003",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "50 agents"
+    },
+    {
+      "id": "TC-OT-004",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "early reveal rejected"
+    },
+    {
+      "id": "TC-OT-005",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "mismatch reveal"
+    },
+    {
+      "id": "TC-OT-006",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "commit-reveal ok"
+    },
+    {
+      "id": "TC-OT-007",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "late submission reject"
+    },
+    {
+      "id": "TC-OT-008",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "copycat penalty"
+    },
+    {
+      "id": "TC-OT-009",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "reward split"
+    },
+    {
+      "id": "TC-OT-010",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "rep weight"
+    },
+    {
+      "id": "TC-OT-011",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "novelty bonus"
+    },
+    {
+      "id": "TC-OT-012",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "min stake check"
+    },
+    {
+      "id": "TC-OT-013",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "slashed reject"
+    },
+    {
+      "id": "TC-OT-014",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "empty epoch"
+    },
+    {
+      "id": "TC-OT-015",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "worse proposals"
+    },
+    {
+      "id": "TC-OT-016",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "honest wins"
+    },
+    {
+      "id": "TC-OT-017",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "honest > lazy"
+    },
+    {
+      "id": "TC-OT-018",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "malicious slashed"
+    },
+    {
+      "id": "TC-OT-019",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "risk-adjusted"
+    },
+    {
+      "id": "TC-OT-020",
+      "category": "OptimizationTournament",
+      "status": "PASS",
+      "detail": "mae=0.002152"
+    },
+    {
+      "id": "TC-FW-001",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "3-of-5"
+    },
+    {
+      "id": "TC-FW-002",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "2-of-5"
+    },
+    {
+      "id": "TC-FW-003",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "dynamic M"
+    },
+    {
+      "id": "TC-FW-004",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "all agree"
+    },
+    {
+      "id": "TC-FW-005",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "split vote"
+    },
+    {
+      "id": "TC-FW-006",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "false positive slash"
+    },
+    {
+      "id": "TC-FW-007",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "true positive reward"
+    },
+    {
+      "id": "TC-FW-008",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "missing evidence"
+    },
+    {
+      "id": "TC-FW-009",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "stale evidence"
+    },
+    {
+      "id": "TC-FW-010",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "1 malicious ok"
+    },
+    {
+      "id": "TC-FW-011",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "2 colluding ok"
+    },
+    {
+      "id": "TC-FW-012",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "fallback"
+    },
+    {
+      "id": "TC-FW-013",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "diversity bonus"
+    },
+    {
+      "id": "TC-FW-014",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "fp_rate=0.020"
+    },
+    {
+      "id": "TC-FW-015",
+      "category": "FederatedWatchdog",
+      "status": "PASS",
+      "detail": "tp_rate=0.990"
+    },
+    {
+      "id": "TC-SS-001",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "deposit ok"
+    },
+    {
+      "id": "TC-SS-002",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "deposit reject"
+    },
+    {
+      "id": "TC-SS-003",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "withdraw ok"
+    },
+    {
+      "id": "TC-SS-004",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "withdraw reject"
+    },
+    {
+      "id": "TC-SS-005",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "slash 10%"
+    },
+    {
+      "id": "TC-SS-006",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "slash 100%"
+    },
+    {
+      "id": "TC-SS-007",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "cumulative"
+    },
+    {
+      "id": "TC-SS-008",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "reward accrual"
+    },
+    {
+      "id": "TC-SS-009",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "apy=1.000"
+    },
+    {
+      "id": "TC-SS-010",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "auto dereg"
+    },
+    {
+      "id": "TC-SS-011",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "fee distribution"
+    },
+    {
+      "id": "TC-SS-012",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "treasury 55%"
+    },
+    {
+      "id": "TC-SS-013",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "no double claim"
+    },
+    {
+      "id": "TC-SS-014",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "stake locked"
+    },
+    {
+      "id": "TC-SS-015",
+      "category": "Staking",
+      "status": "PASS",
+      "detail": "invariant"
+    },
+    {
+      "id": "TC-RP-001",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "initial 0"
+    },
+    {
+      "id": "TC-RP-002",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "proposal +10"
+    },
+    {
+      "id": "TC-RP-003",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "anomaly +20"
+    },
+    {
+      "id": "TC-RP-004",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "false alarm -25"
+    },
+    {
+      "id": "TC-RP-005",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "tier boundaries"
+    },
+    {
+      "id": "TC-RP-006",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "multiplier"
+    },
+    {
+      "id": "TC-RP-007",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "decay"
+    },
+    {
+      "id": "TC-RP-008",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "no decay when active"
+    },
+    {
+      "id": "TC-RP-009",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "floor"
+    },
+    {
+      "id": "TC-RP-010",
+      "category": "Reputation",
+      "status": "PASS",
+      "detail": "elite"
+    },
+    {
+      "id": "TC-SEC-001",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "sybil 10 detected"
+    },
+    {
+      "id": "TC-SEC-002",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "sybil 100 detected"
+    },
+    {
+      "id": "TC-SEC-003",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "collusion opt"
+    },
+    {
+      "id": "TC-SEC-004",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "collusion opt+mon"
+    },
+    {
+      "id": "TC-SEC-005",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "commit-reveal prevents"
+    },
+    {
+      "id": "TC-SEC-006",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "epoch mismatch"
+    },
+    {
+      "id": "TC-SEC-007",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "impersonation blocked"
+    },
+    {
+      "id": "TC-SEC-008",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "rate limited"
+    },
+    {
+      "id": "TC-SEC-009",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "eclipse 1"
+    },
+    {
+      "id": "TC-SEC-010",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "majority eclipse triggers safe mode"
+    },
+    {
+      "id": "TC-SEC-011",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "no profitable griefing"
+    },
+    {
+      "id": "TC-SEC-012",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "cooldown prevents loop"
+    },
+    {
+      "id": "TC-SEC-013",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "rate-limited rep"
+    },
+    {
+      "id": "TC-SEC-014",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "commit-reveal random eval"
+    },
+    {
+      "id": "TC-SEC-015",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "min participants"
+    },
+    {
+      "id": "TC-SEC-016",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "DoS cap"
+    },
+    {
+      "id": "TC-SEC-017",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "oracle feeds"
+    },
+    {
+      "id": "TC-SEC-018",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "time monotonic"
+    },
+    {
+      "id": "TC-SEC-019",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "state hash"
+    },
+    {
+      "id": "TC-SEC-020",
+      "category": "Security",
+      "status": "PASS",
+      "detail": "MC adversarial"
+    },
+    {
+      "id": "TC-E2E-001",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "lifecycle"
+    },
+    {
+      "id": "TC-E2E-002",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "honest profit"
+    },
+    {
+      "id": "TC-E2E-003",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "honest outperform"
+    },
+    {
+      "id": "TC-E2E-004",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "join mid"
+    },
+    {
+      "id": "TC-E2E-005",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "leave mid"
+    },
+    {
+      "id": "TC-E2E-006",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "crash CB"
+    },
+    {
+      "id": "TC-E2E-007",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "recovery"
+    },
+    {
+      "id": "TC-E2E-008",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "latency=0.01ms"
+    },
+    {
+      "id": "TC-E2E-009",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "invariant holds"
+    },
+    {
+      "id": "TC-E2E-010",
+      "category": "Integration",
+      "status": "PASS",
+      "detail": "chaos stable"
+    },
+    {
+      "id": "TC-MC-001",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "peg stability"
+    },
+    {
+      "id": "TC-MC-002",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "churn stable"
+    },
+    {
+      "id": "TC-MC-003",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "flash crash CB"
+    },
+    {
+      "id": "TC-MC-004",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "sybil waves"
+    },
+    {
+      "id": "TC-MC-005",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "gini fairness"
+    },
+    {
+      "id": "TC-MC-006",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "time to elite"
+    },
+    {
+      "id": "TC-MC-007",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "revenue scales"
+    },
+    {
+      "id": "TC-MC-008",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "M-of-N ratio"
+    },
+    {
+      "id": "TC-MC-009",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "stake sensitivity"
+    },
+    {
+      "id": "TC-MC-010",
+      "category": "MonteCarlo",
+      "status": "PASS",
+      "detail": "adversarial survive"
+    }
+  ]
+}

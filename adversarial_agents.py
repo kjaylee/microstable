@@ -82,16 +82,21 @@ def _canonical_signature_material(attack: Dict[str, Any]) -> Dict[str, Any]:
     budget = float(params.get("budget", 0.0))
     scale = max(1, int(attack.get("scale", 1)))
 
-    # FIX PT-027: normalize inputs and include multi-resolution semantic features.
+    chain = attack.get("chain", [])
+    chain_canonical = _canonical_json(chain if isinstance(chain, list) else [])
+    chain_hash = hashlib.sha256(chain_canonical.encode("utf-8")).hexdigest()[:24]
+
+    # FIX PT-027 / RTV3-A33: include chain-content fingerprint, not depth only.
     return {
-        "domain": "attack-signature:v2",
+        "domain": "attack-signature:v3",
         "vector": _norm_text(attack.get("vector")),
         "tier": int(attack.get("tier", 0)),
         "timing_mode": _norm_text(timing.get("mode", "normal")),
         "epoch_offset": int(timing.get("epoch_offset", 0)),
         "scale": scale,
         "scale_bucket": int(math.log10(scale)),
-        "chain_depth": len(attack.get("chain", [])),
+        "chain_depth": len(chain if isinstance(chain, list) else []),
+        "chain_hash": chain_hash,
         "intensity_fine": round(intensity, 6),
         "intensity_coarse": round(intensity, 2),
         "stealth_fine": round(stealth, 6),
@@ -428,8 +433,9 @@ class AttackExecutor:
             ).to_dict()
 
         bucket_sig, full_sig = self._attack_signature_pair(attack)
-        # FIX PT-026: normalize signature domain/length and accept canonical full/bucket keys.
-        if bucket_sig in self.blocked_signatures or full_sig in self.blocked_signatures:
+        # FIX PT-026 / RTV3-A32: normalize blocklist entries (case/format-insensitive).
+        blocked_norm = {str(s).strip().lower() for s in self.blocked_signatures}
+        if bucket_sig.lower() in blocked_norm or full_sig.lower() in blocked_norm:
             return AttackExecutionResult(
                 attack_id=attack["id"],
                 status="blocked",
@@ -837,8 +843,8 @@ class ResponseEngine:
         return {"treasury_locked": True}
 
     def recover_from_safe_mode(self, epochs_elapsed: int, health: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        # FIX PT-025: health gate enforced when health context is supplied.
-        if epochs_elapsed >= 5 and (health is None or self._healthy_for_recovery(health)):
+        # FIX PT-025 / RTV3-A31: recovery requires explicit healthy context.
+        if epochs_elapsed >= 5 and self._healthy_for_recovery(health):
             self.safe_mode = False
             self.registration_frozen = False
             self.rate_limit_enabled = False
