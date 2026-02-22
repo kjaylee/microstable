@@ -17,6 +17,8 @@ fn base_protocol() -> wire::ProtocolState {
     wire::ProtocolState {
         weights: [25_000, 25_000, 25_000, 25_000],
         fee_rate: 30,
+        mint_fee_rate: 30,
+        redeem_fee_rate: 30,
         cr_target: 15_000,
         total_supply: 100,
         last_update_slot: 123,

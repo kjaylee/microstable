@@ -2,6 +2,8 @@
 mod config;
 #[path = "../src/monitor.rs"]
 mod monitor;
+#[path = "../src/optimizer.rs"]
+mod optimizer;
 #[path = "../src/oracle.rs"]
 mod oracle;
 #[path = "../src/rebalance.rs"]

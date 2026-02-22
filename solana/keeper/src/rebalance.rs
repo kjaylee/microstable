@@ -1,5 +1,6 @@
 use crate::{
     config::KeeperConfig,
+    optimizer::{self, AdamOptimizer, OptimizerCheckpoint, ParamVector, SafetyBounds},
     utils::{self, DerivedAccounts},
     wire,
 };
@@ -16,6 +17,11 @@ const WEIGHT_SCALE: u64 = 1_000_000;
 const BATCH_WINDOW_SLOTS: u64 = 32;
 const MIN_WEIGHT_CAP_PPM: u64 = 10_000;
 const MAX_WEIGHT_CAP_PPM: u64 = WEIGHT_SCALE;
+const CR_TARGET_MIN_PPM: u64 = 1_000_000;
+const CR_TARGET_MAX_PPM: u64 = 2_000_000;
+const FEE_MAX_PPM: u64 = 10_000;
+const DEFAULT_CR_TARGET_PPM: u64 = 1_200_000;
+const DEFAULT_FEE_PPM: u64 = 2_000;
 
 #[derive(Debug, Clone)]
 pub struct RebalanceOutcome {
@@ -29,6 +35,9 @@ pub struct RebalanceOutcome {
 #[derive(Debug, Default, Clone)]
 pub struct RebalanceMemory {
     pending_reveal: Option<PendingReveal>,
+    adam_optimizer: Option<AdamOptimizer>,
+    optimizer_checkpoint: Option<OptimizerCheckpoint>,
+    safety_bounds: Option<SafetyBounds>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +46,14 @@ struct PendingReveal {
     target_weights: [u64; 4],
     batch_slot: u64,
     reveal_salt: [u8; 32],
+    pending_params: Option<ProtocolParamUpdate>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProtocolParamUpdate {
+    target_cr: u64,
+    mint_fee: u64,
+    redeem_fee: u64,
 }
 
 pub fn run_rebalance_cycle(
@@ -54,25 +71,28 @@ pub fn run_rebalance_cycle(
         None
     };
 
-    let (protocol, vaults) = if let Some(secondary) = secondary_for_reads {
+    let (protocol, circuit_breaker, vaults) = if let Some(secondary) = secondary_for_reads {
         match utils::retry_with_backoff(
             utils::CROSS_RPC_MAX_ATTEMPTS,
             utils::CROSS_RPC_BACKOFF_BASE_MS,
             |attempt| {
                 let primary_snapshot = fetch_rebalance_snapshot(rpc, derived)?;
-                let secondary_snapshot = fetch_rebalance_snapshot(secondary, derived).map_err(|err| {
-                    let entered_degraded = utils::register_secondary_rpc_failure();
-                    anyhow!(
-                        "secondary rebalance snapshot read failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
-                        utils::CROSS_RPC_MAX_ATTEMPTS
-                    )
-                })?;
+                let secondary_snapshot =
+                    fetch_rebalance_snapshot(secondary, derived).map_err(|err| {
+                        let entered_degraded = utils::register_secondary_rpc_failure();
+                        anyhow!(
+                            "secondary rebalance snapshot read failed (attempt {attempt}/{}): {err}; entered_degraded={entered_degraded}",
+                            utils::CROSS_RPC_MAX_ATTEMPTS
+                        )
+                    })?;
 
                 validate_rebalance_cross_rpc(
                     &primary_snapshot.0,
                     &secondary_snapshot.0,
                     &primary_snapshot.1,
                     &secondary_snapshot.1,
+                    &primary_snapshot.2,
+                    &secondary_snapshot.2,
                 )
                 .map_err(|err| {
                     anyhow!(
@@ -122,7 +142,8 @@ pub fn run_rebalance_cycle(
     let (k1, k2) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
     let mut current_slot = rpc.get_slot()?;
 
-    let target_weights = compute_target_weights(&vaults);
+    let (target_weights, pending_params) =
+        compute_rebalance_targets(&vaults, &protocol, &circuit_breaker, memory);
     let deviation_bps = weight_deviation_bps(protocol.weights, target_weights);
 
     outcome.deviation_bps = deviation_bps;
@@ -156,7 +177,7 @@ pub fn run_rebalance_cycle(
                     .saturating_add(cfg.commit_reveal_delay_slots),
                 "pending rebalance commit not yet revealable"
             );
-        } else if let Some(local_pending) = memory.pending_reveal.as_ref().filter(|pending| {
+        } else if let Some(local_pending) = memory.pending_reveal.clone().filter(|pending| {
             pending.commit_hash == protocol.pending_rebalance_commit
                 && pending.batch_slot == protocol.pending_rebalance_slot
         }) {
@@ -191,6 +212,19 @@ pub fn run_rebalance_cycle(
                     );
                     outcome.proposed = true;
                     outcome.rebalance_signature = Some(sig);
+                    if let Some(params) = local_pending.pending_params {
+                        maybe_submit_protocol_params_update(
+                            rpc,
+                            secondary_rpc,
+                            secondary_mode,
+                            cfg,
+                            derived,
+                            k1,
+                            k2,
+                            &protocol,
+                            params,
+                        );
+                    }
                     memory.pending_reveal = None;
                     return Ok(outcome);
                 }
@@ -267,6 +301,7 @@ pub fn run_rebalance_cycle(
         target_weights,
         batch_slot,
         reveal_salt,
+        pending_params,
     });
 
     outcome.proposed = true;
@@ -316,6 +351,19 @@ pub fn run_rebalance_cycle(
                 "rebalance reveal sent"
             );
             outcome.rebalance_signature = Some(sig);
+            if let Some(params) = pending_params {
+                maybe_submit_protocol_params_update(
+                    rpc,
+                    secondary_rpc,
+                    secondary_mode,
+                    cfg,
+                    derived,
+                    k1,
+                    k2,
+                    &protocol,
+                    params,
+                );
+            }
             memory.pending_reveal = None;
         }
         Err(err) => {
@@ -333,6 +381,8 @@ pub fn run_rebalance_cycle(
 pub fn validate_rebalance_cross_rpc(
     primary_protocol: &wire::ProtocolState,
     secondary_protocol: &wire::ProtocolState,
+    primary_circuit: &wire::CircuitBreakerState,
+    secondary_circuit: &wire::CircuitBreakerState,
     primary_vaults: &[wire::CollateralVault; 4],
     secondary_vaults: &[wire::CollateralVault; 4],
 ) -> Result<()> {
@@ -340,15 +390,30 @@ pub fn validate_rebalance_cross_rpc(
     validate_vault_weight_caps(secondary_vaults)?;
     utils::validate_protocol_state_with_tolerance(primary_protocol, secondary_protocol)?;
     utils::validate_vaults_with_tolerance(primary_vaults, secondary_vaults)?;
+
+    if primary_circuit.optimizer_enabled != secondary_circuit.optimizer_enabled {
+        return Err(anyhow!(
+            "circuit.optimizer_enabled mismatch (primary={}, secondary={})",
+            primary_circuit.optimizer_enabled,
+            secondary_circuit.optimizer_enabled
+        ));
+    }
+
     Ok(())
 }
 
 fn fetch_rebalance_snapshot(
     rpc: &RpcClient,
     derived: &DerivedAccounts,
-) -> Result<(wire::ProtocolState, [wire::CollateralVault; 4])> {
+) -> Result<(
+    wire::ProtocolState,
+    wire::CircuitBreakerState,
+    [wire::CollateralVault; 4],
+)> {
     let protocol: wire::ProtocolState =
         utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let circuit: wire::CircuitBreakerState =
+        utils::fetch_account(rpc, &derived.circuit_breaker, "CircuitBreakerState")?;
 
     let vaults = [
         utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
@@ -358,7 +423,7 @@ fn fetch_rebalance_snapshot(
     ];
 
     validate_vault_weight_caps(&vaults)?;
-    Ok((protocol, vaults))
+    Ok((protocol, circuit, vaults))
 }
 
 fn validate_vault_weight_caps(vaults: &[wire::CollateralVault; 4]) -> Result<()> {
@@ -374,6 +439,159 @@ fn validate_vault_weight_caps(vaults: &[wire::CollateralVault; 4]) -> Result<()>
     }
 
     Ok(())
+}
+
+/// Bridge: convert on-chain wire types → optimizer ProtocolSnapshot.
+fn build_protocol_snapshot(
+    vaults: &[wire::CollateralVault; 4],
+    protocol: &wire::ProtocolState,
+) -> optimizer::ProtocolSnapshot {
+    let mut current_weights = [0.0f64; 4];
+    for (i, w) in protocol.weights.iter().enumerate() {
+        current_weights[i] = *w as f64 / WEIGHT_SCALE as f64;
+    }
+
+    let total_deposits: u128 = vaults.iter().map(|v| v.total_deposits as u128).sum();
+    let total_value: u128 = vaults
+        .iter()
+        .map(|v| {
+            (v.total_deposits as u128)
+                .saturating_mul(v.price as u128)
+                .saturating_div(WEIGHT_SCALE as u128)
+        })
+        .sum();
+    let supply = protocol.total_supply.max(1) as f64;
+    let collateral_ratio = total_value as f64 / supply;
+
+    let mut oracle_quality = [1.0f64; 4];
+    for (i, vault) in vaults.iter().enumerate() {
+        if vault.price == 0 {
+            oracle_quality[i] = 0.0;
+        } else {
+            let conf_ratio = vault.confidence as f64 / vault.price.max(1) as f64;
+            oracle_quality[i] = (1.0 - conf_ratio * 10.0).clamp(0.0, 1.0);
+        }
+    }
+
+    optimizer::ProtocolSnapshot {
+        peg_price: 1.0,
+        collateral_ratio,
+        nav_history: vec![],
+        current_weights,
+        previous_weights: current_weights,
+        oracle_quality_scores: oracle_quality,
+        target_cr: protocol.cr_target as f64 / WEIGHT_SCALE as f64,
+        mint_fee: protocol.mint_fee_rate as f64 / WEIGHT_SCALE as f64,
+        redeem_fee: protocol.redeem_fee_rate as f64 / WEIGHT_SCALE as f64,
+        loss_function: None,
+    }
+}
+
+/// Convert optimizer f64 weights [0..1] → on-chain PPM [0..1_000_000].
+fn f64_weights_to_ppm(weights: [f64; 4]) -> [u64; 4] {
+    let mut ppm = [0u64; 4];
+    let mut assigned = 0u64;
+    for i in 0..3 {
+        let w = (weights[i] * WEIGHT_SCALE as f64).round() as u64;
+        ppm[i] = w.min(WEIGHT_SCALE);
+        assigned = assigned.saturating_add(ppm[i]);
+    }
+    ppm[3] = WEIGHT_SCALE.saturating_sub(assigned);
+    ppm
+}
+
+/// Decide target weights (and optional CR/fee update) — optimizer path or static fallback.
+fn compute_rebalance_targets(
+    vaults: &[wire::CollateralVault; 4],
+    protocol: &wire::ProtocolState,
+    circuit_breaker: &wire::CircuitBreakerState,
+    memory: &mut RebalanceMemory,
+) -> ([u64; 4], Option<ProtocolParamUpdate>) {
+    if !circuit_breaker.optimizer_enabled {
+        return (compute_target_weights(vaults), None);
+    }
+
+    let snapshot = build_protocol_snapshot(vaults, protocol);
+
+    let current_params = ParamVector {
+        weights: snapshot.current_weights,
+        target_cr: snapshot.target_cr,
+        mint_fee: snapshot.mint_fee,
+        redeem_fee: snapshot.redeem_fee,
+    };
+
+    let adam = memory
+        .adam_optimizer
+        .get_or_insert_with(AdamOptimizer::default);
+    let bounds = memory
+        .safety_bounds
+        .get_or_insert_with(SafetyBounds::default);
+    let checkpoint = &mut memory.optimizer_checkpoint;
+
+    match optimizer::optimize_step(&snapshot, &current_params, adam, bounds, checkpoint) {
+        Ok(optimized) => {
+            let target_weights = f64_weights_to_ppm(optimized.weights);
+
+            let new_cr = (optimized.target_cr * WEIGHT_SCALE as f64).round() as u64;
+            let new_mint_fee = (optimized.mint_fee * WEIGHT_SCALE as f64).round() as u64;
+            let new_redeem_fee = (optimized.redeem_fee * WEIGHT_SCALE as f64).round() as u64;
+
+            let cr_changed = new_cr != protocol.cr_target;
+            let fee_changed =
+                new_mint_fee != protocol.mint_fee_rate || new_redeem_fee != protocol.redeem_fee_rate;
+
+            let pending_params = if cr_changed || fee_changed {
+                Some(ProtocolParamUpdate {
+                    target_cr: new_cr.clamp(CR_TARGET_MIN_PPM, CR_TARGET_MAX_PPM),
+                    mint_fee: new_mint_fee.min(FEE_MAX_PPM),
+                    redeem_fee: new_redeem_fee.min(FEE_MAX_PPM),
+                })
+            } else {
+                None
+            };
+
+            info!(
+                optimizer = true,
+                loss = ?checkpoint.as_ref().map(|c| c.loss),
+                target_weights = ?target_weights,
+                cr = new_cr,
+                mint_fee = new_mint_fee,
+                redeem_fee = new_redeem_fee,
+                "optimizer produced rebalance targets"
+            );
+
+            (target_weights, pending_params)
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "optimizer failed, falling back to static weights"
+            );
+            (compute_target_weights(vaults), None)
+        }
+    }
+}
+
+/// Submit CR / fee parameter update on-chain after a successful rebalance.
+fn maybe_submit_protocol_params_update(
+    _rpc: &RpcClient,
+    _secondary_rpc: Option<&RpcClient>,
+    _secondary_mode: utils::SecondaryRpcMode,
+    _cfg: &KeeperConfig,
+    _derived: &DerivedAccounts,
+    _k1: &Keypair,
+    _k2: &Keypair,
+    _protocol: &wire::ProtocolState,
+    params: ProtocolParamUpdate,
+) {
+    // NOTE: on-chain `update_protocol_params` instruction is not yet deployed.
+    // When available, build + submit the ix here.  For now, log the intended update.
+    info!(
+        target_cr = params.target_cr,
+        mint_fee = params.mint_fee,
+        redeem_fee = params.redeem_fee,
+        "protocol param update deferred (on-chain instruction pending)"
+    );
 }
 
 fn compute_target_weights(vaults: &[wire::CollateralVault; 4]) -> [u64; 4] {

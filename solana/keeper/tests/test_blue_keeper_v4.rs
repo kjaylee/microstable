@@ -2,6 +2,8 @@
 mod config;
 #[path = "../src/monitor.rs"]
 mod monitor;
+#[path = "../src/optimizer.rs"]
+mod optimizer;
 #[path = "../src/oracle.rs"]
 mod oracle;
 #[path = "../src/rebalance.rs"]
@@ -24,6 +26,8 @@ fn base_protocol() -> wire::ProtocolState {
     wire::ProtocolState {
         weights: [250_000, 250_000, 250_000, 250_000],
         fee_rate: 30,
+        mint_fee_rate: 30,
+        redeem_fee_rate: 30,
         cr_target: 15_000,
         total_supply: 1_000_000,
         last_update_slot: 123,
