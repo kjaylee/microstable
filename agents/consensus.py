@@ -18,7 +18,8 @@ if ROOT_DIR not in sys.path:
 from microstable import ProtocolState
 
 TIMELOCK_SECONDS = 48 * 60 * 60
-REQUIRED_YES = 3
+# FIX HI-04: move governance from unanimous 3/3 to resilient 2/3 majority.
+REQUIRED_YES = 2
 AGENTS = ("keeper", "watchdog", "auditor")
 
 
@@ -31,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--proposal-id", default="proposal-001", help="proposal identifier")
     p.add_argument(
         "--proposal-type",
-        choices=["asset_listing", "parameter_change"],
+        choices=["asset_listing", "parameter_change", "emergency_shutdown"],
         default="asset_listing",
         help="governance proposal type",
     )
@@ -80,17 +81,31 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
     yes_votes = sum(1 for a in AGENTS if votes[a])
-    consensus_reached = yes_votes == REQUIRED_YES
+
+    # FIX HI-04: emergency shutdown can be triggered by any single agent vote.
+    is_emergency = args.proposal_type == "emergency_shutdown"
+    if is_emergency:
+        consensus_reached = yes_votes >= 1
+        required_yes = 1
+    else:
+        consensus_reached = yes_votes >= REQUIRED_YES
+        required_yes = REQUIRED_YES
 
     validation = {"ok": True, "reason": "ok"}
     if args.proposal_type == "parameter_change":
         validation = validate_parameter_change(args.param, args.value)
 
+    # FIX HI-04: 48h timelock for privileged parameter changes.
     now = int(time.time())
-    eta = now + TIMELOCK_SECONDS if consensus_reached and validation["ok"] else None
+    timelock_seconds = TIMELOCK_SECONDS if args.proposal_type == "parameter_change" else 0
+    eta = now + timelock_seconds if consensus_reached and validation["ok"] else None
 
     can_queue = consensus_reached and validation["ok"]
     queued = bool(args.execute and can_queue)
+
+    action = "QUEUE_GOVERNANCE_ACTION"
+    if is_emergency:
+        action = "TRIGGER_EMERGENCY_SHUTDOWN"
 
     return {
         "agent": "consensus",
@@ -103,19 +118,20 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             "value": args.value if args.proposal_type == "parameter_change" else None,
         },
         "voting": {
-            "required_yes": REQUIRED_YES,
+            "required_yes": required_yes,
             "votes": votes,
             "yes_votes": yes_votes,
-            "consensus_reached_3_of_3": consensus_reached,
+            "consensus_reached": consensus_reached,
+            "consensus_reached_2_of_3": (consensus_reached if not is_emergency else None),
         },
         "validation": validation,
         "timelock": {
-            "seconds": TIMELOCK_SECONDS,
+            "seconds": timelock_seconds,
             "eta_unix": eta,
             "eta_iso": datetime.fromtimestamp(eta, tz=timezone.utc).isoformat() if eta else None,
         },
         "decision": {
-            "action": "QUEUE_GOVERNANCE_ACTION" if can_queue else "REJECT_OR_WAIT",
+            "action": action if can_queue else "REJECT_OR_WAIT",
             "queued": queued,
         },
     }

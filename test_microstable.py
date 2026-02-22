@@ -317,7 +317,8 @@ def tc_cb001() -> str:
     for t, p in enumerate(seq):
         cb.update(t, state, mkt(t, [1.0, p, 1.0, 1.0]), nav_drop=0.0, loss_finite=True, loss_value=1.0)
     assert cb.is_active(1)
-    assert state.w_caps[1] <= state.base_w_caps[1] * 0.5 + 1e-12
+    staged_cap_upper = max(state.base_w_caps[1] * 0.5, 0.30 - ms.DELTA_W_MAX)
+    assert state.base_w_caps[1] * 0.5 - 1e-12 <= state.w_caps[1] <= staged_cap_upper + 1e-12
     assert state.mint_limit <= 0.25 + 1e-12
     return f"cap1={state.w_caps[1]:.6f}, mint_limit={state.mint_limit:.3f}"
 
@@ -529,7 +530,7 @@ def tc_cb015() -> str:
     )
 
     rec = [int(e["cb"]) for e in cb.events if e["event"] == "recover"]
-    assert rec[:4] == [4, 2, 3, 1]
+    assert rec[:4] == [4, 3, 2, 1]
     return f"recover_order={rec[:4]}"
 
 

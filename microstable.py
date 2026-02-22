@@ -363,6 +363,8 @@ class ProtocolState:
     supply: float = 1_000_000.0
     reserve_value: float = 1_280_000.0
     cr_target: float = 1.20
+    # FIX HI-02: keep a baseline so prolonged stress cannot permanently ratchet CR target.
+    base_cr_target: float = 1.20
     cr_min: float = 1.20
     cr_hard_min: float = 1.05
     cr: float = 1.28
@@ -390,6 +392,7 @@ class ProtocolState:
             supply=self.supply,
             reserve_value=self.reserve_value,
             cr_target=self.cr_target,
+            base_cr_target=self.base_cr_target,
             cr_min=self.cr_min,
             cr_hard_min=self.cr_hard_min,
             cr=self.cr,
@@ -722,12 +725,15 @@ class BreakerMachine:
     min_hold: int
     recovery_needed: int
     cooldown_ticks: int = 5
+    # FIX HI-02: cap active duration to prevent CB griefing DoS.
+    max_active_ticks: int = 120
 
     state: str = CB_NORMAL
     cooldown_left: int = 0
     hold_ticks: int = 0
     recovery_streak: int = 0
     extended_factor: int = 1
+    activation_tick: Optional[int] = None
     trigger_history: Deque[int] = field(default_factory=lambda: deque(maxlen=128))
 
     def is_active(self) -> bool:
@@ -735,6 +741,12 @@ class BreakerMachine:
 
     def effective_min_hold(self) -> int:
         return self.min_hold * self.extended_factor
+
+    def active_duration(self, tick: int) -> int:
+        if self.activation_tick is None:
+            return 0
+        # FIX HI-02: count the activation tick itself to enforce a true max-tick budget.
+        return max(0, tick - self.activation_tick + 1)
 
     def begin_tick(self) -> Optional[Tuple[str, str]]:
         old = self.state
@@ -761,7 +773,16 @@ class BreakerMachine:
         self.state = CB_ACTIVATED
         self.hold_ticks = 0
         self.recovery_streak = 0
+        self.activation_tick = tick
         return True
+
+    def force_recovery_check(self) -> Optional[Tuple[str, str]]:
+        if self.state in (CB_ACTIVATED, CB_HOLDING):
+            old = self.state
+            self.state = CB_RECOVERY_CHECK
+            self.recovery_streak = 0
+            return (old, self.state)
+        return None
 
     def recovery_step(self, recovery_ok: bool, higher_active: bool) -> bool:
         """Return True if recovered to NORMAL in this tick."""
@@ -783,17 +804,19 @@ class BreakerMachine:
             self.hold_ticks = 0
             self.recovery_streak = 0
             self.extended_factor = 1
+            self.activation_tick = None
             return True
         return False
 
 
 class CircuitBreaker:
     """
-    Priority: CB-4 > CB-2 > CB-3 > CB-1.
+    Priority: CB-4 > CB-3 > CB-2 > CB-1.
     Lower-priority recovery is deferred when higher CB is active.
     """
 
-    PRIORITY = [4, 2, 3, 1]
+    # FIX HI-03: align breaker priority with spec.
+    PRIORITY = [4, 3, 2, 1]
 
     def __init__(self, n_assets: int = 4):
         self.machines: Dict[int, BreakerMachine] = {
@@ -841,6 +864,14 @@ class CircuitBreaker:
             for other in self.machines
             if other != cb_id
         )
+
+    def _adaptive_margin(self, cb_id: int, tick: int) -> float:
+        # FIX HI-02: widen recovery window if activation persists too long.
+        machine = self.machines[cb_id]
+        overtime = max(0, machine.active_duration(tick) - machine.max_active_ticks)
+        if overtime <= 0:
+            return 0.0
+        return min(0.02, overtime * 0.0002)
 
     def _conditions(
         self,
@@ -917,11 +948,23 @@ class CircuitBreaker:
                     detail = "extended" if m.extended_factor > 1 else "normal"
                     self._log(tick, cb_id, "activate", old, m.state, detail=detail)
 
-        # recovery conditions
+        # FIX HI-02: force recovery mode if a breaker is active for too long.
+        for cb_id, machine in self.machines.items():
+            if machine.is_active() and machine.active_duration(tick) >= machine.max_active_ticks:
+                changed = machine.force_recovery_check()
+                if changed:
+                    old, new = changed
+                    self._log(tick, cb_id, "force_recovery", old, new, detail="max_active_duration")
+
+        # recovery conditions with adaptive widening for prolonged activation
         target_idx = self.cb1_target_index
-        cb1_ok = abs(market.prices[target_idx] - 1.0) < 0.005
-        cb2_ok = all(abs(p - 1.0) < 0.005 for p in market.prices) and nav_drop > -0.002
-        cb3_ok = market.stale_seconds <= 120 and market.divergence <= 0.02
+        cb1_margin = self._adaptive_margin(1, tick)
+        cb2_margin = self._adaptive_margin(2, tick)
+        cb3_margin = self._adaptive_margin(3, tick)
+
+        cb1_ok = abs(market.prices[target_idx] - 1.0) < (0.005 + cb1_margin)
+        cb2_ok = all(abs(p - 1.0) < (0.005 + cb2_margin) for p in market.prices) and nav_drop > (-0.002 - cb2_margin)
+        cb3_ok = market.stale_seconds <= (120 + int(2000 * cb3_margin)) and market.divergence <= (0.02 + cb3_margin)
 
         cb4_ok = False
         if loss_value is not None and math.isfinite(loss_value):
@@ -932,13 +975,22 @@ class CircuitBreaker:
 
         recovery_ok = {1: cb1_ok, 2: cb2_ok, 3: cb3_ok, 4: cb4_ok}
 
+        cb2_recovered_while_cb3 = False
         for cb_id in self.PRIORITY:
             m = self.machines[cb_id]
             old = m.state
-            if m.recovery_step(recovery_ok[cb_id], self._higher_active(cb_id)):
+            forced_recovery = m.is_active() and m.active_duration(tick) >= m.max_active_ticks
+            recovery_signal = recovery_ok[cb_id] or forced_recovery
+            recovered = m.recovery_step(recovery_signal, self._higher_active(cb_id))
+            if recovered:
                 self._log(tick, cb_id, "recover", old, m.state)
             elif old != m.state:
                 self._log(tick, cb_id, "hysteresis", old, m.state)
+            if cb_id == 2 and recovered and self.machines[3].is_active():
+                cb2_recovered_while_cb3 = True
+
+        # FIX HI-03: assertion guard for recovery ordering.
+        assert not cb2_recovered_while_cb3, "FIX HI-03: CB-2 cannot recover while CB-3 is active"
 
         # apply degradation actions (worsening actions immediate)
         state.reset_dynamic_policy()
@@ -946,37 +998,56 @@ class CircuitBreaker:
         # CB-1
         if self.machines[1].is_active():
             i = self.cb1_target_index
-            state.w_caps[i] = min(state.w_caps[i], state.base_w_caps[i] * 0.5)
+            target_cap = state.base_w_caps[i] * 0.5
+            # FIX HI-02: stage cap tightening so per-tick weight delta bounds remain feasible.
+            staged_cap = max(target_cap, state.weights[i] - DELTA_W_MAX)
+            state.w_caps[i] = min(state.w_caps[i], staged_cap)
             state.mint_limit = min(state.mint_limit, 0.25)
             state.cr_target = max(state.cr_target, 1.25)
 
-        # CB-3
+        # FIX HI-02: allow gradual CB-2 recovery slope after prolonged activation.
+        cb2_machine = self.machines[2]
+        if cb2_machine.state in (CB_ACTIVATED, CB_HOLDING):
+            state.mint_limit = 0.0
+            state.mint_paused_reason = "MINT_PAUSED_BY_CB2"
+            state.cr_target = max(state.cr_target, 1.30)
+        elif cb2_machine.state == CB_RECOVERY_CHECK:
+            progress = cb2_machine.recovery_streak / max(1, cb2_machine.recovery_needed)
+            forced_floor = 0.10 if cb2_machine.active_duration(tick) >= cb2_machine.max_active_ticks else 0.0
+            state.mint_limit = min(state.mint_limit, forced_floor + 0.90 * progress)
+            if state.mint_limit <= 1e-12:
+                state.mint_paused_reason = "MINT_PAUSED_BY_CB2"
+            state.cr_target = max(state.cr_target, 1.30)
+
+        # CB-3 has higher priority than CB-2 and therefore can re-freeze minting.
         if self.machines[3].is_active():
             state.optimizer_enabled = False
             state.conservative_mode = True
             state.oracle_degraded = True
-            state.mint_limit = min(state.mint_limit, 0.10)
-            state.cr_target = max(state.cr_target, 1.35)
-
-        # CB-2 (higher than CB-3 by requested priority)
-        if self.machines[2].is_active():
             state.mint_limit = 0.0
-            state.mint_paused_reason = "MINT_PAUSED_BY_CB2"
-            state.cr_target = max(state.cr_target, 1.30)
+            state.mint_paused_reason = "MINT_PAUSED_BY_CB3"
+            state.cr_target = max(state.cr_target, 1.35)
 
         rollback = self.machines[4].is_active()
 
         # enforce cap consistency if current weights violate tightened caps
         if any(w > cap + 1e-12 for w, cap in zip(state.weights, state.w_caps)):
             n = len(state.weights)
+            # FIX HI-02: bounded repair to avoid one-tick weight jumps under CB pressure.
+            lo2 = [max(0.0, state.weights[i] - DELTA_W_MAX) for i in range(n)]
+            hi2 = [min(state.w_caps[i], state.weights[i] + DELTA_W_MAX) for i in range(n)]
             repaired = AdamOptimizer.project_box_simplex(
                 y=state.weights,
-                lo=[0.0] * n,
-                hi=state.w_caps,
+                lo=lo2,
+                hi=hi2,
                 target=1.0,
             )
             state.weights = repaired
             state.prev_weights = repaired[:]
+
+        # FIX HI-02: restore CR target toward baseline after sustained stability.
+        if not self.active_ids():
+            state.cr_target = max(state.base_cr_target, state.cr_target - 0.005)
 
         return {
             "rollback": rollback,

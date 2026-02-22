@@ -344,3 +344,55 @@ state.cr_target = max(state.base_cr_target, state.cr_target - 0.005)
 - PoCs were executed via `python3 security/red_team_exploits.py`.
 - Major simulator-side findings are directly reproducible against `microstable.py` classes.
 - Solana CRITICAL finding is demonstrated via arithmetic/state-path reproduction of current on-chain logic (no transfer validation path exists in target code).
+
+## Remediation (2026-02-22)
+
+### FIX-1 (CR-01): SPL token transfer enforcement in mint/redeem — **DONE**
+- `solana/programs/microstable/src/lib.rs`
+  - Added `anchor-spl` token + associated token dependencies.
+  - `mint` now validates selected collateral mint + canonical ATA bindings and executes `token::transfer_checked` from user ATA to protocol vault ATA **before** `total_deposits` accounting mutation.
+  - `redeem` now validates all collateral mint/ATA bindings, computes payouts, executes token transfers from vault ATAs to user ATAs first, then decrements vault accounting.
+  - Added explicit error paths: `InvalidCollateralMint`, `InvalidTokenAccount`.
+  - Vault mint bindings are initialized in `initialize` and bound to canonical protocol ATAs.
+
+### FIX-2 (HI-02): CB griefing DoS prevention — **DONE**
+- `microstable.py`
+  - Added breaker max activation duration (`max_active_ticks=120`) with forced transition into recovery mode.
+  - Added adaptive recovery threshold widening (`_adaptive_margin`) for prolonged activation.
+  - Added gradual CB-2 mint-limit release path during forced recovery to avoid indefinite mint freeze.
+  - Added baseline CR restoration (`base_cr_target`) after sustained normal state.
+  - Added staged CB-1 cap tightening to preserve per-tick feasibility under delta bounds.
+- `solana/programs/microstable/src/lib.rs`
+  - Added `MAX_ACTIVATION_DURATION` + state field `max_activation_duration`.
+  - `refresh_circuit_breakers` now forces recovery after max duration and applies adaptive mint-rate ramp for CB-2.
+  - `hysteresis_ok` now uses adaptive off-threshold widening for prolonged stress.
+
+### FIX-3 (HI-03): CB priority mismatch — **DONE**
+- `microstable.py`
+  - Circuit breaker priority corrected to `[4,3,2,1]`.
+  - CB-3 now explicitly re-freezes minting (`mint_limit=0`) and blocks CB-2 recovery ordering.
+  - Added assertion guard preventing CB-2 recovery while CB-3 is active.
+- `test_microstable.py`
+  - Updated CB recovery order expectation to `[4,3,2,1]`.
+
+### FIX-4 (HI-04): Agent/key fragility — **DONE**
+- `solana/programs/microstable/src/lib.rs`
+  - Replaced single keeper with keeper multisig set (`keeper_set: [Pubkey; 3]`) and 2-of-3 quorum checks for privileged instructions.
+  - Added `emergency_shutdown` instruction allowing any single authorized keeper to trigger shutdown.
+- `agents/consensus.py`
+  - Governance voting changed from 3/3 unanimous to 2/3 majority.
+  - 48h timelock now explicitly applied to privileged parameter changes.
+  - Added `emergency_shutdown` proposal type triggerable by any single agent vote.
+
+### Verification reruns
+1. **Exploit PoCs**
+   - Command: `python3 security/red_team_exploits.py`
+   - Result: `vulnerable findings: 0/4` (all remediation-scope PoCs blocked).
+2. **Test suite**
+   - Command: `python3 test_microstable.py`
+   - Result: `Spec testcases: 55/55 PASS`, `FINAL RESULT: PASS`.
+3. **Anchor build**
+   - Command: `anchor build`
+   - Result: **FAILED (environment tooling gap)**
+     - Error: `no such command: cargo build-sbf`.
+     - Note: Rust program `cargo check` succeeds, but Anchor SBF toolchain command is unavailable in current environment.
