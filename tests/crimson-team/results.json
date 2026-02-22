@@ -1,0 +1,419 @@
+{
+  "campaign": "microstable-crimson-team",
+  "total_attempts": 27,
+  "successful_exploits": 20,
+  "blocked_or_failed": 7,
+  "success_rate": 0.7407,
+  "success_by_severity": {
+    "CRITICAL": 5,
+    "HIGH": 7,
+    "MEDIUM": 7,
+    "LOW": 1
+  },
+  "attempts": [
+    {
+      "attempt_id": "CT-C01",
+      "name": "False-resolve slash + stake desync + quorum collapse",
+      "category": "A/E/F",
+      "success": true,
+      "severity": "CRITICAL",
+      "evidence": {
+        "honest_status": {
+          "h1": "Slashed",
+          "h2": "Slashed",
+          "h3": "Slashed"
+        },
+        "honest_registry_stake": {
+          "h1": 3.75,
+          "h2": 3.75,
+          "h3": 3.75
+        },
+        "honest_balance": {
+          "h1": 4.75,
+          "h2": 4.75,
+          "h3": 4.75
+        },
+        "consensus_after": true,
+        "attacker_reward_delta": 1.0
+      },
+      "defense_or_failure_reason": "No caller auth on resolve(false); slash amount semantics diverge between staking and registry."
+    },
+    {
+      "attempt_id": "CT-C02",
+      "name": "Registration identity squatting + ACP impersonation",
+      "category": "B/F",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "squat_ok": true,
+        "victim_register_after_squat": false,
+        "verify_as_victim": true,
+        "bound_public_key": "attacker-key"
+      },
+      "defense_or_failure_reason": "Agent IDs are first-come, first-served with no ownership challenge."
+    },
+    {
+      "attempt_id": "CT-C03",
+      "name": "Claim-ID squatting denial via unsigned micro-claim",
+      "category": "A/B",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "attacker_micro_claim": true,
+        "victim_signed_claim": false,
+        "claimed_ids_count": 1
+      },
+      "defense_or_failure_reason": "claim_id uniqueness is global, not scoped by agent or signed authority."
+    },
+    {
+      "attempt_id": "CT-C04",
+      "name": "Queue output overwrite + negative-price residual drain",
+      "category": "A/C/D",
+      "success": true,
+      "severity": "CRITICAL",
+      "evidence": {
+        "overwrite_result": {
+          "victim": [
+            1
+          ]
+        },
+        "negative_price_result": {
+          "att": [
+            0,
+            1000000
+          ]
+        },
+        "treasury_residual_q1": [
+          0
+        ],
+        "treasury_residual_q2": [
+          0,
+          0
+        ]
+      },
+      "defense_or_failure_reason": "No oracle sign/positivity validation at redemption call boundary; output keyed by mutable account string."
+    },
+    {
+      "attempt_id": "CT-C05",
+      "name": "Static bypass attempt: permissionless Pyth update",
+      "category": "C",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "has_quorum": true,
+        "has_signers": true
+      },
+      "defense_or_failure_reason": "Defense held: quorum + signer constraints are present."
+    },
+    {
+      "attempt_id": "CT-C06",
+      "name": "Static bypass attempt: mint account substitution",
+      "category": "C",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "has_ata_bind": true,
+        "has_runtime_eq": true
+      },
+      "defense_or_failure_reason": "Defense held: canonical ATA constraints + runtime key checks found."
+    },
+    {
+      "attempt_id": "CT-C07",
+      "name": "Sybil boundary jitter bypasses 2dp fingerprint dampener",
+      "category": "A/B/F",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "sybil_total": 4.895833333333334,
+        "honest_total": 30.104166666666668
+      },
+      "defense_or_failure_reason": "Fingerprinting rounds to 2dp; boundary jitter fragments clusters."
+    },
+    {
+      "attempt_id": "CT-C08",
+      "name": "Python accepts negative staleness while Rust enforces monotonic slot",
+      "category": "C/E",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "python_minted": 831,
+        "rust_observed_slot_guard": true
+      },
+      "defense_or_failure_reason": "Cross-layer semantic divergence: simulator accepts impossible negative staleness."
+    },
+    {
+      "attempt_id": "CT-S01",
+      "name": "Unsigned micro-claims consume full epoch budget",
+      "category": "B/F",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "ok_count": 1000,
+        "att_balance": 1000.0
+      },
+      "defense_or_failure_reason": "Legacy unsigned-claim lane remains usable up to full cap when split into micro-claims."
+    },
+    {
+      "attempt_id": "CT-S02",
+      "name": "Global claim_id namespace enables griefing",
+      "category": "B",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "attacker_ok": true,
+        "victim_ok": false
+      },
+      "defense_or_failure_reason": "claim_id uniqueness is global and unauthenticated at namespace level."
+    },
+    {
+      "attempt_id": "CT-S03",
+      "name": "-inf loss_estimate semantic injection wins tournament",
+      "category": "B",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "winner": "evil",
+        "current_loss": "-Infinity",
+        "evil_reward": 32.5
+      },
+      "defense_or_failure_reason": "Winner parameter validation excludes score-driving fields (loss_estimate)."
+    },
+    {
+      "attempt_id": "CT-S04",
+      "name": "Fingerprint boundary evasion in participant pool",
+      "category": "A/B/F",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "sybil_total": 4.8076923076923075,
+        "hon_balance": 30.192307692307693
+      },
+      "defense_or_failure_reason": "2-decimal bucket clustering can be gamed with boundary jitter."
+    },
+    {
+      "attempt_id": "CT-S05",
+      "name": "Collusion alert ordering bypasses semantic idempotency",
+      "category": "B/F",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "r1": {
+          "action": "quarantine",
+          "delay_epochs": 2
+        },
+        "r2": {
+          "action": "quarantine",
+          "delay_epochs": 2
+        },
+        "handled_alerts": [
+          "9:collusion:a",
+          "9:collusion:b"
+        ]
+      },
+      "defense_or_failure_reason": "Idempotency key uses first agent order for collusion alerts."
+    },
+    {
+      "attempt_id": "CT-S06",
+      "name": "False resolution can slash reporters without truth quorum",
+      "category": "B/E",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "before": {
+          "m1": 100.0,
+          "m2": 100.0,
+          "m3": 100.0
+        },
+        "after": {
+          "m1": 95.0,
+          "m2": 95.0,
+          "m3": 95.0
+        }
+      },
+      "defense_or_failure_reason": "resolve(false) path has no consensus/auth guard."
+    },
+    {
+      "attempt_id": "CT-S07",
+      "name": "Defense check: set_public_key actor mismatch",
+      "category": "B",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "set_public_key_ok": false
+      },
+      "defense_or_failure_reason": "Defense held when success=False (actor must match agent_id)."
+    },
+    {
+      "attempt_id": "CT-S08",
+      "name": "Defense check: ACP nonce replay",
+      "category": "E",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "first_verify": true,
+        "second_verify": false
+      },
+      "defense_or_failure_reason": "Defense held when success=False (nonce replay blocked)."
+    },
+    {
+      "attempt_id": "CT-S09",
+      "name": "Defense check: inactive monitor cannot report",
+      "category": "B",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "report_ok": false
+      },
+      "defense_or_failure_reason": "Defense held when success=False (report requires active Monitor)."
+    },
+    {
+      "attempt_id": "CT-N01",
+      "name": "NaN deposit enables unbacked large withdrawal",
+      "category": "D",
+      "success": true,
+      "severity": "CRITICAL",
+      "evidence": {
+        "request_ok": true,
+        "withdrawn": 1000000.0,
+        "final_balance": 0.0
+      },
+      "defense_or_failure_reason": "deposit/request_withdrawal lack finite-number validation."
+    },
+    {
+      "attempt_id": "CT-N02",
+      "name": "NaN deposit + inf withdrawal amount returns inf",
+      "category": "D",
+      "success": true,
+      "severity": "CRITICAL",
+      "evidence": {
+        "request_ok": true,
+        "withdrawn": "Infinity",
+        "is_inf": true
+      },
+      "defense_or_failure_reason": "No finite bound checks on withdrawal amount."
+    },
+    {
+      "attempt_id": "CT-N03",
+      "name": "NaN epoch input crashes claim_reward",
+      "category": "D",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "crashed": true,
+        "error": "ValueError:cannot convert float NaN to integer"
+      },
+      "defense_or_failure_reason": "claim_reward unconditionally int() casts epoch for HMAC payload generation."
+    },
+    {
+      "attempt_id": "CT-N04",
+      "name": "Keeper path accepts NaN mint_fee",
+      "category": "D",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "result": {
+          "status": "APPLIED",
+          "weights": [
+            0.4,
+            0.3,
+            0.2,
+            0.1
+          ],
+          "mint_fee": "NaN"
+        },
+        "mint_fee": "NaN"
+      },
+      "defense_or_failure_reason": "submit_update_proposal does not enforce finite mint_fee."
+    },
+    {
+      "attempt_id": "CT-N05",
+      "name": "Keeper path accepts NaN in weights",
+      "category": "D",
+      "success": true,
+      "severity": "HIGH",
+      "evidence": {
+        "result": {
+          "status": "APPLIED",
+          "weights": [
+            "NaN",
+            0.31,
+            0.19,
+            0.1
+          ],
+          "mint_fee": 0.002
+        },
+        "weights": [
+          "NaN",
+          0.31,
+          0.19,
+          0.1
+        ]
+      },
+      "defense_or_failure_reason": "sum/limit checks do not reject NaN comparisons."
+    },
+    {
+      "attempt_id": "CT-N06",
+      "name": "Negative oracle price drives residual into full-asset drain",
+      "category": "C/D",
+      "success": true,
+      "severity": "CRITICAL",
+      "evidence": {
+        "settle_output": {
+          "att": [
+            0,
+            1000000
+          ]
+        },
+        "drained_asset_1": 1000000
+      },
+      "defense_or_failure_reason": "redeem_by_value lacks positive/finite oracle-price validation."
+    },
+    {
+      "attempt_id": "CT-N07",
+      "name": "Negative stale_seconds accepted by secure_mint_amount",
+      "category": "C/D/E",
+      "success": true,
+      "severity": "MEDIUM",
+      "evidence": {
+        "minted": 831
+      },
+      "defense_or_failure_reason": "validated_oracle_price checks only stale_seconds > max, not negative values."
+    },
+    {
+      "attempt_id": "CT-N08",
+      "name": "Defense check: stale oracle rejected",
+      "category": "D",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "blocked": true,
+        "error": "ValueError:oracle_stale"
+      },
+      "defense_or_failure_reason": "Defense held when success=False (oracle_stale raised)."
+    },
+    {
+      "attempt_id": "CT-N09",
+      "name": "Defense check: toxic collateral hard reject",
+      "category": "D",
+      "success": false,
+      "severity": "NONE",
+      "evidence": {
+        "minted": 0
+      },
+      "defense_or_failure_reason": "Defense held when success=False (risk_score threshold blocks mint)."
+    },
+    {
+      "attempt_id": "CT-N10",
+      "name": "Floating-point epsilon drift exceeds nominal epoch cap",
+      "category": "D",
+      "success": true,
+      "severity": "LOW",
+      "evidence": {
+        "ok_count": 10000,
+        "used": 1000.0000000001588,
+        "cap": 1000.0
+      },
+      "defense_or_failure_reason": "Cap compare allows +EPS tolerance; repeated 0.1 additions accumulate slight overshoot."
+    }
+  ]
+}
