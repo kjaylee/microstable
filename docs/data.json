@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-02-22T04:05:00Z",
+  "lastUpdated": "2026-02-22T04:08:00Z",
   "pipeline": {
     "m0": {
       "status": "complete",
@@ -240,11 +240,37 @@
     "lastUpdate": "2026-02-22T04:05:00Z"
   },
   "redTeam": {
-    "status": "running",
-    "findings": [],
-    "summary": null,
-    "startedAt": "2026-02-22T03:44:00Z",
-    "lastUpdate": null
+    "status": "complete",
+    "overall": "1 CRITICAL, 3 HIGH",
+    "findings": [
+      {
+        "severity": "CRITICAL",
+        "title": "Unbacked mint + oracle drain",
+        "exploitability": "Easy",
+        "detail": "Solana mint/redeem lacks token transfer CPI \u2014 99.99% reserve drain possible"
+      },
+      {
+        "severity": "HIGH",
+        "title": "CB griefing DoS",
+        "exploitability": "Easy",
+        "detail": "Sustained borderline depeg keeps mint_limit=0 indefinitely"
+      },
+      {
+        "severity": "HIGH",
+        "title": "CB priority mismatch",
+        "exploitability": "Easy",
+        "detail": "Code [4,2,3,1] vs spec [4,3,2,1] \u2014 premature CB-2 recovery under oracle failure"
+      },
+      {
+        "severity": "HIGH",
+        "title": "Single-key agent fragility",
+        "exploitability": "Medium",
+        "detail": "1 compromised keeper = full control; 3/3 veto blocks governance"
+      }
+    ],
+    "totalFindings": 12,
+    "pocVerified": true,
+    "lastUpdate": "2026-02-22T04:08:00Z"
   },
   "devnet": {
     "status": "pending_sol",
