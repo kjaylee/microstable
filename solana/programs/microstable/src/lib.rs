@@ -33,10 +33,22 @@ const PYTH_USDT_USD: Pubkey = pubkey!("HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oY
 const PYTH_DAI_USD: Pubkey = pubkey!("FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN");
 const PYTH_USDS_USD: Pubkey = pubkey!("9h4r3d4s8Jc8k5YfVY6Bnd3ETf6gVfGvSzj8Pzpo7aQw");
 // FIX PTV2-003: expected feed-id binding per collateral.
-const PYTH_FEED_ID_USDC: [u8; 32] = [0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71, 0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89, 0x4a, 0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc, 0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9, 0xc9, 0x4a];
-const PYTH_FEED_ID_USDT: [u8; 32] = [0x2b, 0x89, 0xb9, 0xdc, 0x8f, 0xdf, 0x9f, 0x34, 0x70, 0x9a, 0x5b, 0x10, 0x6b, 0x47, 0x2f, 0x0f, 0x39, 0xbb, 0x6c, 0xa9, 0xce, 0x04, 0xb0, 0xfd, 0x7f, 0x2e, 0x97, 0x16, 0x88, 0xe2, 0xe5, 0x3b];
-const PYTH_FEED_ID_DAI: [u8; 32] = [0xb0, 0x94, 0x8a, 0x5e, 0x53, 0x13, 0x20, 0x0c, 0x63, 0x2b, 0x51, 0xbb, 0x5c, 0xa3, 0x2f, 0x6d, 0xe0, 0xd3, 0x6e, 0x99, 0x50, 0xa9, 0x42, 0xd1, 0x97, 0x51, 0xe8, 0x33, 0xf7, 0x0d, 0xab, 0xfd];
-const PYTH_FEED_ID_USDS: [u8; 32] = [0xc2, 0xf5, 0xc9, 0xb4, 0xd9, 0xe7, 0xa1, 0xfc, 0xb5, 0xa8, 0x0c, 0x7a, 0x2c, 0x3e, 0xc0, 0xf8, 0x4a, 0xb1, 0xde, 0x9f, 0x77, 0x8c, 0x0d, 0xf1, 0xb6, 0xe9, 0xc7, 0xab, 0x4f, 0x1e, 0x0d, 0x9a];
+const PYTH_FEED_ID_USDC: [u8; 32] = [
+    0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71, 0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89, 0x4a,
+    0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc, 0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9, 0xc9, 0x4a,
+];
+const PYTH_FEED_ID_USDT: [u8; 32] = [
+    0x2b, 0x89, 0xb9, 0xdc, 0x8f, 0xdf, 0x9f, 0x34, 0x70, 0x9a, 0x5b, 0x10, 0x6b, 0x47, 0x2f, 0x0f,
+    0x39, 0xbb, 0x6c, 0xa9, 0xce, 0x04, 0xb0, 0xfd, 0x7f, 0x2e, 0x97, 0x16, 0x88, 0xe2, 0xe5, 0x3b,
+];
+const PYTH_FEED_ID_DAI: [u8; 32] = [
+    0xb0, 0x94, 0x8a, 0x5e, 0x53, 0x13, 0x20, 0x0c, 0x63, 0x2b, 0x51, 0xbb, 0x5c, 0xa3, 0x2f, 0x6d,
+    0xe0, 0xd3, 0x6e, 0x99, 0x50, 0xa9, 0x42, 0xd1, 0x97, 0x51, 0xe8, 0x33, 0xf7, 0x0d, 0xab, 0xfd,
+];
+const PYTH_FEED_ID_USDS: [u8; 32] = [
+    0xc2, 0xf5, 0xc9, 0xb4, 0xd9, 0xe7, 0xa1, 0xfc, 0xb5, 0xa8, 0x0c, 0x7a, 0x2c, 0x3e, 0xc0, 0xf8,
+    0x4a, 0xb1, 0xde, 0x9f, 0x77, 0x8c, 0x0d, 0xf1, 0xb6, 0xe9, 0xc7, 0xab, 0x4f, 0x1e, 0x0d, 0x9a,
+];
 // FIX PTV2-004: bind accepted updates to trusted write authority.
 const PYTH_TRUSTED_WRITE_AUTHORITY: Pubkey = TRUSTED_INITIALIZER;
 
@@ -52,6 +64,15 @@ const LARGE_REBALANCE_THRESHOLD: u64 = 40_000; // 4% (<= 2 * WEIGHT_STEP_LIMIT)
 const COMMIT_REVEAL_DELAY_SLOTS: u64 = 5;
 const COMMIT_REVEAL_MAX_VALIDITY: u64 = 1_000;
 const KEEPER_ROTATION_DELAY_SLOTS: u64 = 100;
+
+// OAE / AIG constants.
+const AGENT_MIN_STAKE_LAMPORTS: u64 = 1;
+const AGENT_STAKE_COOLDOWN_SECONDS: i64 = 86_400;
+const AIG_MIN_COMMIT_TIER: u8 = 2;
+const AIG_TIER1_THRESHOLD: u64 = 600_000;
+const AIG_TIER2_THRESHOLD: u64 = 750_000;
+const AIG_TIER3_THRESHOLD: u64 = 850_000;
+const PROTOCOL_TREASURY: Pubkey = TRUSTED_INITIALIZER;
 
 #[program]
 pub mod microstable {
@@ -316,6 +337,174 @@ pub mod microstable {
         Ok(())
     }
 
+    pub fn register_agent(
+        ctx: Context<RegisterAgent>,
+        role: AgentRole,
+        stake_amount: u64,
+    ) -> Result<()> {
+        validate_registration_stake(stake_amount)?;
+
+        let now = Clock::get()?.unix_timestamp;
+        let agent_key = ctx.accounts.agent.key();
+
+        invoke(
+            &system_instruction::transfer(
+                &agent_key,
+                &ctx.accounts.agent_escrow.key(),
+                stake_amount,
+            ),
+            &[
+                ctx.accounts.agent.to_account_info(),
+                ctx.accounts.agent_escrow.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+
+        ctx.accounts.agent_escrow.bump = ctx.bumps.agent_escrow;
+
+        let record = &mut ctx.accounts.agent_record;
+        record.set_inner(build_agent_record(
+            agent_key,
+            role,
+            stake_amount,
+            now,
+            ctx.bumps.agent_record,
+        ));
+        Ok(())
+    }
+
+    pub fn deregister_agent(ctx: Context<DeregisterAgent>) -> Result<()> {
+        let record = &mut ctx.accounts.agent_record;
+        require_keys_eq!(
+            record.agent,
+            ctx.accounts.agent.key(),
+            ErrorCode::Unauthorized
+        );
+        require!(
+            record.status != AgentStatus::Deregistered,
+            ErrorCode::AgentAlreadyDeregistered
+        );
+
+        record.status = AgentStatus::Deregistered;
+        record.last_active_at = Clock::get()?.unix_timestamp;
+        Ok(())
+    }
+
+    pub fn update_agent_score(
+        ctx: Context<UpdateAgentScore>,
+        _agent: Pubkey,
+        new_score: u64,
+    ) -> Result<()> {
+        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+        validate_agent_score(new_score)?;
+
+        let record = &mut ctx.accounts.agent_record;
+        record.agent_score = new_score;
+        record.last_active_at = Clock::get()?.unix_timestamp;
+        Ok(())
+    }
+
+    pub fn promote_agent(ctx: Context<PromoteAgent>, _agent: Pubkey, new_tier: u8) -> Result<()> {
+        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+
+        let now = Clock::get()?.unix_timestamp;
+        let record = &mut ctx.accounts.agent_record;
+        validate_tier_promotion(record.tier, new_tier, record.agent_score)?;
+        record.tier = new_tier;
+        record.last_active_at = now;
+        Ok(())
+    }
+
+    pub fn demote_agent(ctx: Context<DemoteAgent>, _agent: Pubkey, new_tier: u8) -> Result<()> {
+        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+
+        let now = Clock::get()?.unix_timestamp;
+        let record = &mut ctx.accounts.agent_record;
+        validate_tier_demotion(record.tier, new_tier)?;
+        record.tier = new_tier;
+        record.last_active_at = now;
+        Ok(())
+    }
+
+    pub fn slash_agent(
+        ctx: Context<SlashAgent>,
+        _agent: Pubkey,
+        slash_amount: u64,
+        reason: [u8; 32],
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.authority.key(),
+            TRUSTED_INITIALIZER,
+            ErrorCode::Unauthorized
+        );
+        require_keys_eq!(
+            ctx.accounts.protocol_treasury.key(),
+            PROTOCOL_TREASURY,
+            ErrorCode::InvalidTreasuryAccount
+        );
+
+        let now = Clock::get()?.unix_timestamp;
+        let record = &mut ctx.accounts.agent_record;
+        let slash_value = capped_slash_amount(record.stake, slash_amount);
+
+        if slash_value > 0 {
+            let escrow_info = ctx.accounts.agent_escrow.to_account_info();
+            let treasury_info = ctx.accounts.protocol_treasury.to_account_info();
+
+            let escrow_remaining = escrow_info
+                .lamports()
+                .checked_sub(slash_value)
+                .ok_or_else(|| error!(ErrorCode::EscrowInsufficientBalance))?;
+            let treasury_next = treasury_info
+                .lamports()
+                .checked_add(slash_value)
+                .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+
+            **escrow_info.try_borrow_mut_lamports()? = escrow_remaining;
+            **treasury_info.try_borrow_mut_lamports()? = treasury_next;
+
+            record.stake = record
+                .stake
+                .checked_sub(slash_value)
+                .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        }
+
+        record.status = AgentStatus::Slashed;
+        record.last_active_at = now;
+        let _ = reason;
+        Ok(())
+    }
+
+    pub fn claim_stake(ctx: Context<ClaimStake>, agent: Pubkey) -> Result<()> {
+        require_keys_eq!(ctx.accounts.claimant.key(), agent, ErrorCode::Unauthorized);
+
+        let now = Clock::get()?.unix_timestamp;
+        let record = &mut ctx.accounts.agent_record;
+        require_keys_eq!(record.agent, agent, ErrorCode::Unauthorized);
+        can_claim_stake(record.status, record.last_active_at, now)?;
+
+        let claim_amount = record.stake;
+        if claim_amount > 0 {
+            let escrow_info = ctx.accounts.agent_escrow.to_account_info();
+            let claimant_info = ctx.accounts.claimant.to_account_info();
+
+            let escrow_remaining = escrow_info
+                .lamports()
+                .checked_sub(claim_amount)
+                .ok_or_else(|| error!(ErrorCode::EscrowInsufficientBalance))?;
+            let claimant_next = claimant_info
+                .lamports()
+                .checked_add(claim_amount)
+                .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+
+            **escrow_info.try_borrow_mut_lamports()? = escrow_remaining;
+            **claimant_info.try_borrow_mut_lamports()? = claimant_next;
+            record.stake = 0;
+        }
+
+        Ok(())
+    }
+
     pub fn update_oracle(
         ctx: Context<UpdateOracle>,
         collateral_index: u8,
@@ -421,7 +610,10 @@ pub mod microstable {
             ctx.accounts.vault_usds.pyth_price_feed,
         ];
         for (i, feed) in existing.iter().enumerate() {
-            if i != collateral_index as usize && *feed == pyth_price_feed && *feed != Pubkey::default() {
+            if i != collateral_index as usize
+                && *feed == pyth_price_feed
+                && *feed != Pubkey::default()
+            {
                 return err!(ErrorCode::DuplicatePythFeed);
             }
         }
@@ -634,10 +826,8 @@ pub mod microstable {
             &ctx.accounts.protocol_state.key(),
             &ctx.accounts.collateral_mint.key(),
         );
-        let expected_user_mstb_ata = get_associated_token_address(
-            &ctx.accounts.user.key(),
-            &ctx.accounts.mstb_mint.key(),
-        );
+        let expected_user_mstb_ata =
+            get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.mstb_mint.key());
         require_keys_eq!(
             ctx.accounts.user_collateral_ata.key(),
             expected_user_ata,
@@ -1012,6 +1202,10 @@ pub mod microstable {
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
         );
+        assert_agent_commit_eligibility(
+            &ctx.accounts.agent_record,
+            ctx.accounts.submitting_agent.key(),
+        )?;
         require!(
             valid_for_slots >= COMMIT_REVEAL_DELAY_SLOTS,
             ErrorCode::InvalidCommitWindow
@@ -1021,7 +1215,16 @@ pub mod microstable {
             ErrorCode::InvalidCommitWindow
         );
 
-        let slot = Clock::get()?.slot;
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+
+        let agent_record = &mut ctx.accounts.agent_record;
+        agent_record.proposals_submitted = agent_record
+            .proposals_submitted
+            .checked_add(1)
+            .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        agent_record.last_active_at = clock.unix_timestamp;
+
         let protocol = &mut ctx.accounts.protocol_state;
         protocol.pending_rebalance_commit = commit_hash;
         protocol.pending_rebalance_slot = slot;
@@ -1390,7 +1593,8 @@ pub mod microstable {
 
         if protocol.pending_keeper_set != new_keeper_set {
             protocol.pending_keeper_set = new_keeper_set;
-            protocol.pending_keeper_activation_slot = slot.saturating_add(KEEPER_ROTATION_DELAY_SLOTS);
+            protocol.pending_keeper_activation_slot =
+                slot.saturating_add(KEEPER_ROTATION_DELAY_SLOTS);
             protocol.last_update_slot = slot;
             return Ok(());
         }
@@ -1715,9 +1919,129 @@ pub struct Redeem<'info> {
 }
 
 #[derive(Accounts)]
+pub struct RegisterAgent<'info> {
+    #[account(mut)]
+    pub agent: Signer<'info>,
+
+    #[account(
+        init,
+        payer = agent,
+        space = AgentRecord::SPACE,
+        seeds = [b"agent", agent.key().as_ref()],
+        bump
+    )]
+    pub agent_record: Account<'info, AgentRecord>,
+
+    #[account(
+        init_if_needed,
+        payer = agent,
+        space = AgentEscrow::SPACE,
+        seeds = [b"agent_escrow"],
+        bump
+    )]
+    pub agent_escrow: Account<'info, AgentEscrow>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct DeregisterAgent<'info> {
+    #[account(mut)]
+    pub agent: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"agent", agent.key().as_ref()],
+        bump = agent_record.bump
+    )]
+    pub agent_record: Account<'info, AgentRecord>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent: Pubkey, _new_score: u64)]
+pub struct UpdateAgentScore<'info> {
+    #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    pub keeper: Signer<'info>,
+
+    #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
+    pub agent_record: Account<'info, AgentRecord>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent: Pubkey, _new_tier: u8)]
+pub struct PromoteAgent<'info> {
+    #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    pub keeper: Signer<'info>,
+
+    #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
+    pub agent_record: Account<'info, AgentRecord>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent: Pubkey, _new_tier: u8)]
+pub struct DemoteAgent<'info> {
+    #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    pub keeper: Signer<'info>,
+
+    #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
+    pub agent_record: Account<'info, AgentRecord>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent: Pubkey, _slash_amount: u64, _reason: [u8; 32])]
+pub struct SlashAgent<'info> {
+    #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    pub authority: Signer<'info>,
+
+    #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
+    pub agent_record: Account<'info, AgentRecord>,
+
+    #[account(mut, seeds = [b"agent_escrow"], bump = agent_escrow.bump)]
+    pub agent_escrow: Account<'info, AgentEscrow>,
+
+    #[account(mut)]
+    pub protocol_treasury: SystemAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent: Pubkey)]
+pub struct ClaimStake<'info> {
+    #[account(mut)]
+    pub claimant: Signer<'info>,
+
+    #[account(
+        mut,
+        close = claimant,
+        seeds = [b"agent", agent.as_ref()],
+        bump = agent_record.bump
+    )]
+    pub agent_record: Account<'info, AgentRecord>,
+
+    #[account(mut, seeds = [b"agent_escrow"], bump = agent_escrow.bump)]
+    pub agent_escrow: Account<'info, AgentEscrow>,
+}
+
+#[derive(Accounts)]
 pub struct CommitRebalance<'info> {
     #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [b"agent", submitting_agent.key().as_ref()],
+        bump = agent_record.bump
+    )]
+    pub agent_record: Account<'info, AgentRecord>,
+
+    pub submitting_agent: Signer<'info>,
     pub keeper_one: Signer<'info>,
     pub keeper_two: Signer<'info>,
 }
@@ -1805,6 +2129,53 @@ impl ProtocolState {
 }
 
 #[account]
+pub struct AgentEscrow {
+    pub bump: u8,
+}
+
+impl AgentEscrow {
+    pub const SPACE: usize = 8 + 8;
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AgentRole {
+    Optimizer = 0,
+    Monitor = 1,
+    Auditor = 2,
+    Liquidator = 3,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AgentStatus {
+    Active = 0,
+    Cooldown = 1,
+    Slashed = 2,
+    Deregistered = 3,
+}
+
+#[account]
+pub struct AgentRecord {
+    pub agent: Pubkey,
+    pub stake: u64,
+    pub reputation: u64,
+    pub role: AgentRole,
+    pub tier: u8,
+    pub status: AgentStatus,
+    pub proposals_submitted: u64,
+    pub proposals_accepted: u64,
+    pub registered_at: i64,
+    pub last_active_at: i64,
+    pub agent_score: u64,
+    pub bump: u8,
+}
+
+impl AgentRecord {
+    pub const SPACE: usize = 8 + 160;
+}
+
+#[account]
 pub struct CollateralVault {
     pub index: u8,
     pub mint: Pubkey,
@@ -1874,6 +2245,28 @@ pub enum BreakerStatus {
 pub enum ErrorCode {
     #[msg("Unauthorized keeper")]
     Unauthorized,
+    #[msg("Invalid agent stake amount")]
+    InvalidAgentStake,
+    #[msg("Invalid agent score")]
+    InvalidAgentScore,
+    #[msg("Invalid agent tier transition")]
+    InvalidAgentTier,
+    #[msg("Agent is not active")]
+    AgentNotActive,
+    #[msg("Agent is already deregistered")]
+    AgentAlreadyDeregistered,
+    #[msg("Agent is not deregistered")]
+    AgentNotDeregistered,
+    #[msg("Stake cooldown is still active")]
+    StakeCooldownActive,
+    #[msg("Agent tier is below minimum rebalance submit tier")]
+    AgentTierTooLow,
+    #[msg("Agent signer does not match agent record")]
+    AgentSignerMismatch,
+    #[msg("Escrow has insufficient lamports")]
+    EscrowInsufficientBalance,
+    #[msg("Invalid protocol treasury account")]
+    InvalidTreasuryAccount,
     #[msg("Invalid collateral index")]
     InvalidCollateralIndex,
     #[msg("Invalid amount")]
@@ -2203,9 +2596,7 @@ fn is_allowed_pyth_write_authority(
     allowed_authorities: &[Pubkey],
 ) -> bool {
     write_authority == pyth_price_account
-        || allowed_authorities
-            .iter()
-            .any(|k| *k == write_authority)
+        || allowed_authorities.iter().any(|k| *k == write_authority)
 }
 
 fn read_pyth_price_update(
@@ -2747,9 +3138,254 @@ fn progressive_restore_cap(vault: &mut Account<CollateralVault>) -> Result<()> {
     Ok(())
 }
 
+fn validate_registration_stake(stake_amount: u64) -> Result<()> {
+    require!(
+        stake_amount >= AGENT_MIN_STAKE_LAMPORTS,
+        ErrorCode::InvalidAgentStake
+    );
+    Ok(())
+}
+
+fn validate_agent_score(score: u64) -> Result<()> {
+    require!(score <= SCALE, ErrorCode::InvalidAgentScore);
+    Ok(())
+}
+
+fn build_agent_record(
+    agent: Pubkey,
+    role: AgentRole,
+    stake: u64,
+    now: i64,
+    bump: u8,
+) -> AgentRecord {
+    AgentRecord {
+        agent,
+        stake,
+        reputation: 0,
+        role,
+        tier: 0,
+        status: AgentStatus::Active,
+        proposals_submitted: 0,
+        proposals_accepted: 0,
+        registered_at: now,
+        last_active_at: now,
+        agent_score: 0,
+        bump,
+    }
+}
+
+fn capped_slash_amount(current_stake: u64, requested_slash: u64) -> u64 {
+    requested_slash.min(current_stake)
+}
+
+fn can_claim_stake(status: AgentStatus, cooldown_started_at: i64, now: i64) -> Result<()> {
+    require!(
+        status == AgentStatus::Deregistered,
+        ErrorCode::AgentNotDeregistered
+    );
+    require!(
+        now >= cooldown_started_at.saturating_add(AGENT_STAKE_COOLDOWN_SECONDS),
+        ErrorCode::StakeCooldownActive
+    );
+    Ok(())
+}
+
+fn min_score_for_tier(tier: u8) -> Result<u64> {
+    let score = match tier {
+        1 => AIG_TIER1_THRESHOLD,
+        2 => AIG_TIER2_THRESHOLD,
+        3 => AIG_TIER3_THRESHOLD,
+        _ => return err!(ErrorCode::InvalidAgentTier),
+    };
+    Ok(score)
+}
+
+fn validate_tier_promotion(current_tier: u8, new_tier: u8, agent_score: u64) -> Result<()> {
+    require!(new_tier <= 3, ErrorCode::InvalidAgentTier);
+    require!(
+        new_tier == current_tier.saturating_add(1),
+        ErrorCode::InvalidAgentTier
+    );
+    let required_score = min_score_for_tier(new_tier)?;
+    require!(agent_score >= required_score, ErrorCode::InvalidAgentScore);
+    Ok(())
+}
+
+fn validate_tier_demotion(current_tier: u8, new_tier: u8) -> Result<()> {
+    require!(new_tier <= 3, ErrorCode::InvalidAgentTier);
+    require!(
+        current_tier == new_tier.saturating_add(1),
+        ErrorCode::InvalidAgentTier
+    );
+    Ok(())
+}
+
+fn assert_agent_commit_eligibility(record: &AgentRecord, submitting_agent: Pubkey) -> Result<()> {
+    require_keys_eq!(
+        record.agent,
+        submitting_agent,
+        ErrorCode::AgentSignerMismatch
+    );
+    require!(
+        record.status == AgentStatus::Active,
+        ErrorCode::AgentNotActive
+    );
+    require!(
+        record.tier >= AIG_MIN_COMMIT_TIER,
+        ErrorCode::AgentTierTooLow
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_err_contains<T: core::fmt::Debug>(res: Result<T>, needle: &str) {
+        let err = res.expect_err("expected failure");
+        assert!(
+            format!("{err:?}").contains(needle),
+            "expected error containing `{needle}`, got `{err:?}`"
+        );
+    }
+
+    fn sample_protocol(keepers: [Pubkey; 3]) -> ProtocolState {
+        ProtocolState {
+            weights: [400_000, 300_000, 200_000, 100_000],
+            fee_rate: 2_000,
+            cr_target: 1_200_000,
+            total_supply: 0,
+            last_update_slot: 0,
+            keeper_set: keepers,
+            emergency_shutdown: false,
+            pending_rebalance_commit: [0u8; 32],
+            pending_rebalance_slot: 0,
+            pending_rebalance_expiry: 0,
+            pending_keeper_set: [Pubkey::default(); 3],
+            pending_keeper_activation_slot: 0,
+            bump: 0,
+        }
+    }
+
+    #[test]
+    fn registration_valid_stake_and_all_roles() {
+        let agent = Pubkey::new_unique();
+        for role in [
+            AgentRole::Optimizer,
+            AgentRole::Monitor,
+            AgentRole::Auditor,
+            AgentRole::Liquidator,
+        ] {
+            validate_registration_stake(AGENT_MIN_STAKE_LAMPORTS).unwrap();
+            let record = build_agent_record(agent, role, 10, 123, 1);
+            assert_eq!(record.agent, agent);
+            assert_eq!(record.role, role);
+            assert_eq!(record.stake, 10);
+            assert_eq!(record.tier, 0);
+            assert_eq!(record.status, AgentStatus::Active);
+        }
+    }
+
+    #[test]
+    fn registration_zero_stake_rejected() {
+        assert_err_contains(validate_registration_stake(0), "InvalidAgentStake");
+    }
+
+    #[test]
+    fn registration_pda_is_deterministic_preventing_double_register() {
+        let agent = Pubkey::new_unique();
+        let (pda_a, _) = Pubkey::find_program_address(&[b"agent", agent.as_ref()], &crate::id());
+        let (pda_b, _) = Pubkey::find_program_address(&[b"agent", agent.as_ref()], &crate::id());
+        assert_eq!(pda_a, pda_b);
+    }
+
+    #[test]
+    fn score_and_tier_progression_checks() {
+        validate_agent_score(750_000).unwrap();
+        assert_err_contains(validate_agent_score(SCALE + 1), "InvalidAgentScore");
+
+        validate_tier_promotion(0, 1, 600_000).unwrap();
+        validate_tier_promotion(1, 2, 750_000).unwrap();
+        validate_tier_promotion(2, 3, 850_000).unwrap();
+        assert_err_contains(validate_tier_promotion(3, 4, 900_000), "InvalidAgentTier");
+
+        validate_tier_demotion(3, 2).unwrap();
+        validate_tier_demotion(2, 1).unwrap();
+        validate_tier_demotion(1, 0).unwrap();
+        assert_err_contains(validate_tier_demotion(3, 1), "InvalidAgentTier");
+    }
+
+    #[test]
+    fn keeper_authorization_for_agent_updates() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let protocol = sample_protocol([k1, k2, k3]);
+
+        require_keeper_member(&protocol, k1).unwrap();
+        assert_err_contains(
+            require_keeper_member(&protocol, Pubkey::new_unique()),
+            "Unauthorized",
+        );
+    }
+
+    #[test]
+    fn slash_capped_at_stake() {
+        assert_eq!(capped_slash_amount(1_000, 300), 300);
+        assert_eq!(capped_slash_amount(1_000, 9_999), 1_000);
+    }
+
+    #[test]
+    fn deregister_and_claim_cooldown() {
+        let now = 1_000_i64;
+        assert_err_contains(
+            can_claim_stake(AgentStatus::Active, now - AGENT_STAKE_COOLDOWN_SECONDS, now),
+            "AgentNotDeregistered",
+        );
+        assert_err_contains(
+            can_claim_stake(
+                AgentStatus::Deregistered,
+                now - AGENT_STAKE_COOLDOWN_SECONDS + 1,
+                now,
+            ),
+            "StakeCooldownActive",
+        );
+        can_claim_stake(
+            AgentStatus::Deregistered,
+            now - AGENT_STAKE_COOLDOWN_SECONDS,
+            now,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn commit_rebalance_requires_registered_tier2_agent() {
+        let agent = Pubkey::new_unique();
+        let wrong_signer = Pubkey::new_unique();
+
+        let mut record = build_agent_record(agent, AgentRole::Optimizer, 10, 0, 1);
+        record.tier = 2;
+        assert_err_contains(
+            assert_agent_commit_eligibility(&record, wrong_signer),
+            "AgentSignerMismatch",
+        );
+
+        record.status = AgentStatus::Deregistered;
+        assert_err_contains(
+            assert_agent_commit_eligibility(&record, agent),
+            "AgentNotActive",
+        );
+
+        record.status = AgentStatus::Active;
+        record.tier = 1;
+        assert_err_contains(
+            assert_agent_commit_eligibility(&record, agent),
+            "AgentTierTooLow",
+        );
+
+        record.tier = 2;
+        assert_agent_commit_eligibility(&record, agent).unwrap();
+    }
 
     #[test]
     fn tc_prog_001_accepts_pyth_account_self_write_authority() {
