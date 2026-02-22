@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import microstable as ms
+from security.invariant_monitor import InvariantMonitor
 
 
 RUNS_PER_SCENARIO = 100
@@ -103,6 +104,8 @@ def simulate(
     optimizer = ms.AdamOptimizer(n_weights=len(state.weights))
     breaker = ms.CircuitBreaker(n_assets=len(state.weights))
     keeper = ms.Keeper()
+    # // BLUE-TEAM: DEF-INV - runtime invariant monitor executes every simulation tick.
+    invariant_monitor = InvariantMonitor()
 
     peg_errors: List[float] = []
     sq_errors: List[float] = []
@@ -194,6 +197,7 @@ def simulate(
                     activation_counts[cb_id] += 1
                     if cb_id not in market.expected_breakers:
                         false_positives += 1
+                    invariant_monitor.record_agent_action("watchdog", tick, action_type=f"cb{cb_id}_activate")
                 event_idx += 1
 
             # CB-4 rollback
@@ -218,9 +222,23 @@ def simulate(
 
             if state.optimizer_enabled and state.mint_limit > 0.0 and loss_finite:
                 proposal = keeper.propose(state, optimizer, grad_w, grad_fee)
-                keeper.submit_update_proposal(state, proposal)
+                result = keeper.submit_update_proposal(state, proposal)
+                if result.get("status") == "APPLIED":
+                    delta_mag = sum(abs(float(proposal["weights"][i]) - state.prev_weights[i]) for i in range(len(state.weights)))  # type: ignore[index]
+                    invariant_monitor.record_agent_action("keeper", tick, magnitude=delta_mag, action_type="rebalance")
 
             peg = state.update_from_market(market.prices, market.oracle_q, peg_noise=float(spec.peg_noise))
+            invariant_monitor.check(
+                tick=tick,
+                state=state,
+                market=market,
+                weights=state.weights,
+                weight_caps=state.w_caps,
+                min_cr=state.cr_min,
+                oracle_stale_limit=120,
+                max_actions_per_window=60,
+                window_ticks=25,
+            )
             turnover = sum(abs(a - b) for a, b in zip(state.weights, state.prev_weights))
 
             err = abs(peg - 1.0)

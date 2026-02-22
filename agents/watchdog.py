@@ -14,7 +14,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from microstable import LossEngine, MarketEnv, ProtocolState, Watchdog, distribute_fees
+from agents.security_controls import check_min_interval, load_state, save_state
+from microstable import LossEngine, MarketEnv, ProtocolState, ProtocolTxScheduler, Watchdog, distribute_fees
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,12 +32,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="previous loss value used for CB-4 divergence detection",
     )
+    p.add_argument(
+        "--cb-cooldown-ticks",
+        type=int,
+        default=10,
+        help="minimum ticks between repeated CB activation dispatches",
+    )
     return p
 
 
 def run(args: argparse.Namespace) -> Dict[str, Any]:
     state = ProtocolState()
-    env = MarketEnv(scenario=args.scenario, seed=args.seed)
+    env = MarketEnv(scenario=args.scenario, seed=args.seed, deterministic=True)
     market = env.step(args.tick)
 
     watchdog = Watchdog()
@@ -60,9 +67,30 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
     active: List[int] = [i for i in range(1, 5) if cb_status[f"cb{i}"]]
-    recommendation = "ACTIVATE_CIRCUIT_BREAKER" if active else "NO_ACTION"
+
+    # // BLUE-TEAM: AGENT-RL-03 - cooldown between repeated CB activation dispatches.
+    sec_state = load_state()
+    wd_state = sec_state.setdefault("watchdog", {})
+    last_ticks = wd_state.setdefault("cb_last_activation_tick", {})
+
+    cb_cooldown_ticks = int(getattr(args, "cb_cooldown_ticks", 10))
+    cooldown_ok = True
+    blocked_cb_ids: List[int] = []
+    for cb_id in active:
+        ok, _ = check_min_interval(last_ticks.get(str(cb_id)), int(args.tick), cb_cooldown_ticks)
+        if not ok:
+            cooldown_ok = False
+            blocked_cb_ids.append(cb_id)
+
+    recommendation = "ACTIVATE_CIRCUIT_BREAKER" if active and cooldown_ok else "NO_ACTION"
+    dispatch = bool(args.execute and active and cooldown_ok)
+    if dispatch:
+        for cb_id in active:
+            last_ticks[str(cb_id)] = int(args.tick)
+        save_state(sec_state)
 
     fee_split = distribute_fees(1.0)
+    qos = ProtocolTxScheduler()
 
     return {
         "agent": "watchdog",
@@ -81,11 +109,21 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             "divergence": market.divergence,
         },
         "cb_detection": cb_status,
+        "rate_limits": {
+            "cooldown_ok": cooldown_ok,
+            "blocked_cb_ids": blocked_cb_ids,
+            "cb_cooldown_ticks": cb_cooldown_ticks,
+        },
+        "qos": {
+            "priority_fee_microlamports": qos.priority_fee_microlamports,
+            "reserved_tx_slots": qos.reserved_tx_slots,
+            "reserved_compute_units": qos.reserved_compute_units,
+        },
         "decision": {
             "recommended_action": recommendation,
             "target_cb_ids": active,
             "status": "ALERT" if active else "STABLE",
-            "dispatch": bool(args.execute and active),
+            "dispatch": dispatch,
         },
         "diagnostics": {
             "loss": loss_value,

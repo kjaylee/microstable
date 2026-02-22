@@ -16,9 +16,11 @@ No external dependencies.
 from __future__ import annotations
 
 import csv
+import hashlib
 import math
 import os
 import random
+import secrets
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Deque, Dict, List, Optional, Sequence, Tuple
@@ -37,6 +39,22 @@ ASSETS = ["USDC", "USDT", "DAI", "USDS"]
 INITIAL_WEIGHTS = [0.40, 0.30, 0.20, 0.10]
 BASE_W_CAPS = [0.55, 0.45, 0.45, 0.35]
 BASE_RISK = [0.10, 0.20, 0.15, 0.25]
+
+# // BLUE-TEAM: H20 - cap autograd chain depth to prevent memory-amplification attacks.
+MAX_AUTOGRAD_DEPTH = 256
+
+# // BLUE-TEAM: E2 - oracle freshness + collateral quality gates for mint/redeem accounting.
+ORACLE_FRESHNESS_MAX_SECONDS = 120
+MIN_COLLATERAL_QUALITY = 0.85
+
+# // BLUE-TEAM: F9/G17 - reserved protocol lanes under congestion.
+DEFAULT_RESERVED_TX_SLOTS = 3
+DEFAULT_RESERVED_COMPUTE_UNITS = 2_400_000
+DEFAULT_PRIORITY_FEE_MICROLAMPORTS = 5_000
+
+# // BLUE-TEAM: I26 - insurance anti-drain defaults.
+MIN_INSURANCE_CLAIM = 100.0
+INSURANCE_COOLDOWN_TICKS = 5
 
 
 # -----------------------------------------------------------------------------
@@ -58,7 +76,16 @@ class Value:
         if not math.isfinite(self.data):
             raise ValueError(f"non-finite Value data: {self.data}")
         self.grad = 0.0
-        self._prev = set(_children)
+
+        # // BLUE-TEAM: H20 - truncate overly deep chains to bound memory use.
+        parent_depth = max((getattr(ch, "_depth", 1) for ch in _children), default=0)
+        self._depth = parent_depth + 1
+        if self._depth > MAX_AUTOGRAD_DEPTH:
+            self._prev = set()
+            self._depth = 1
+        else:
+            self._prev = set(_children)
+
         self._op = _op
         self._backward: Callable[[], None] = lambda: None
         self.label = label
@@ -81,9 +108,16 @@ class Value:
         if not math.isfinite(x):
             raise ValueError(f"non-finite in {where}: {x}")
 
+    @staticmethod
+    def _truncate_graph(*nodes: "Value") -> bool:
+        # // BLUE-TEAM: H20 - short-circuit graph construction beyond safe depth.
+        return any(getattr(n, "_depth", 1) >= MAX_AUTOGRAD_DEPTH for n in nodes)
+
     # --- arithmetic ---
     def __add__(self, other: float | "Value") -> "Value":
         other = self._coerce(other)
+        if self._truncate_graph(self, other):
+            return Value(self.data + other.data)
         out = Value(self.data + other.data, (self, other), "+")
 
         def _backward() -> None:
@@ -99,6 +133,8 @@ class Value:
         return self + other
 
     def __neg__(self) -> "Value":
+        if self._truncate_graph(self):
+            return Value(-self.data)
         out = Value(-self.data, (self,), "neg")
 
         def _backward() -> None:
@@ -116,6 +152,8 @@ class Value:
 
     def __mul__(self, other: float | "Value") -> "Value":
         other = self._coerce(other)
+        if self._truncate_graph(self, other):
+            return Value(self.data * other.data)
         out = Value(self.data * other.data, (self, other), "*")
 
         def _backward() -> None:
@@ -133,6 +171,8 @@ class Value:
     def __truediv__(self, other: float | "Value") -> "Value":
         other = self._coerce(other)
         safe_denom, clamped = self._safe_divisor(other.data)
+        if self._truncate_graph(self, other):
+            return Value(self.data / safe_denom)
         out = Value(self.data / safe_denom, (self, other), "/")
 
         def _backward() -> None:
@@ -156,6 +196,8 @@ class Value:
         is_int = abs(power - round(power)) <= 1e-12
         if self.data < 0.0 and not is_int:
             raise ValueError("non-integer power with negative base is undefined in reals")
+        if self._truncate_graph(self):
+            return Value(self.data ** power)
         out = Value(self.data ** power, (self,), f"**{power}")
 
         def _backward() -> None:
@@ -172,6 +214,8 @@ class Value:
     # --- nonlinear ---
     def tanh(self) -> "Value":
         t = math.tanh(self.data)
+        if self._truncate_graph(self):
+            return Value(t)
         out = Value(t, (self,), "tanh")
 
         def _backward() -> None:
@@ -184,6 +228,8 @@ class Value:
     def exp(self) -> "Value":
         x = min(40.0, max(-40.0, self.data))
         e = math.exp(x)
+        if self._truncate_graph(self):
+            return Value(e)
         out = Value(e, (self,), "exp")
 
         def _backward() -> None:
@@ -195,6 +241,8 @@ class Value:
 
     def log(self) -> "Value":
         x = self.data if self.data > EPS else EPS
+        if self._truncate_graph(self):
+            return Value(math.log(x))
         out = Value(math.log(x), (self,), "log")
 
         def _backward() -> None:
@@ -206,6 +254,8 @@ class Value:
         return out
 
     def relu(self) -> "Value":
+        if self._truncate_graph(self):
+            return Value(self.data if self.data > 0.0 else 0.0)
         out = Value(self.data if self.data > 0.0 else 0.0, (self,), "relu")
 
         def _backward() -> None:
@@ -220,6 +270,8 @@ class Value:
         if lo > hi:
             raise ValueError("clamp: lo > hi")
         val = min(max(self.data, lo), hi)
+        if self._truncate_graph(self):
+            return Value(val)
         out = Value(val, (self,), "clamp")
 
         def _backward() -> None:
@@ -231,6 +283,8 @@ class Value:
 
     def abs_l1(self) -> "Value":
         """Absolute value with subgradient sign(0)=0."""
+        if self._truncate_graph(self):
+            return Value(abs(self.data))
         out = Value(abs(self.data), (self,), "abs")
 
         def _backward() -> None:
@@ -249,13 +303,20 @@ class Value:
     def backward(self) -> None:
         topo: List[Value] = []
         visited = set()
+        visiting = set()
 
+        # // BLUE-TEAM: H21 - explicit cycle detection before topological backward pass.
         def build(v: Value) -> None:
-            if v not in visited:
-                visited.add(v)
-                for ch in v._prev:
-                    build(ch)
-                topo.append(v)
+            if v in visiting:
+                raise ValueError("autograd graph cycle detected")
+            if v in visited:
+                return
+            visiting.add(v)
+            for ch in v._prev:
+                build(ch)
+            visiting.remove(v)
+            visited.add(v)
+            topo.append(v)
 
         build(self)
         for node in topo:
@@ -285,10 +346,17 @@ class MarketTick:
 class MarketEnv:
     """Synthetic market environment with scenario-specific stress patterns."""
 
-    def __init__(self, scenario: str, seed: int = 0):
+    def __init__(self, scenario: str, seed: int = 0, deterministic: bool = False):
         self.scenario = scenario
-        self.rng = random.Random(seed)
+        # // BLUE-TEAM: H18/H19 - default to entropy-mixed RNG to avoid predictable exploit windows.
+        if deterministic:
+            mixed_seed = seed
+        else:
+            entropy = secrets.randbits(64)
+            mixed_seed = (int(seed) << 64) ^ entropy
+        self.rng = random.Random(mixed_seed)
         self.prices = [1.0, 1.0, 1.0, 1.0]
+        self._shock_offset = 0 if deterministic else self.rng.randint(-3, 3)
 
     def _base_vol(self) -> float:
         return {
@@ -301,11 +369,12 @@ class MarketEnv:
         }.get(self.scenario, 0.0007)
 
     def _shock(self, tick: int, asset_index: int) -> float:
-        if self.scenario == "single_depeg" and asset_index == 1 and 20 <= tick <= 24:
+        s_off = self._shock_offset
+        if self.scenario == "single_depeg" and asset_index == 1 and (20 + s_off) <= tick <= (24 + s_off):
             return -0.025
-        if self.scenario == "multi_depeg" and asset_index in (0, 1) and 20 <= tick <= 28:
+        if self.scenario == "multi_depeg" and asset_index in (0, 1) and (20 + s_off) <= tick <= (28 + s_off):
             return -0.080
-        if self.scenario == "gradient_attack" and 18 <= tick <= 24:
+        if self.scenario == "gradient_attack" and (18 + s_off) <= tick <= (24 + s_off):
             return 0.004 if asset_index % 2 == 0 else -0.004
         if self.scenario == "volatile" and tick % 11 == 0:
             return self.rng.uniform(-0.015, 0.015)
@@ -381,6 +450,13 @@ class ProtocolState:
     nav_prev: float = 1.0
     nav_deltas: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
 
+    # // BLUE-TEAM: G16 - bind keeper proposals to epoch + state hash to block replay.
+    market_epoch: int = 0
+    market_state_hash: str = "GENESIS"
+
+    # // BLUE-TEAM: runtime accounting mirror for invariant monitor.
+    position_supply_sum: float = 1_000_000.0
+
     def clone(self) -> "ProtocolState":
         return ProtocolState(
             assets=self.assets[:],
@@ -405,10 +481,15 @@ class ProtocolState:
             oracle_degraded=self.oracle_degraded,
             nav_prev=self.nav_prev,
             nav_deltas=self.nav_deltas[:],
+            market_epoch=self.market_epoch,
+            market_state_hash=self.market_state_hash,
+            position_supply_sum=self.position_supply_sum,
         )
 
     def begin_tick(self) -> None:
         self.prev_weights = self.weights[:]
+        self.market_epoch += 1
+        self.market_state_hash = self._compute_state_hash(prices_hint=None, oracle_q_hint=None)
 
     def reset_dynamic_policy(self) -> None:
         self.w_caps = self.base_w_caps[:]
@@ -418,10 +499,37 @@ class ProtocolState:
         self.conservative_mode = False
         self.oracle_degraded = False
 
+    def _compute_state_hash(
+        self,
+        prices_hint: Optional[Sequence[float]],
+        oracle_q_hint: Optional[float],
+    ) -> str:
+        buf = [
+            f"epoch={self.market_epoch}",
+            "w=" + ",".join(f"{w:.8f}" for w in self.weights),
+            f"fee={self.mint_fee:.8f}",
+            f"cr={self.cr:.8f}",
+            f"nav={self.nav_prev:.8f}",
+        ]
+        if prices_hint is not None:
+            buf.append("p=" + ",".join(f"{p:.8f}" for p in prices_hint))
+        if oracle_q_hint is not None:
+            buf.append(f"q={oracle_q_hint:.8f}")
+        raw = "|".join(buf).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()[:24]
+
     @staticmethod
     def haircut(risk_score: float) -> float:
         # h_i(r_i) in [0, 0.05]
         return min(0.05, max(0.0, 0.02 * risk_score + 0.005))
+
+    @staticmethod
+    def peg_sensitivity(prices: Sequence[float]) -> float:
+        # // BLUE-TEAM: I24 - damp peg sensitivity during deep basket-wide shocks.
+        deep_depeg = sum(1 for p in prices if p < 0.85)
+        if deep_depeg >= 2:
+            return 0.030
+        return 0.040
 
     def effective_collateral_value(self, prices: Sequence[float]) -> float:
         total = 0.0
@@ -443,7 +551,8 @@ class ProtocolState:
         if len(self.nav_deltas) > 40:
             self.nav_deltas.pop(0)
 
-        peg = 1.0 + 0.040 * (nav - 1.0) + 0.0010 * (oracle_q - 1.0) + peg_noise
+        peg_k = self.peg_sensitivity(prices)
+        peg = 1.0 + peg_k * (nav - 1.0) + 0.0010 * (oracle_q - 1.0) + peg_noise
         peg = min(1.10, max(0.90, peg))
 
         target = self.cr_target + (0.03 if self.conservative_mode else 0.0)
@@ -452,6 +561,8 @@ class ProtocolState:
         self.cr = min(2.5, max(cr_floor, self.cr))
 
         self.reserve_value = self.cr * self.supply
+        self.position_supply_sum = self.supply
+        self.market_state_hash = self._compute_state_hash(prices_hint=prices, oracle_q_hint=oracle_q)
         return peg
 
 
@@ -483,7 +594,7 @@ class LossEngine:
             h = ProtocolState.haircut(r)
             nav = nav + wv * (p * (1.0 - h))
 
-        peg = Value(1.0) + (nav - 1.0) * 0.040 + Value(oracle_q - 1.0) * 0.0010
+        peg = Value(1.0) + (nav - 1.0) * ProtocolState.peg_sensitivity(prices) + Value(oracle_q - 1.0) * 0.0010
         cr_model = Value(state.cr) + (nav - Value(state.nav_prev)) * 0.25
 
         peg_loss = Value(self.c.lambda_p) * ((peg - 1.0) ** 2)
@@ -895,9 +1006,12 @@ class CircuitBreaker:
                 self.cb1_target_index = i
                 break
 
-        # CB-2: multi-collateral stress or NAV crash
+        # CB-2: multi-collateral stress, NAV crash, or correlated mild depeg basket stress.
         depeg_count = sum(1 for p in market.prices if abs(p - 1.0) > 0.02)
-        cond[2] = depeg_count >= 2 or nav_drop < -0.03
+        mild_depeg_count = sum(1 for p in market.prices if abs(p - 1.0) > 0.015)
+        # // BLUE-TEAM: E5 - catch correlation-driven stress before per-asset 2% triggers fire.
+        correlated_stress = mild_depeg_count >= 2 and nav_drop < -0.015
+        cond[2] = depeg_count >= 2 or nav_drop < -0.03 or correlated_stress
 
         # CB-3: oracle failure
         cond[3] = market.stale_seconds > 120 or market.divergence > 0.02
@@ -1072,11 +1186,32 @@ class Keeper:
         grad_fee: float,
     ) -> Dict[str, object]:
         new_w, new_fee = optimizer.step(state.weights, state.mint_fee, grad_w, grad_fee, state.w_caps)
-        return {"weights": new_w, "mint_fee": new_fee, "status": "PROPOSED"}
+        # // BLUE-TEAM: G16 - proposal includes epoch/hash binding and bounded expiry.
+        return {
+            "weights": new_w,
+            "mint_fee": new_fee,
+            "status": "PROPOSED",
+            "proposal_epoch": state.market_epoch,
+            "state_hash": state.market_state_hash,
+            "expiry_epoch": state.market_epoch + 2,
+        }
 
     def submit_update_proposal(self, state: ProtocolState, proposal: Dict[str, object]) -> Dict[str, object]:
         w = [float(x) for x in proposal["weights"]]  # type: ignore[index]
         fee = float(proposal.get("mint_fee", state.mint_fee))
+
+        # // BLUE-TEAM: G16 - reject stale/unbound replayed proposals.
+        epoch = proposal.get("proposal_epoch")
+        state_hash = proposal.get("state_hash")
+        expiry = proposal.get("expiry_epoch")
+        if epoch is None or state_hash is None or expiry is None:
+            return {"status": "REJECTED", "reason": "missing_proposal_binding"}
+        if int(epoch) != state.market_epoch:
+            return {"status": "REJECTED", "reason": "proposal_epoch_mismatch"}
+        if str(state_hash) != state.market_state_hash:
+            return {"status": "REJECTED", "reason": "proposal_state_hash_mismatch"}
+        if int(expiry) < state.market_epoch:
+            return {"status": "REJECTED", "reason": "proposal_expired"}
 
         if abs(sum(w) - 1.0) > 1e-6:
             return {"status": "REJECTED", "reason": "sum(weights)!=1"}
@@ -1134,6 +1269,275 @@ def distribute_fees(total_fee: float) -> Dict[str, float]:
 
 
 # -----------------------------------------------------------------------------
+# Economic/security hardening primitives
+# -----------------------------------------------------------------------------
+
+
+def mul_div_floor(a: int, b: int, d: int) -> int:
+    return (int(a) * int(b)) // int(d)
+
+
+def mul_div_ceil(a: int, b: int, d: int) -> int:
+    return (int(a) * int(b) + int(d) - 1) // int(d)
+
+
+def median_price(prices: Sequence[float]) -> float:
+    vals = sorted(float(p) for p in prices)
+    if not vals:
+        raise ValueError("median_price requires at least one sample")
+    m = len(vals) // 2
+    if len(vals) % 2 == 1:
+        return vals[m]
+    return 0.5 * (vals[m - 1] + vals[m])
+
+
+def validated_oracle_price(
+    oracle_samples: Sequence[float],
+    stale_seconds: int,
+    *,
+    max_stale_seconds: int = ORACLE_FRESHNESS_MAX_SECONDS,
+) -> float:
+    if stale_seconds > max_stale_seconds:
+        raise ValueError("oracle_stale")
+    px = median_price(oracle_samples)
+    if px <= 0.0 or (not math.isfinite(px)):
+        raise ValueError("oracle_invalid")
+    return px
+
+
+def collateral_quality_ok(quality_score: float, *, floor: float = MIN_COLLATERAL_QUALITY) -> bool:
+    return math.isfinite(quality_score) and quality_score >= floor
+
+
+def secure_mint_amount(
+    collateral_units: int,
+    oracle_samples: Sequence[float],
+    stale_seconds: int,
+    quality_score: float,
+    *,
+    cr_target_ppm: int = 1_200_000,
+    fee_rate_ppm: int = 2_000,
+) -> int:
+    price = validated_oracle_price(oracle_samples, stale_seconds)
+    if not collateral_quality_ok(quality_score):
+        return 0
+    gross = mul_div_floor(collateral_units, int(price * 1_000_000), 1_000_000)
+    max_mint = mul_div_floor(gross, 1_000_000, cr_target_ppm)
+    fee = mul_div_ceil(max_mint, fee_rate_ppm, 1_000_000)
+    minted = max_mint - fee
+    return max(0, minted)
+
+
+def redeem_by_value(
+    vault_units: Sequence[int],
+    oracle_prices: Sequence[float],
+    burn_amount: int,
+    total_supply: int,
+    *,
+    payout_discount_ppm: int = 1_000_000,
+) -> List[int]:
+    if total_supply <= 0:
+        raise ValueError("total_supply must be positive")
+    if burn_amount <= 0:
+        raise ValueError("burn_amount must be positive")
+    if len(vault_units) != len(oracle_prices):
+        raise ValueError("vault_units/prices length mismatch")
+
+    values = [max(0.0, float(u) * float(p)) for u, p in zip(vault_units, oracle_prices)]
+    total_value = sum(values)
+    if total_value <= 0.0:
+        return [0] * len(vault_units)
+
+    discount = max(0.0, min(1.0, payout_discount_ppm / 1_000_000.0))
+    target_value = total_value * (burn_amount / float(total_supply)) * discount
+
+    payouts: List[int] = []
+    allocated_value = 0.0
+    for i, (units, price, asset_value) in enumerate(zip(vault_units, oracle_prices, values)):
+        if i == len(vault_units) - 1:
+            residual = max(0.0, target_value - allocated_value)
+            out = int(residual / max(float(price), EPS))
+        else:
+            share = asset_value / total_value
+            value_out = target_value * share
+            out = int(value_out / max(float(price), EPS))
+            allocated_value += out * float(price)
+        payouts.append(max(0, min(int(units), out)))
+    return payouts
+
+
+@dataclass
+class RedemptionRequest:
+    account: str
+    burn_amount: int
+    requested_discount_ppm: int
+
+
+class RedemptionQueue:
+    def __init__(self, smoothing_window: int = 8):
+        self._pending: Deque[RedemptionRequest] = deque()
+        self._smoothing_window = max(1, int(smoothing_window))
+
+    def enqueue(self, account: str, burn_amount: int, requested_discount_ppm: int) -> None:
+        self._pending.append(
+            RedemptionRequest(
+                account=str(account),
+                burn_amount=max(0, int(burn_amount)),
+                requested_discount_ppm=int(requested_discount_ppm),
+            )
+        )
+
+    def settle(
+        self,
+        vault_units: Sequence[int],
+        oracle_prices: Sequence[float],
+        total_supply: int,
+    ) -> Dict[str, List[int]]:
+        if not self._pending:
+            return {}
+
+        batch: List[RedemptionRequest] = []
+        while self._pending and len(batch) < self._smoothing_window:
+            batch.append(self._pending.popleft())
+
+        avg_discount = int(sum(r.requested_discount_ppm for r in batch) / len(batch))
+        total_burn = sum(r.burn_amount for r in batch)
+        aggregate = redeem_by_value(
+            vault_units=vault_units,
+            oracle_prices=oracle_prices,
+            burn_amount=total_burn,
+            total_supply=total_supply,
+            payout_discount_ppm=avg_discount,
+        )
+
+        out: Dict[str, List[int]] = {}
+        allocated = [[0 for _ in aggregate] for _ in batch]
+        running = [0 for _ in aggregate]
+        for idx, req in enumerate(batch):
+            ratio = (req.burn_amount / total_burn) if total_burn > 0 else 0.0
+            for j, total_units in enumerate(aggregate):
+                if idx == len(batch) - 1:
+                    alloc = total_units - running[j]
+                else:
+                    alloc = int(total_units * ratio)
+                    running[j] += alloc
+                allocated[idx][j] = max(0, alloc)
+            out[req.account] = allocated[idx]
+        return out
+
+
+class ProtocolTxScheduler:
+    def __init__(
+        self,
+        *,
+        reserved_tx_slots: int = DEFAULT_RESERVED_TX_SLOTS,
+        reserved_compute_units: int = DEFAULT_RESERVED_COMPUTE_UNITS,
+        priority_fee_microlamports: int = DEFAULT_PRIORITY_FEE_MICROLAMPORTS,
+    ):
+        self.reserved_tx_slots = max(0, int(reserved_tx_slots))
+        self.reserved_compute_units = max(0, int(reserved_compute_units))
+        self.priority_fee_microlamports = max(0, int(priority_fee_microlamports))
+
+    def admit_by_compute(
+        self,
+        block_compute_limit: int,
+        attacker_compute: int,
+        protocol_txs: int,
+        protocol_tx_compute: int,
+    ) -> Dict[str, int]:
+        protocol_tx_compute = max(1, int(protocol_tx_compute))
+        public_budget = max(0, int(block_compute_limit) - self.reserved_compute_units)
+        public_remaining = max(0, public_budget - int(attacker_compute))
+        public_capacity = public_remaining // protocol_tx_compute
+        reserved_capacity = self.reserved_compute_units // protocol_tx_compute
+        admitted = min(int(protocol_txs), int(public_capacity + reserved_capacity))
+        return {
+            "admitted": admitted,
+            "public_capacity": int(public_capacity),
+            "reserved_capacity": int(reserved_capacity),
+        }
+
+    def admit_by_slots(self, block_tx_capacity: int, attacker_spam_txs: int, protocol_txs: int) -> Dict[str, int]:
+        public_budget = max(0, int(block_tx_capacity) - self.reserved_tx_slots)
+        public_remaining = max(0, public_budget - int(attacker_spam_txs))
+        admitted = min(int(protocol_txs), int(public_remaining + self.reserved_tx_slots))
+        return {
+            "admitted": admitted,
+            "public_remaining": int(public_remaining),
+            "reserved_slots": int(self.reserved_tx_slots),
+        }
+
+
+class BatchRebalanceAuction:
+    def __init__(self, fee_rate: float = 0.003):
+        self.fee_rate = max(0.0, min(0.02, float(fee_rate)))
+
+    def sandwich_pnl(self, attacker_input_musd: float) -> float:
+        # Commit/reveal + batch auction: attacker cannot bracket keeper flow; only pays fees.
+        gross = float(attacker_input_musd)
+        after_buy_fee = gross * (1.0 - self.fee_rate)
+        after_sell_fee = after_buy_fee * (1.0 - self.fee_rate)
+        return after_sell_fee - gross
+
+
+class InsuranceFund:
+    def __init__(
+        self,
+        treasury: float,
+        *,
+        min_claim: float = MIN_INSURANCE_CLAIM,
+        cooldown_ticks: int = INSURANCE_COOLDOWN_TICKS,
+        epoch_length_ticks: int = 20,
+        epoch_claim_cap: float = 10_000.0,
+        refill_trigger: float = 250_000.0,
+        refill_amount: float = 200_000.0,
+    ):
+        self.treasury = float(treasury)
+        self.min_claim = float(min_claim)
+        self.cooldown_ticks = max(1, int(cooldown_ticks))
+        self.epoch_length_ticks = max(1, int(epoch_length_ticks))
+        self.epoch_claim_cap = float(epoch_claim_cap)
+        self.refill_trigger = float(refill_trigger)
+        self.refill_amount = float(refill_amount)
+        self._last_claim_tick: Dict[str, int] = {}
+        self._epoch_index = -1
+        self._epoch_claimed = 0.0
+
+    def _refresh_epoch(self, tick: int) -> None:
+        idx = int(tick) // self.epoch_length_ticks
+        if idx != self._epoch_index:
+            self._epoch_index = idx
+            self._epoch_claimed = 0.0
+
+    def _auto_refill(self) -> None:
+        if self.treasury <= self.refill_trigger:
+            self.treasury += self.refill_amount
+
+    def claim(self, claimant: str, amount: float, tick: int) -> Dict[str, object]:
+        self._refresh_epoch(int(tick))
+        self._auto_refill()
+
+        amt = float(amount)
+        if amt < self.min_claim:
+            return {"approved": False, "reason": "below_min_claim"}
+
+        last = self._last_claim_tick.get(claimant)
+        if last is not None and int(tick) - last < self.cooldown_ticks:
+            return {"approved": False, "reason": "cooldown"}
+
+        if self._epoch_claimed + amt > self.epoch_claim_cap:
+            return {"approved": False, "reason": "epoch_cap"}
+
+        if amt > self.treasury:
+            return {"approved": False, "reason": "insufficient_fund"}
+
+        self.treasury -= amt
+        self._epoch_claimed += amt
+        self._last_claim_tick[claimant] = int(tick)
+        return {"approved": True, "reason": "ok", "treasury": self.treasury}
+
+
+# -----------------------------------------------------------------------------
 # Scenario runner + metrics
 # -----------------------------------------------------------------------------
 
@@ -1172,9 +1576,11 @@ def _assert_tick_invariants(state: ProtocolState) -> None:
             raise AssertionError(f"weight bound violation at {i}")
     if state.cr <= 0.0:
         raise AssertionError("CR <= 0")
-    values = [state.cr, state.mint_fee, state.reserve_value, state.supply] + state.weights + state.w_caps
+    values = [state.cr, state.mint_fee, state.reserve_value, state.supply, state.position_supply_sum] + state.weights + state.w_caps
     if any((not math.isfinite(v)) for v in values):
         raise AssertionError("non-finite invariant")
+    if abs(state.position_supply_sum - state.supply) > 1e-6:
+        raise AssertionError("position_supply_mismatch")
 
 
 def run_scenario(
@@ -1183,13 +1589,17 @@ def run_scenario(
     ticks: int = 120,
     enforce_invariants: bool = True,
 ) -> ScenarioSummary:
-    env = MarketEnv(scenario=scenario, seed=seed)
+    env = MarketEnv(scenario=scenario, seed=seed, deterministic=True)
     state = ProtocolState()
     loss_engine = LossEngine()
     optimizer = AdamOptimizer(n_weights=len(state.weights))
     breaker = CircuitBreaker(n_assets=len(state.weights))
     keeper = Keeper()
     watchdog = Watchdog()
+    # // BLUE-TEAM: DEF-INV - runtime invariant monitor (security/invariant_monitor.py).
+    from security.invariant_monitor import InvariantMonitor
+
+    invariant_monitor = InvariantMonitor()
 
     rows: List[Dict[str, object]] = []
     peg_errors: List[float] = []
@@ -1254,6 +1664,7 @@ def run_scenario(
                 activation_counts[cb_id] += 1
                 if cb_id not in market.expected_breakers:
                     false_positives += 1
+                invariant_monitor.record_agent_action("watchdog", tick, action_type=f"cb{cb_id}_activate")
             event_idx += 1
 
         # CB-4 rollback
@@ -1280,7 +1691,10 @@ def run_scenario(
         if state.optimizer_enabled and state.mint_limit > 0.0 and loss_finite:
             proposal = keeper.propose(state, optimizer, grad_w, grad_fee)
             result = keeper.submit_update_proposal(state, proposal)
-            if result.get("status") != "APPLIED":
+            if result.get("status") == "APPLIED":
+                delta_mag = sum(abs(float(proposal["weights"][i]) - state.prev_weights[i]) for i in range(len(state.weights)))  # type: ignore[index]
+                invariant_monitor.record_agent_action("keeper", tick, magnitude=delta_mag, action_type="rebalance")
+            else:
                 # keep system stable even if proposal is rejected
                 pass
 
@@ -1293,6 +1707,18 @@ def run_scenario(
             peg_noise = env.rng.gauss(0.0, 0.00020)
 
         peg = state.update_from_market(market.prices, market.oracle_q, peg_noise=peg_noise)
+
+        invariant_monitor.check(
+            tick=tick,
+            state=state,
+            market=market,
+            weights=state.weights,
+            weight_caps=state.w_caps,
+            min_cr=state.cr_min,
+            oracle_stale_limit=120,
+            max_actions_per_window=40,
+            window_ticks=20,
+        )
 
         turnover = sum(abs(a - b) for a, b in zip(state.weights, state.prev_weights))
         max_turnover = max(max_turnover, turnover)

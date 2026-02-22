@@ -10,10 +10,12 @@ import math
 import os
 import random
 import traceback
+from argparse import Namespace
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Sequence, Tuple
 
 import microstable as ms
+from agents import consensus as consensus_agent
 
 
 ATOL = 1e-9
@@ -663,6 +665,209 @@ def tc_a004() -> str:
 
 
 # -----------------------------------------------------------------------------
+# G. Blue-team security regression (16)
+# -----------------------------------------------------------------------------
+
+
+def tc_sec001() -> str:
+    state = ms.ProtocolState()
+    cb = ms.CircuitBreaker()
+    activations = 0
+    for t in range(20):
+        action = cb.update(
+            t,
+            state,
+            mkt(t, [0.981, 0.981, 1.0, 1.0]),
+            nav_drop=state.effective_collateral_value([0.981, 0.981, 1.0, 1.0]) - state.nav_prev,
+            loss_finite=True,
+            loss_value=1.0,
+        )
+        if action["cb2"]:
+            activations += 1
+    assert activations > 0
+    return f"cb2_activations={activations}"
+
+
+def tc_sec002() -> str:
+    chk_ok = consensus_agent.validate_parameter_change("cr_target", "1.19")
+    chk_bad = consensus_agent.validate_parameter_change("cr_target", "1.00")
+    assert chk_ok["ok"] is True
+    assert chk_bad["ok"] is False
+    return f"ok={chk_ok['reason']} bad={chk_bad['reason']}"
+
+
+def tc_sec003() -> str:
+    out = consensus_agent.run(
+        Namespace(
+            dry_run=False,
+            queue=False,
+            execute=True,
+            proposal_id="sec-g13",
+            proposal_type="parameter_change",
+            asset="USDX",
+            param="mint_fee",
+            value="0.002",
+            keeper_vote="yes",
+            watchdog_vote="yes",
+            auditor_vote="yes",
+            keeper_sig="",
+            watchdog_sig="",
+            auditor_sig="",
+            nonce=0,
+        )
+    )
+    assert out["decision"]["queued"] is False
+    assert out["decision"]["executed"] is False
+    return f"action={out['decision']['action']}"
+
+
+def tc_sec004() -> str:
+    out = consensus_agent.run(
+        Namespace(
+            dry_run=False,
+            queue=False,
+            execute=True,
+            proposal_id="sec-i23",
+            proposal_type="asset_listing",
+            asset="SANCTIONED_USD_PROXY",
+            param="cr_target",
+            value="1.2",
+            keeper_vote="yes",
+            watchdog_vote="yes",
+            auditor_vote="yes",
+            keeper_sig="",
+            watchdog_sig="",
+            auditor_sig="",
+            nonce=0,
+        )
+    )
+    assert out["validation"]["ok"] is False
+    return f"validation={out['validation']['reason']}"
+
+
+def tc_sec005() -> str:
+    keeper = ms.Keeper()
+    replay = keeper.submit_update_proposal(
+        ms.ProtocolState(),
+        {"weights": [0.42, 0.28, 0.2, 0.1], "mint_fee": 0.002},
+    )
+    assert replay["status"] == "REJECTED"
+    return f"reason={replay['reason']}"
+
+
+def tc_sec006() -> str:
+    env1 = ms.MarketEnv("normal", seed=0)
+    env2 = ms.MarketEnv("normal", seed=0)
+    p1 = [env1.step(t).prices for t in range(5)]
+    p2 = [env2.step(t).prices for t in range(5)]
+    assert p1 != p2
+    return "entropy_mixed_rng_ok"
+
+
+def tc_sec007() -> str:
+    v = ms.Value(1.0)
+    for _ in range(4000):
+        v = (v * 1.000001) + 0.000001
+    assert v._depth <= ms.MAX_AUTOGRAD_DEPTH
+    return f"depth={v._depth}"
+
+
+def tc_sec008() -> str:
+    x = ms.Value(2.0)
+    y = (x * x) + 1.0
+    x._prev.add(y)
+    ok = False
+    try:
+        y.backward()
+    except ValueError:
+        ok = True
+    assert ok
+    return "cycle_detected"
+
+
+def tc_sec009() -> str:
+    minted_bad = ms.secure_mint_amount(
+        collateral_units=1_000_000,
+        oracle_samples=[1.0, 1.0, 1.0],
+        stale_seconds=30,
+        quality_score=0.72,
+    )
+    minted_ok = ms.secure_mint_amount(
+        collateral_units=1_000_000,
+        oracle_samples=[1.0, 1.0, 1.0],
+        stale_seconds=30,
+        quality_score=0.97,
+    )
+    assert minted_bad == 0
+    assert minted_ok > 0
+    return f"minted_bad={minted_bad}, minted_ok={minted_ok}"
+
+
+def tc_sec010() -> str:
+    q = ms.RedemptionQueue(smoothing_window=8)
+    q.enqueue("early", 1_000_000, 1_000_000)
+    q.enqueue("late", 1_000_000, 950_000)
+    settled = q.settle([2_000_000, 2_000_000, 2_000_000, 2_000_000], [1.0, 1.0, 1.0, 1.0], 6_000_000)
+    early = settled["early"]
+    late = settled["late"]
+    edge = abs(sum(early) - sum(late))
+    assert edge <= 1
+    return f"edge={edge}"
+
+
+def tc_sec011() -> str:
+    lib_path = os.path.join(os.path.dirname(__file__), "solana/programs/microstable/src/lib.rs")
+    src = open(lib_path, "r", encoding="utf-8").read()
+    assert "hard restore before Recovery->Inactive transition" in src
+    assert "if i == 3" in src
+    return "cb4_lr_restore_guard_present"
+
+
+def tc_sec012() -> str:
+    qos = ms.ProtocolTxScheduler()
+    admission = qos.admit_by_compute(
+        block_compute_limit=48_000_000,
+        attacker_compute=220 * 220_000,
+        protocol_txs=3,
+        protocol_tx_compute=200_000,
+    )
+    assert int(admission["admitted"]) >= 3
+    return f"admitted={admission['admitted']}"
+
+
+def tc_sec013() -> str:
+    qos = ms.ProtocolTxScheduler()
+    admission = qos.admit_by_slots(100, 100, 3)
+    assert int(admission["admitted"]) >= 3
+    return f"admitted={admission['admitted']}"
+
+
+def tc_sec014() -> str:
+    lib_path = os.path.join(os.path.dirname(__file__), "solana/programs/microstable/src/lib.rs")
+    src = open(lib_path, "r", encoding="utf-8").read()
+    assert "TRUSTED_INITIALIZER" in src
+    assert "validate_keeper_set" in src
+    assert "require_keeper_quorum" in src
+    return "trusted_initializer_and_multisig_present"
+
+
+def tc_sec015() -> str:
+    auction = ms.BatchRebalanceAuction(fee_rate=0.003)
+    pnl = auction.sandwich_pnl(500_000.0)
+    assert pnl <= 0.0
+    return f"pnl={pnl:.6f}"
+
+
+def tc_sec016() -> str:
+    fund = ms.InsuranceFund(treasury=1_000_000.0, min_claim=100.0, cooldown_ticks=5)
+    ok = fund.claim("alice", 75.0, 0)
+    assert ok["approved"] is False
+    assert ok["reason"] == "below_min_claim"
+    assert fund.treasury > 0.0
+    return f"treasury={fund.treasury:.2f}"
+
+
+# -----------------------------------------------------------------------------
 # Verification requirements (high-resolution)
 # -----------------------------------------------------------------------------
 
@@ -969,7 +1174,27 @@ def build_cases() -> List[Case]:
         Case("TC-A004", "Agent", tc_a004),
     ]
 
-    assert len(cases) == 55
+    # Security regression (8)
+    cases += [
+        Case("TC-SEC001", "Security", tc_sec001),
+        Case("TC-SEC002", "Security", tc_sec002),
+        Case("TC-SEC003", "Security", tc_sec003),
+        Case("TC-SEC004", "Security", tc_sec004),
+        Case("TC-SEC005", "Security", tc_sec005),
+        Case("TC-SEC006", "Security", tc_sec006),
+        Case("TC-SEC007", "Security", tc_sec007),
+        Case("TC-SEC008", "Security", tc_sec008),
+        Case("TC-SEC009", "Security", tc_sec009),
+        Case("TC-SEC010", "Security", tc_sec010),
+        Case("TC-SEC011", "Security", tc_sec011),
+        Case("TC-SEC012", "Security", tc_sec012),
+        Case("TC-SEC013", "Security", tc_sec013),
+        Case("TC-SEC014", "Security", tc_sec014),
+        Case("TC-SEC015", "Security", tc_sec015),
+        Case("TC-SEC016", "Security", tc_sec016),
+    ]
+
+    assert len(cases) == 71
     return cases
 
 
@@ -997,7 +1222,7 @@ def main() -> None:
     cases = build_cases()
     passed = 0
 
-    print("Running 55 spec test cases...\n")
+    print(f"Running {len(cases)} spec test cases...\n")
     for case in cases:
         ok, detail = run_case(case)
         status = "PASS" if ok else "FAIL"

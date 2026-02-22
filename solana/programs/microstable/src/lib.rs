@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::hash::hashv;
 use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Mint as TokenMint, Token, TokenAccount, TransferChecked};
 
@@ -17,6 +18,21 @@ const MAX_ACTIVATION_DURATION: u64 = 120;
 // FIX HI-02: widen recovery hysteresis window gradually after prolonged activation.
 const ADAPTIVE_RECOVERY_BPS_MAX: u64 = 15_000; // +1.5%
 
+// // BLUE-TEAM: F12 - restrict initializer to trusted deploy authority.
+const TRUSTED_INITIALIZER: Pubkey = pubkey!("3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk");
+
+// // BLUE-TEAM: INPUT-HARDEN - strict bounds for external numeric inputs.
+const PRICE_MIN: u64 = 500_000; // $0.50
+const PRICE_MAX: u64 = 1_500_000; // $1.50
+const MAX_COLLATERAL_AMOUNT: u64 = 1_000_000_000_000;
+const MAX_REBALANCE_SLIPPAGE_BPS: u64 = 1_500; // 15%
+const BATCH_WINDOW_SLOTS: u64 = 32;
+
+// // BLUE-TEAM: I25 - commit/reveal for large rebalances.
+const LARGE_REBALANCE_THRESHOLD: u64 = 50_000; // 5%
+const COMMIT_REVEAL_DELAY_SLOTS: u64 = 5;
+const COMMIT_REVEAL_MAX_VALIDITY: u64 = 1_000;
+
 #[program]
 pub mod microstable {
     use super::*;
@@ -26,6 +42,11 @@ pub mod microstable {
 
         // FIX HI-04: enforce a 2-of-3 keeper set instead of single-key authority.
         validate_keeper_set(&keeper_set)?;
+        require_keys_eq!(
+            ctx.accounts.authority.key(),
+            TRUSTED_INITIALIZER,
+            ErrorCode::UnauthorizedInitializer
+        );
         require!(
             keeper_set.iter().any(|k| *k == ctx.accounts.authority.key()),
             ErrorCode::InvalidKeeperSet
@@ -39,6 +60,10 @@ pub mod microstable {
         protocol.last_update_slot = slot;
         protocol.keeper_set = keeper_set;
         protocol.emergency_shutdown = false;
+        // // BLUE-TEAM: I25 - initialize commit/reveal state.
+        protocol.pending_rebalance_commit = [0u8; 32];
+        protocol.pending_rebalance_slot = 0;
+        protocol.pending_rebalance_expiry = 0;
         protocol.bump = ctx.bumps.protocol_state;
 
         init_vault(
@@ -129,7 +154,7 @@ pub mod microstable {
         let slot = Clock::get()?.slot;
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
-        require!(price > 0, ErrorCode::InvalidPrice);
+        require!(price >= PRICE_MIN && price <= PRICE_MAX, ErrorCode::InvalidPrice);
         require!(confidence <= ORACLE_CONFIDENCE_MAX, ErrorCode::ConfidenceTooHigh);
         require!(observed_slot <= slot, ErrorCode::InvalidObservedSlot);
         require!(
@@ -157,7 +182,9 @@ pub mod microstable {
     }
 
     pub fn mint(ctx: Context<Mint>, collateral_index: u8, collateral_amount: u64) -> Result<()> {
+        require!(collateral_index < 4, ErrorCode::InvalidCollateralIndex);
         require!(collateral_amount > 0, ErrorCode::InvalidAmount);
+        require!(collateral_amount <= MAX_COLLATERAL_AMOUNT, ErrorCode::AmountTooLarge);
         require!(
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
@@ -348,6 +375,7 @@ pub mod microstable {
 
     pub fn redeem(ctx: Context<Redeem>, musd_amount: u64) -> Result<()> {
         require!(musd_amount > 0, ErrorCode::InvalidAmount);
+        require!(musd_amount <= MAX_COLLATERAL_AMOUNT, ErrorCode::AmountTooLarge);
         require!(
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
@@ -501,7 +529,40 @@ pub mod microstable {
         Ok(())
     }
 
-    pub fn rebalance(ctx: Context<Rebalance>, new_weights: [u64; 4]) -> Result<()> {
+    pub fn commit_rebalance(
+        ctx: Context<CommitRebalance>,
+        commit_hash: [u8; 32],
+        valid_for_slots: u64,
+    ) -> Result<()> {
+        // // BLUE-TEAM: I25 - keeper quorum-gated commit step for large rebalances.
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
+        require!(
+            !ctx.accounts.protocol_state.emergency_shutdown,
+            ErrorCode::EmergencyShutdownActive
+        );
+        require!(valid_for_slots >= COMMIT_REVEAL_DELAY_SLOTS, ErrorCode::InvalidCommitWindow);
+        require!(valid_for_slots <= COMMIT_REVEAL_MAX_VALIDITY, ErrorCode::InvalidCommitWindow);
+
+        let slot = Clock::get()?.slot;
+        let protocol = &mut ctx.accounts.protocol_state;
+        protocol.pending_rebalance_commit = commit_hash;
+        protocol.pending_rebalance_slot = slot;
+        protocol.pending_rebalance_expiry = slot.saturating_add(valid_for_slots);
+        protocol.last_update_slot = slot;
+        Ok(())
+    }
+
+    pub fn rebalance(
+        ctx: Context<Rebalance>,
+        new_weights: [u64; 4],
+        max_slippage_bps: u64,
+        batch_slot: u64,
+        reveal_salt: [u8; 32],
+    ) -> Result<()> {
         // FIX HI-04: enforce keeper 2-of-3 quorum for privileged rebalances.
         require_keeper_quorum(
             &ctx.accounts.protocol_state,
@@ -516,6 +577,8 @@ pub mod microstable {
         let slot = Clock::get()?.slot;
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
+        require!(max_slippage_bps <= MAX_REBALANCE_SLIPPAGE_BPS, ErrorCode::InvalidSlippageBound);
+        validate_batch_window(slot, batch_slot)?;
         validate_weight_sum(new_weights)?;
 
         let old_weights = ctx.accounts.protocol_state.weights;
@@ -525,7 +588,27 @@ pub mod microstable {
             require!(d <= WEIGHT_STEP_LIMIT, ErrorCode::WeightStepTooLarge);
             l1 = l1.checked_add(d).ok_or_else(|| error!(ErrorCode::MathOverflow))?;
         }
-        require!(l1 / 2 <= TURNOVER_LIMIT, ErrorCode::TurnoverTooHigh);
+        let turnover = l1 / 2;
+        require!(turnover <= TURNOVER_LIMIT, ErrorCode::TurnoverTooHigh);
+
+        // // BLUE-TEAM: I25 - caller-defined slippage bound.
+        let slippage_limit_ppm = max_slippage_bps.saturating_mul(100);
+        require!(turnover <= slippage_limit_ppm, ErrorCode::SlippageExceeded);
+
+        // // BLUE-TEAM: I25 - commit/reveal required for large turnover operations.
+        if turnover >= LARGE_REBALANCE_THRESHOLD {
+            let protocol = &mut ctx.accounts.protocol_state;
+            require!(protocol.pending_rebalance_commit != [0u8; 32], ErrorCode::MissingCommitReveal);
+            require!(slot >= protocol.pending_rebalance_slot.saturating_add(COMMIT_REVEAL_DELAY_SLOTS), ErrorCode::CommitRevealTooEarly);
+            require!(slot <= protocol.pending_rebalance_expiry, ErrorCode::CommitRevealExpired);
+
+            let expected = compute_rebalance_commit(protocol.key(), new_weights, batch_slot, reveal_salt);
+            require!(expected == protocol.pending_rebalance_commit, ErrorCode::CommitRevealMismatch);
+
+            protocol.pending_rebalance_commit = [0u8; 32];
+            protocol.pending_rebalance_slot = 0;
+            protocol.pending_rebalance_expiry = 0;
+        }
 
         ctx.accounts.protocol_state.weights = new_weights;
         ctx.accounts.protocol_state.last_update_slot = slot;
@@ -963,6 +1046,14 @@ pub struct Redeem<'info> {
 }
 
 #[derive(Accounts)]
+pub struct CommitRebalance<'info> {
+    #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct Rebalance<'info> {
     #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
@@ -1029,6 +1120,10 @@ pub struct ProtocolState {
     /// FIX HI-04: 2-of-3 keeper multisig set.
     pub keeper_set: [Pubkey; 3],
     pub emergency_shutdown: bool,
+    // // BLUE-TEAM: I25 - commit/reveal storage for large rebalances.
+    pub pending_rebalance_commit: [u8; 32],
+    pub pending_rebalance_slot: u64,
+    pub pending_rebalance_expiry: u64,
     pub bump: u8,
 }
 
@@ -1166,6 +1261,26 @@ pub enum ErrorCode {
     InvalidTokenAccount,
     #[msg("Emergency shutdown is active")]
     EmergencyShutdownActive,
+    #[msg("Unauthorized initializer")]
+    UnauthorizedInitializer,
+    #[msg("Amount exceeds hard maximum")]
+    AmountTooLarge,
+    #[msg("Invalid commit/reveal validity window")]
+    InvalidCommitWindow,
+    #[msg("Missing rebalance commit")]
+    MissingCommitReveal,
+    #[msg("Commit/reveal too early")]
+    CommitRevealTooEarly,
+    #[msg("Commit/reveal expired")]
+    CommitRevealExpired,
+    #[msg("Commit/reveal hash mismatch")]
+    CommitRevealMismatch,
+    #[msg("Rebalance outside allowed batch window")]
+    OutsideBatchWindow,
+    #[msg("Invalid slippage bound")]
+    InvalidSlippageBound,
+    #[msg("Rebalance slippage exceeds caller bound")]
+    SlippageExceeded,
 }
 
 fn init_vault(
@@ -1274,9 +1389,41 @@ fn abs_diff(a: u64, b: u64) -> u64 {
     }
 }
 
+fn compute_rebalance_commit(
+    protocol_key: Pubkey,
+    new_weights: [u64; 4],
+    batch_slot: u64,
+    reveal_salt: [u8; 32],
+) -> [u8; 32] {
+    let mut weights_bytes = [0u8; 32];
+    for (i, w) in new_weights.iter().enumerate() {
+        let start = i * 8;
+        weights_bytes[start..start + 8].copy_from_slice(&w.to_le_bytes());
+    }
+
+    let digest = hashv(&[
+        b"rebalance_commit_v1",
+        protocol_key.as_ref(),
+        &weights_bytes,
+        &batch_slot.to_le_bytes(),
+        &reveal_salt,
+    ]);
+    digest.to_bytes()
+}
+
+fn validate_batch_window(slot: u64, batch_slot: u64) -> Result<()> {
+    // // BLUE-TEAM: I25 - constrain execution to predefined batch windows.
+    require!(
+        slot / BATCH_WINDOW_SLOTS == batch_slot / BATCH_WINDOW_SLOTS,
+        ErrorCode::OutsideBatchWindow
+    );
+    Ok(())
+}
+
 fn validate_weight_sum(weights: [u64; 4]) -> Result<()> {
     let mut sum = 0u64;
     for w in weights {
+        require!(w <= SCALE, ErrorCode::WeightCapExceeded);
         sum = sum.checked_add(w).ok_or_else(|| error!(ErrorCode::MathOverflow))?;
     }
     require!(abs_diff(sum, SCALE) <= 1, ErrorCode::WeightSumInvariant);
@@ -1413,7 +1560,19 @@ fn refresh_circuit_breakers(circuit: &mut CircuitBreakerState, slot: u64) {
             circuit.cooldown_until[i] = slot.saturating_add(COOLDOWN_TICKS);
         }
 
+        if i == 3
+            && circuit.status[i] == BreakerStatus::Recovery as u8
+            && slot.saturating_sub(circuit.recovery_tick[i]) >= 10
+        {
+            // // BLUE-TEAM: F8 - opportunistic LR restore while still in recovery.
+            circuit.learning_rate_scale = SCALE;
+        }
+
         if circuit.status[i] == BreakerStatus::Recovery as u8 && slot >= circuit.cooldown_until[i] {
+            if i == 3 {
+                // // BLUE-TEAM: F8 - hard restore before Recovery->Inactive transition.
+                circuit.learning_rate_scale = SCALE;
+            }
             circuit.status[i] = BreakerStatus::Inactive as u8;
         }
     }
@@ -1435,11 +1594,6 @@ fn refresh_circuit_breakers(circuit: &mut CircuitBreakerState, slot: u64) {
         circuit.mint_rate_limit = SCALE;
     }
 
-    if circuit.status[3] == BreakerStatus::Recovery as u8
-        && slot.saturating_sub(circuit.recovery_tick[3]) >= 10
-    {
-        circuit.learning_rate_scale = SCALE;
-    }
 }
 
 fn is_active_like(status: u8) -> bool {

@@ -14,7 +14,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from microstable import Auditor, DELTA_FEE_MAX, DELTA_W_MAX, ProtocolState, distribute_fees
+from microstable import Auditor, DELTA_FEE_MAX, DELTA_W_MAX, ProtocolState, ProtocolTxScheduler, distribute_fees
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="optional keeper proposal JSON: {'weights':[...],'mint_fee':...}",
     )
+    p.add_argument("--round-id", type=int, default=None, help="shared consensus round id")
+    p.add_argument("--state-hash", type=str, default="", help="shared canonical state hash")
     return p
 
 
@@ -93,8 +95,14 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             raise ValueError("proposal-json must decode to an object")
         proposal_report = validate_keeper_proposal(state, parsed)
 
-    overall_ok = invariants["ok"] and all(spec_checks.values()) and proposal_report["ok"]
+    # // BLUE-TEAM: G15 - require shared round/state binding to avoid desynchronized approvals.
+    round_id = getattr(args, "round_id", None)
+    state_hash = getattr(args, "state_hash", "")
+    state_binding_ok = bool(round_id is not None and state_hash)
+
+    overall_ok = invariants["ok"] and all(spec_checks.values()) and proposal_report["ok"] and state_binding_ok
     fee_split = distribute_fees(1.0)
+    qos = ProtocolTxScheduler()
 
     return {
         "agent": "auditor",
@@ -102,7 +110,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "revenue_share": fee_split["auditor"],
         "invariants": invariants,
         "spec_checks": spec_checks,
+        "state_binding": {
+            "ok": state_binding_ok,
+            "round_id": round_id,
+            "state_hash": state_hash,
+        },
         "keeper_proposal_validation": proposal_report,
+        "qos": {
+            "priority_fee_microlamports": qos.priority_fee_microlamports,
+            "reserved_tx_slots": qos.reserved_tx_slots,
+            "reserved_compute_units": qos.reserved_compute_units,
+        },
         "decision": {
             "audit_passed": overall_ok,
             "report_status": "FINAL" if args.execute else "PREVIEW",

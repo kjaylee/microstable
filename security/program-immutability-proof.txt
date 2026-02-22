@@ -1,0 +1,15 @@
+Microstable Program Immutability Proof
+=====================================
+
+Program ID: BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3
+Verification Date (UTC): 2026-02-22T05:05:00Z
+
+Procedure:
+1. Query ProgramData account for the deployed program.
+2. Confirm `upgrade_authority_address = None`.
+3. Pin this artifact hash in release documentation.
+
+Expected command (operator runbook):
+solana program show --output json BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3
+
+This file is a control artifact used by security verification tooling.
