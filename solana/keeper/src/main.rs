@@ -4,6 +4,7 @@ mod monitor;
 mod optimizer;
 mod oracle;
 mod rebalance;
+mod tournament;
 mod utils;
 mod watchdog;
 mod wire;
@@ -12,6 +13,8 @@ mod wire;
 mod aig_tests;
 #[cfg(test)]
 mod optimizer_tests;
+#[cfg(test)]
+mod tournament_tests;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
