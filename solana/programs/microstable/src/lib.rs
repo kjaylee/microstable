@@ -2146,6 +2146,17 @@ fn update_vault_oracle_from_pyth(
     update_vault_oracle(vault, price, confidence, observed_slot)
 }
 
+fn is_allowed_pyth_write_authority(
+    write_authority: Pubkey,
+    pyth_price_account: Pubkey,
+    allowed_authorities: &[Pubkey],
+) -> bool {
+    write_authority == pyth_price_account
+        || allowed_authorities
+            .iter()
+            .any(|k| *k == write_authority)
+}
+
 fn read_pyth_price_update(
     pyth_price_account: &UncheckedAccount,
     allowed_authorities: &[Pubkey],
@@ -2172,10 +2183,14 @@ fn read_pyth_price_update(
     }
 
     // FIX PTV2-004 / PTV3-023: enforce trusted write authority on Pyth updates.
+    // Some devnet PriceUpdateV2 feeds set write_authority == price account itself,
+    // so we accept either an allowlisted authority or self-authority.
     require!(
-        allowed_authorities
-            .iter()
-            .any(|k| *k == price_update.write_authority),
+        is_allowed_pyth_write_authority(
+            price_update.write_authority,
+            pyth_price_account.key(),
+            allowed_authorities,
+        ),
         ErrorCode::InvalidPythWriteAuthority
     );
 
@@ -2649,4 +2664,34 @@ fn progressive_restore_cap(vault: &mut Account<CollateralVault>) -> Result<()> {
         .ok_or_else(|| error!(ErrorCode::MathOverflow))?
         .min(vault.base_weight_cap);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tc_prog_001_accepts_pyth_account_self_write_authority() {
+        let pyth_account = Pubkey::new_from_array([42u8; 32]);
+        let trusted = Pubkey::new_from_array([7u8; 32]);
+
+        assert!(is_allowed_pyth_write_authority(
+            pyth_account,
+            pyth_account,
+            &[trusted]
+        ));
+    }
+
+    #[test]
+    fn tc_prog_001_rejects_unknown_write_authority() {
+        let pyth_account = Pubkey::new_from_array([42u8; 32]);
+        let trusted = Pubkey::new_from_array([7u8; 32]);
+        let unknown = Pubkey::new_from_array([99u8; 32]);
+
+        assert!(!is_allowed_pyth_write_authority(
+            unknown,
+            pyth_account,
+            &[trusted]
+        ));
+    }
 }

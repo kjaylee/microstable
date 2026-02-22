@@ -472,9 +472,13 @@ fn fetch_pyth_observation(
     }
 
     let trusted_write_authority = utils::parse_pubkey(PYTH_TRUSTED_WRITE_AUTHORITY)?;
-    if update.write_authority != trusted_write_authority {
+    if !is_allowed_pyth_write_authority(
+        update.write_authority,
+        account,
+        trusted_write_authority,
+    ) {
         return Err(anyhow!(
-            "unexpected Pyth write_authority for {account}: expected {trusted_write_authority}, got {}",
+            "unexpected Pyth write_authority for {account}: expected either {trusted_write_authority} or account self, got {}",
             update.write_authority
         ));
     }
@@ -510,6 +514,14 @@ fn fetch_pyth_observation(
         publish_time: update.price_message.publish_time,
         observed_slot: update.posted_slot,
     })
+}
+
+pub fn is_allowed_pyth_write_authority(
+    write_authority: Pubkey,
+    pyth_account: Pubkey,
+    trusted_write_authority: Pubkey,
+) -> bool {
+    write_authority == pyth_account || write_authority == trusted_write_authority
 }
 
 fn expected_feed_id(collateral_index: u8) -> Result<[u8; 32]> {

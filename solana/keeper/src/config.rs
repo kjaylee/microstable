@@ -131,7 +131,7 @@ impl KeeperConfig {
     pub fn default_devnet() -> Self {
         Self {
             rpc_url: "https://api.devnet.solana.com".to_string(),
-            secondary_rpc_url: Some("https://secondary-rpc.devnet.example.invalid".to_string()),
+            secondary_rpc_url: Some("https://devnet.rpcpool.com".to_string()),
             program_id: pubkey!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"),
             keeper_keypairs: vec![
                 PathBuf::from("~/.config/solana/devnet-keypair.json"),
