@@ -1,8 +1,8 @@
-# microstable: 자기진화형(Self-Evolving) 에이전트 네이티브(Agent-Native) 다중 담보 스테이블코인 프로토콜
+# microstable: 결정론적(Deterministic) 에이전트 네이티브(Agent-Native) 다중 담보 스테이블코인 프로토콜
 
-**버전(Version)**: Draft v0.3  
-**상태(Status)**: 연구 백서(Research Whitepaper, Educational / Hobby Project)  
-**런타임 아키텍처(Runtime Architecture)**: Solana 온체인 프로그램(Anchor/Rust) + Rust 오프체인 키퍼 데몬  
+**버전(Version)**: Draft v0.3
+**상태(Status)**: 연구 백서(Research Whitepaper, Educational / Hobby Project)
+**런타임 아키텍처(Runtime Architecture)**: Solana 온체인 프로그램(Anchor/Rust) + Rust 오프체인 키퍼 데몬
 **프로그램 ID (Devnet)**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
 
 > "프로토콜은 작고 검증 가능하게 유지하고, 적응은 경계(bound) 안에서 감사 가능하게 만든다."
@@ -11,7 +11,7 @@
 
 ## 1. 초록(Abstract)
 
-스테이블코인은 핵심 결제 인프라이지만, 담보 집중·정책 반응 지연·오라클 열화·긴급 제어 취약성 같은 실패 패턴이 반복된다. **microstable**은 이를 위해 “온체인 결정론 + 오프체인 제한적 적응 + 하드 안전장치” 구조를 제안한다.
+스테이블코인은 핵심 결제 인프라이지만, 담보 집중·정책 반응 지연·오라클 열화·긴급 제어 취약성 같은 실패 패턴이 반복된다. **microstable**은 이를 위해 "온체인 결정론 + 오프체인 룰 기반 정책 연산 + 하드 안전장치" 구조를 제안한다.
 
 Draft **v0.3**는 운영 방향을 다음처럼 명확히 한다.
 
@@ -48,13 +48,42 @@ Draft **v0.3**는 운영 방향을 다음처럼 명확히 한다.
 
 ## 4. 프로토콜 모델(요약)
 
-프로토콜 파라미터를 \(\theta_t\), 안전 가능 집합을 \(\Omega\)라 하면:
+### 4.1 현재 구현: 결정론적 룰 기반 리밸런싱
+
+microstable v0.3는 **정적·결정론적 룰 기반** 리밸런싱 모델을 사용한다 — 경사하강법 기반 최적화가 아니다. 설계 의도는 감사 가능성(auditability)과 예측 가능성(predictability)을 자율성(autonomy)보다 우선하는 것이다.
+
+**가중치 계산** (`compute_target_weights`):
+
+각 담보 금고(vault) *i*에 대해 예치량 *dᵢ*, 오라클 가격 *pᵢ*, 리스크 점수 *rᵢ*, 가중치 상한 *cᵢ*가 주어지면:
+
+1. 담보 가치 산출: *vᵢ = dᵢ × pᵢ*
+2. 가치 비율 산출: *ratioᵢ = vᵢ / Σvⱼ*
+3. 리스크 할인 적용: *scoreᵢ = ratioᵢ × (1 − rᵢ)*
+4. 정규화: *wᵢ = scoreᵢ / Σscoreⱼ*
+5. 가중치 상한 강제: 각 *wᵢ ≤ cᵢ*로 clamp, 초과분은 비례 재분배
+
+이것은 **폐쇄형(closed-form), 무상태(stateless) 공식**이다 — 손실 함수, 그래디언트, 학습률, 이력 의존성이 없다. 동일 입력은 항상 동일 출력을 생성한다.
+
+**회로차단기 상태 필드**: 온체인 `CircuitBreakerState`에 `optimizer_enabled`와 `learning_rate_scale` 필드가 존재한다. 현재 구현에서 이들은 **단순 토글 플래그**로 기능한다 (`optimizer_enabled`는 키퍼의 리밸런스 제안 제출 가능 여부를 게이팅하고, `learning_rate_scale`은 100%와 50% 가중치 변경 감쇠 사이를 전환한다). 실제 최적화나 학습을 구현하지 않는다.
+
+**"적응형(adaptive)" 동작**: 키퍼의 `adaptive_secondary_confirm_window_secs`는 관측된 네트워크 지연에 따라 RPC 확인 타임아웃을 조정하는 표준 운영 휴리스틱이다 — 학습 알고리즘이 아니다.
+
+### 4.2 향후 연구 방향: 경계 내 경사 최적화(Bounded Gradient Optimization)
+
+잠재적 진화 방향으로 경계 내 경사 기반 파라미터 적응을 도입할 수 있다:
 
 $$
-\theta_{t+1}=\Pi_{\Omega}\left(\theta_t-\alpha_t\nabla\mathcal{L}_t\right)
+\theta_{t+1}=\Pi_{\Omega}\left(\theta_t-\alpha_t\nabla_\theta\mathcal{L}_t\right)
 $$
 
-투영 \(\Pi_{\Omega}\)는 cap/floor/simplex/수수료/CB 상태 같은 하드 제약을 강제한다. 즉, 최적화는 지급여력(solvency)과 라이브니스(liveness)를 침해할 수 없다.
+여기서 \(\Pi_{\Omega}\)는 안전 가능 집합(cap/floor/simplex/수수료/CB 상태)으로 투영하고, \(\mathcal{L}_t\)는 페그 이탈, 담보 집중, 유동성 활용률에 대한 복합 손실이다.
+
+**이 수식은 연구 목표를 기술하며, 현재 구현이 아니다.** 향후 채택 시 필요 사항:
+
+- \(\mathcal{L}_t\)의 정형 명세와 \(\Omega\) 내 수렴 증명,
+- 키퍼 정확성에 독립적인 온체인 경계 강제,
+- 적대적 강건성 분석 (그래디언트 조작, 손실 표면을 통한 오라클 포이즈닝),
+- 룰 기반에서 적응형 모드로의 전환에 대한 거버넌스 승인.
 
 ## 5. 온체인 Instruction 표면(13)
 
@@ -158,16 +187,17 @@ microstable은 허가 없는 참여(permissionless participation)를 유지하�
 microstable v0.3는 기존 명제를 더 명확한 구현 형태로 정리한다.
 
 - 온체인 정산/불변식은 Solana Anchor/Rust,
-- 오프체인 적응 로직은 강화된 Rust 키퍼,
+- 오프체인 결정론적 룰 기반 정책은 강화된 Rust 키퍼,
+- 경사 기반 최적화는 향후 연구 방향으로 유보(§4.2),
 - Python 시뮬레이션은 교육·검증용 아카이브,
 - 보안 사이클 증거와 통합 테스트 상태를 명시적으로 공개.
 
-프로젝트는 계속해서 점진적·검증 가능·안전 우선 원칙을 유지한다.
+현재 설계는 자율적 적응보다 감사 가능성과 예측 가능성을 의도적으로 선택한다. 모든 가중치 계산은 무상태 폐쇄형 함수 — 동일 입력은 항상 동일 출력을 생성한다. 프로젝트는 점진적·검증 가능·안전 우선 원칙을 유지한다.
 
 ## 13. 참고문헌(선별)
 
-1. S. Nakamoto, *Bitcoin: A Peer-to-Peer Electronic Cash System*, 2008.  
-2. Solana 및 Anchor 공식 문서.  
-3. Pyth 네트워크 문서.  
-4. 스테이블코인 실패 사례 및 리스크 제어 관련 공개 문헌.  
+1. S. Nakamoto, *Bitcoin: A Peer-to-Peer Electronic Cash System*, 2008.
+2. Solana 및 Anchor 공식 문서.
+3. Pyth 네트워크 문서.
+4. 스테이블코인 실패 사례 및 리스크 제어 관련 공개 문헌.
 5. microstable 내부 사양(OAE, AIG, keeper, security cycle reports).
