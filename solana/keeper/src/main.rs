@@ -1,10 +1,14 @@
 mod config;
 mod monitor;
+mod optimizer;
 mod oracle;
 mod rebalance;
 mod utils;
 mod watchdog;
 mod wire;
+
+#[cfg(test)]
+mod optimizer_tests;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
