@@ -109,39 +109,16 @@
       { "name": "H_long_duration_stability", "icon": "🏔️", "result": "PASS", "mae": 0.000336, "detail": "Long-horizon stability maintained" }
     ]
   },
-  "securityTeams": {
-    "redTeamV1": {
-      "status": "complete",
-      "vulnerableCount": 0,
-      "detail": "4 findings — all remediated by Security Fix. 0/4 vulnerable post-fix.",
-      "lastUpdate": "2026-02-22T03:50:00Z"
-    },
-    "redTeamV2": {
-      "status": "complete",
-      "totalAttacks": 26,
-      "vulnerableCount": 0,
-      "detail": "26 attack vectors tested. 21 were vulnerable → Yellow Team patched all 21. Re-run: 0/26 vulnerable.",
-      "lastUpdate": "2026-02-22T05:01:00Z",
-      "severityCounts": { "CRITICAL": 0, "HIGH": 0, "MEDIUM": 0 }
-    },
-    "yellowTeam": {
-      "status": "complete",
-      "detail": "Defensive hardening: 21 patches applied. 71/71 TC PASS. Exploit re-run: vulnerable=0.",
-      "commit": "658827d",
-      "lastUpdate": "2026-02-22T05:01:00Z"
-    },
-    "greenTeam": {
-      "status": "complete",
-      "detail": "Observability (metrics/alerts/healthcheck) + Chaos Engineering (8/8 PASS) + Degradation (5/5 PASS) + Ops Runbook.",
-      "chaosResults": { "pass": 8, "fail": 0 },
-      "degradationResults": { "pass": 5, "fail": 0 },
-      "commit": "8b0144a",
-      "lastUpdate": "2026-02-22T04:58:00Z"
-    },
-    "adversarialAgents": {
-      "status": "in_progress",
-      "detail": "Agent Red Team + Agent Blue Team — Autonomous adversarial infrastructure for open agent economy. 100+ TCs."
-    }
+  "redTeam": {
+    "status": "complete",
+    "overall": "ALL REMEDIATED — 0 open findings",
+    "lastUpdate": "2026-02-22T05:01:00Z",
+    "findings": [
+      { "severity": "✅ FIXED", "title": "Red Team v1: 4 findings → 0/4 vulnerable", "detail": "Security Fix commit 1336d4b" },
+      { "severity": "✅ FIXED", "title": "Red Team v2: 26 attacks → 0/26 vulnerable", "detail": "Yellow Team commit 658827d" },
+      { "severity": "✅ DONE", "title": "Blue Team: RNG/memory/auth hardening", "detail": "Entropy mixing, graph depth cap, signature+nonce consensus" },
+      { "severity": "✅ DONE", "title": "Green Team: Chaos 8/8 PASS, Degradation 5/5 PASS", "detail": "Observability + monitoring + ops runbook" }
+    ]
   },
   "megaStressTest": {
     "status": "complete",
