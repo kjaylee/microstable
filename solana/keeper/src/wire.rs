@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_sdk::{
     hash::hash,
@@ -6,7 +6,7 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 
-#[derive(Debug, Clone, BorshDeserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]
 pub struct ProtocolState {
     pub weights: [u64; 4],
     pub fee_rate: u64,
@@ -21,7 +21,7 @@ pub struct ProtocolState {
     pub bump: u8,
 }
 
-#[derive(Debug, Clone, BorshDeserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]
 pub struct CollateralVault {
     pub index: u8,
     pub mint: Pubkey,
@@ -38,7 +38,7 @@ pub struct CollateralVault {
     pub pyth_price_feed: Pubkey,
 }
 
-#[derive(Debug, Clone, BorshDeserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]
 pub struct CircuitBreakerState {
     pub status: [u8; 4],
     pub activation_tick: [u64; 4],
@@ -101,8 +101,8 @@ pub fn ix_update_oracle_pyth(
     keeper_two: Pubkey,
     pyth_price_account: Pubkey,
     collateral_index: u8,
-) -> Instruction {
-    Instruction {
+) -> Result<Instruction> {
+    Ok(Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(protocol_state, false),
@@ -118,8 +118,8 @@ pub fn ix_update_oracle_pyth(
         data: instruction_data(
             "update_oracle_pyth",
             &UpdateOraclePythArgs { collateral_index },
-        ),
-    }
+        )?,
+    })
 }
 
 pub fn ix_emergency_shutdown(
@@ -128,8 +128,8 @@ pub fn ix_emergency_shutdown(
     circuit_breaker: Pubkey,
     keeper_one: Pubkey,
     keeper_two: Pubkey,
-) -> Instruction {
-    Instruction {
+) -> Result<Instruction> {
+    Ok(Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(protocol_state, false),
@@ -138,7 +138,7 @@ pub fn ix_emergency_shutdown(
             AccountMeta::new_readonly(keeper_two, true),
         ],
         data: instruction_data_unit("emergency_shutdown"),
-    }
+    })
 }
 
 pub fn ix_commit_rebalance(
@@ -148,8 +148,8 @@ pub fn ix_commit_rebalance(
     keeper_two: Pubkey,
     commit_hash: [u8; 32],
     valid_for_slots: u64,
-) -> Instruction {
-    Instruction {
+) -> Result<Instruction> {
+    Ok(Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(protocol_state, false),
@@ -162,10 +162,11 @@ pub fn ix_commit_rebalance(
                 commit_hash,
                 valid_for_slots,
             },
-        ),
-    }
+        )?,
+    })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn ix_rebalance(
     program_id: Pubkey,
     protocol_state: Pubkey,
@@ -177,8 +178,8 @@ pub fn ix_rebalance(
     max_slippage_bps: u64,
     batch_slot: u64,
     reveal_salt: [u8; 32],
-) -> Instruction {
-    Instruction {
+) -> Result<Instruction> {
+    Ok(Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(protocol_state, false),
@@ -198,16 +199,17 @@ pub fn ix_rebalance(
                 batch_slot,
                 reveal_salt,
             },
-        ),
-    }
+        )?,
+    })
 }
 
-fn instruction_data<T: BorshSerialize>(name: &str, args: &T) -> Vec<u8> {
+fn instruction_data<T: BorshSerialize>(name: &str, args: &T) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(64);
     out.extend_from_slice(&anchor_discriminator("global", name));
-    let mut payload = borsh::to_vec(args).expect("instruction args serializable");
+    let mut payload = borsh::to_vec(args)
+        .with_context(|| format!("failed to serialize instruction args for {name}"))?;
     out.append(&mut payload);
-    out
+    Ok(out)
 }
 
 fn instruction_data_unit(name: &str) -> Vec<u8> {

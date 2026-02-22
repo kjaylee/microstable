@@ -14,6 +14,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 const PYTH_RECEIVER_PROGRAM: &str = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ";
+const PYTH_TRUSTED_WRITE_AUTHORITY: &str = "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk";
+const PYTH_FEED_ID_USDC: [u8; 32] = [
+    0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71, 0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89,
+    0x4a, 0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc, 0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9,
+    0xc9, 0x4a,
+];
+const PYTH_FEED_ID_USDT: [u8; 32] = [
+    0x2b, 0x89, 0xb9, 0xdc, 0x8f, 0xdf, 0x9f, 0x34, 0x70, 0x9a, 0x5b, 0x10, 0x6b, 0x47, 0x2f,
+    0x0f, 0x39, 0xbb, 0x6c, 0xa9, 0xce, 0x04, 0xb0, 0xfd, 0x7f, 0x2e, 0x97, 0x16, 0x88, 0xe2,
+    0xe5, 0x3b,
+];
+const PYTH_FEED_ID_DAI: [u8; 32] = [
+    0xb0, 0x94, 0x8a, 0x5e, 0x53, 0x13, 0x20, 0x0c, 0x63, 0x2b, 0x51, 0xbb, 0x5c, 0xa3, 0x2f,
+    0x6d, 0xe0, 0xd3, 0x6e, 0x99, 0x50, 0xa9, 0x42, 0xd1, 0x97, 0x51, 0xe8, 0x33, 0xf7, 0x0d,
+    0xab, 0xfd,
+];
+const PYTH_FEED_ID_USDS: [u8; 32] = [
+    0xc2, 0xf5, 0xc9, 0xb4, 0xd9, 0xe7, 0xa1, 0xfc, 0xb5, 0xa8, 0x0c, 0x7a, 0x2c, 0x3e, 0xc0,
+    0xf8, 0x4a, 0xb1, 0xde, 0x9f, 0x77, 0x8c, 0x0d, 0xf1, 0xb6, 0xe9, 0xc7, 0xab, 0x4f, 0x1e,
+    0x0d, 0x9a,
+];
 
 #[derive(Debug, Clone)]
 pub struct OracleUpdateResult {
@@ -33,6 +54,15 @@ struct OracleObservation {
     confidence: u64,
     publish_time: i64,
     observed_slot: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedOracleUpdate {
+    symbol: String,
+    collateral_index: u8,
+    pyth_account: Pubkey,
+    observation: OracleObservation,
+    confidence_bps: u64,
 }
 
 #[derive(Debug, Clone, BorshDeserialize)]
@@ -63,17 +93,13 @@ struct RawPythPriceUpdateV2 {
 
 pub fn run_oracle_cycle(
     rpc: &RpcClient,
+    secondary_rpc: Option<&RpcClient>,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
 ) -> Result<Vec<OracleUpdateResult>> {
     let protocol: wire::ProtocolState =
         utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
-
-    if protocol.emergency_shutdown {
-        warn!("oracle cycle skipped: protocol is in emergency shutdown");
-        return Ok(Vec::new());
-    }
 
     let vaults = [
         utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[0], "CollateralVault")?,
@@ -82,13 +108,49 @@ pub fn run_oracle_cycle(
         utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
     ];
 
+    if let Some(secondary) = secondary_rpc {
+        let secondary_protocol: wire::ProtocolState =
+            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
+        let secondary_vaults = [
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[0],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[1],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[2],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[3],
+                "CollateralVault",
+            )?,
+        ];
+
+        if protocol != secondary_protocol || vaults != secondary_vaults {
+            warn!("oracle cycle skipped: protocol/vault state mismatch across RPC endpoints");
+            return Ok(Vec::new());
+        }
+    }
+
+    if protocol.emergency_shutdown {
+        warn!("oracle cycle skipped: protocol is in emergency shutdown");
+        return Ok(Vec::new());
+    }
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("system time before unix epoch")?
         .as_secs() as i64;
 
-    let mut successful_updates = Vec::with_capacity(cfg.pyth_feeds.len());
-    let (k1, k2) = utils::keeper_quorum(keepers)?;
+    let mut prepared_updates = Vec::with_capacity(cfg.pyth_feeds.len());
 
     for feed in &cfg.pyth_feeds {
         let Some(vault) = vaults.get(feed.collateral_index as usize) else {
@@ -127,16 +189,44 @@ pub fn run_oracle_cycle(
             }
         };
 
-        if is_stale(
-            now,
-            observation.publish_time,
-            cfg.oracle_publish_max_age_secs,
-        ) {
+        if let Some(secondary) = secondary_rpc {
+            let secondary_observation = match fetch_pyth_observation(secondary, feed, pyth_account) {
+                Ok(observation) => observation,
+                Err(err) => {
+                    warn!(
+                        symbol = %feed.symbol,
+                        collateral_index = feed.collateral_index,
+                        error = %err,
+                        "oracle cycle skipped: secondary RPC fetch/decode failed"
+                    );
+                    return Ok(Vec::new());
+                }
+            };
+
+            if !oracle_observation_consistent(&observation, &secondary_observation) {
+                warn!(
+                    symbol = %feed.symbol,
+                    collateral_index = feed.collateral_index,
+                    primary_price = observation.price,
+                    secondary_price = secondary_observation.price,
+                    primary_confidence = observation.confidence,
+                    secondary_confidence = secondary_observation.confidence,
+                    primary_publish_time = observation.publish_time,
+                    secondary_publish_time = secondary_observation.publish_time,
+                    "oracle cycle skipped: cross-RPC mismatch on security-critical oracle read"
+                );
+                return Ok(Vec::new());
+            }
+        }
+
+        let max_publish_age_secs = feed.max_age_secs.min(cfg.oracle_publish_max_age_secs);
+        if is_stale(now, observation.publish_time, max_publish_age_secs) {
             warn!(
                 symbol = %feed.symbol,
                 collateral_index = feed.collateral_index,
                 publish_time = observation.publish_time,
-                max_age_secs = cfg.oracle_publish_max_age_secs,
+                max_age_secs = max_publish_age_secs,
+                configured_feed_max_age_secs = feed.max_age_secs,
                 "oracle update skipped: stale publish time"
             );
             continue;
@@ -156,6 +246,19 @@ pub fn run_oracle_cycle(
             continue;
         }
 
+        prepared_updates.push(PreparedOracleUpdate {
+            symbol: feed.symbol.clone(),
+            collateral_index: feed.collateral_index,
+            pyth_account,
+            observation,
+            confidence_bps,
+        });
+    }
+
+    let (k1, k2) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
+    let mut successful_updates = Vec::with_capacity(prepared_updates.len());
+
+    for prepared in prepared_updates {
         let ix = wire::ix_update_oracle_pyth(
             cfg.program_id,
             derived.protocol_state,
@@ -163,39 +266,39 @@ pub fn run_oracle_cycle(
             derived.vaults,
             k1.pubkey(),
             k2.pubkey(),
-            pyth_account,
-            feed.collateral_index,
-        );
+            prepared.pyth_account,
+            prepared.collateral_index,
+        )?;
 
         match utils::send_instructions(rpc, k1, &[k1, k2], vec![ix]) {
             Ok(sig) => {
                 info!(
-                    symbol = %feed.symbol,
-                    collateral_index = feed.collateral_index,
+                    symbol = %prepared.symbol,
+                    collateral_index = prepared.collateral_index,
                     signature = %sig,
-                    price = observation.price,
-                    confidence = observation.confidence,
-                    confidence_bps,
-                    publish_time = observation.publish_time,
-                    observed_slot = observation.observed_slot,
+                    price = prepared.observation.price,
+                    confidence = prepared.observation.confidence,
+                    confidence_bps = prepared.confidence_bps,
+                    publish_time = prepared.observation.publish_time,
+                    observed_slot = prepared.observation.observed_slot,
                     "oracle update sent"
                 );
 
                 successful_updates.push(OracleUpdateResult {
-                    symbol: feed.symbol.clone(),
-                    collateral_index: feed.collateral_index,
-                    price: observation.price,
-                    confidence: observation.confidence,
-                    confidence_bps,
-                    publish_time: observation.publish_time,
-                    observed_slot: observation.observed_slot,
+                    symbol: prepared.symbol,
+                    collateral_index: prepared.collateral_index,
+                    price: prepared.observation.price,
+                    confidence: prepared.observation.confidence,
+                    confidence_bps: prepared.confidence_bps,
+                    publish_time: prepared.observation.publish_time,
+                    observed_slot: prepared.observation.observed_slot,
                     signature: sig,
                 });
             }
             Err(err) => {
                 warn!(
-                    symbol = %feed.symbol,
-                    collateral_index = feed.collateral_index,
+                    symbol = %prepared.symbol,
+                    collateral_index = prepared.collateral_index,
                     error = %err,
                     "oracle update tx failed"
                 );
@@ -235,6 +338,22 @@ fn fetch_pyth_observation(
         return Err(anyhow!("Pyth verification level too low for {account}"));
     }
 
+    let trusted_write_authority = utils::parse_pubkey(PYTH_TRUSTED_WRITE_AUTHORITY)?;
+    if update.write_authority != trusted_write_authority {
+        return Err(anyhow!(
+            "unexpected Pyth write_authority for {account}: expected {trusted_write_authority}, got {}",
+            update.write_authority
+        ));
+    }
+
+    let expected_feed_id = expected_feed_id(feed.collateral_index)?;
+    if update.price_message.feed_id != expected_feed_id {
+        return Err(anyhow!(
+            "unexpected Pyth feed_id for {account}: collateral_index={} does not match expected feed",
+            feed.collateral_index
+        ));
+    }
+
     if update.price_message.price <= 0 {
         return Err(anyhow!("Pyth price not positive for {account}"));
     }
@@ -248,9 +367,6 @@ fn fetch_pyth_observation(
         update.price_message.exponent,
     )?;
 
-    let _ = feed;
-    let _ = update.write_authority;
-    let _ = update.price_message.feed_id;
     let _ = update.price_message.prev_publish_time;
     let _ = update.price_message.ema_price;
     let _ = update.price_message.ema_conf;
@@ -261,6 +377,25 @@ fn fetch_pyth_observation(
         publish_time: update.price_message.publish_time,
         observed_slot: update.posted_slot,
     })
+}
+
+fn expected_feed_id(collateral_index: u8) -> Result<[u8; 32]> {
+    match collateral_index {
+        0 => Ok(PYTH_FEED_ID_USDC),
+        1 => Ok(PYTH_FEED_ID_USDT),
+        2 => Ok(PYTH_FEED_ID_DAI),
+        3 => Ok(PYTH_FEED_ID_USDS),
+        _ => Err(anyhow!(
+            "invalid collateral index for feed-id check: {}",
+            collateral_index
+        )),
+    }
+}
+
+fn oracle_observation_consistent(primary: &OracleObservation, secondary: &OracleObservation) -> bool {
+    primary.price == secondary.price
+        && primary.confidence == secondary.confidence
+        && primary.publish_time == secondary.publish_time
 }
 
 fn is_stale(now_unix_ts: i64, publish_time: i64, max_age_secs: u64) -> bool {

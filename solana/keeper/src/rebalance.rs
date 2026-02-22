@@ -24,11 +24,26 @@ pub struct RebalanceOutcome {
     pub rebalance_signature: Option<Signature>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct RebalanceMemory {
+    pending_reveal: Option<PendingReveal>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingReveal {
+    commit_hash: [u8; 32],
+    target_weights: [u64; 4],
+    batch_slot: u64,
+    reveal_salt: [u8; 32],
+}
+
 pub fn run_rebalance_cycle(
     rpc: &RpcClient,
+    secondary_rpc: Option<&RpcClient>,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
+    memory: &mut RebalanceMemory,
 ) -> Result<RebalanceOutcome> {
     let protocol: wire::ProtocolState =
         utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
@@ -39,6 +54,44 @@ pub fn run_rebalance_cycle(
         utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[2], "CollateralVault")?,
         utils::fetch_account::<wire::CollateralVault>(rpc, &derived.vaults[3], "CollateralVault")?,
     ];
+
+    if let Some(secondary) = secondary_rpc {
+        let secondary_protocol: wire::ProtocolState =
+            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
+        let secondary_vaults = [
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[0],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[1],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[2],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[3],
+                "CollateralVault",
+            )?,
+        ];
+
+        if protocol != secondary_protocol || vaults != secondary_vaults {
+            warn!("rebalance cycle skipped: protocol/vault state mismatch across RPC endpoints");
+            return Ok(RebalanceOutcome {
+                proposed: false,
+                deviation_bps: 0,
+                target_weights: protocol.weights,
+                commit_signature: None,
+                rebalance_signature: None,
+            });
+        }
+    }
 
     let mut outcome = RebalanceOutcome {
         proposed: false,
@@ -53,7 +106,7 @@ pub fn run_rebalance_cycle(
         return Ok(outcome);
     }
 
-    let (k1, k2) = utils::keeper_quorum(keepers)?;
+    let (k1, k2) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
     let mut current_slot = rpc.get_slot()?;
 
     let target_weights = compute_target_weights(&vaults);
@@ -70,6 +123,13 @@ pub fn run_rebalance_cycle(
                 current_slot,
                 "existing rebalance commit is expired"
             );
+            if memory
+                .pending_reveal
+                .as_ref()
+                .is_some_and(|p| p.commit_hash == protocol.pending_rebalance_commit)
+            {
+                memory.pending_reveal = None;
+            }
         } else if current_slot
             < protocol
                 .pending_rebalance_slot
@@ -83,14 +143,10 @@ pub fn run_rebalance_cycle(
                     .saturating_add(cfg.commit_reveal_delay_slots),
                 "pending rebalance commit not yet revealable"
             );
-        } else if let Some((batch_slot, reveal_salt)) = recover_reveal_preimage(
-            derived.protocol_state,
-            protocol.pending_rebalance_commit,
-            protocol.pending_rebalance_slot,
-            protocol.pending_rebalance_expiry,
-            current_slot,
-            target_weights,
-        ) {
+        } else if let Some(local_pending) = memory.pending_reveal.as_ref().filter(|pending| {
+            pending.commit_hash == protocol.pending_rebalance_commit
+                && pending.batch_slot == protocol.pending_rebalance_slot
+        }) {
             let rebalance_ix = wire::ix_rebalance(
                 cfg.program_id,
                 derived.protocol_state,
@@ -98,29 +154,30 @@ pub fn run_rebalance_cycle(
                 derived.vaults,
                 k1.pubkey(),
                 k2.pubkey(),
-                target_weights,
+                local_pending.target_weights,
                 cfg.max_rebalance_slippage_bps,
-                batch_slot,
-                reveal_salt,
-            );
+                local_pending.batch_slot,
+                local_pending.reveal_salt,
+            )?;
 
             match utils::send_instructions(rpc, k1, &[k1, k2], vec![rebalance_ix]) {
                 Ok(sig) => {
                     info!(
                         signature = %sig,
-                        batch_slot,
+                        batch_slot = local_pending.batch_slot,
                         deviation_bps,
-                        target_weights = ?target_weights,
+                        target_weights = ?local_pending.target_weights,
                         "rebalance reveal sent for pending commit"
                     );
                     outcome.proposed = true;
                     outcome.rebalance_signature = Some(sig);
+                    memory.pending_reveal = None;
                     return Ok(outcome);
                 }
                 Err(err) => {
                     warn!(
                         error = %err,
-                        batch_slot,
+                        batch_slot = local_pending.batch_slot,
                         "rebalance reveal failed for pending commit"
                     );
                     return Ok(outcome);
@@ -129,7 +186,8 @@ pub fn run_rebalance_cycle(
         } else {
             warn!(
                 pending_slot = protocol.pending_rebalance_slot,
-                current_slot, "cannot reconstruct reveal preimage for pending commit"
+                current_slot,
+                "cannot reveal pending commit: missing ephemeral preimage in keeper memory"
             );
         }
     }
@@ -151,7 +209,7 @@ pub fn run_rebalance_cycle(
     }
 
     let batch_slot = select_batch_slot(current_slot, cfg.commit_reveal_delay_slots);
-    let reveal_salt = build_reveal_salt(batch_slot);
+    let reveal_salt = build_reveal_salt();
     let commit_hash = compute_rebalance_commit(
         derived.protocol_state,
         target_weights,
@@ -166,7 +224,7 @@ pub fn run_rebalance_cycle(
         k2.pubkey(),
         commit_hash,
         cfg.commit_valid_for_slots,
-    );
+    )?;
 
     let commit_sig = utils::send_instructions(rpc, k1, &[k1, k2], vec![commit_ix])?;
     info!(
@@ -176,6 +234,13 @@ pub fn run_rebalance_cycle(
         target_weights = ?target_weights,
         "rebalance commit sent"
     );
+
+    memory.pending_reveal = Some(PendingReveal {
+        commit_hash,
+        target_weights,
+        batch_slot,
+        reveal_salt,
+    });
 
     outcome.proposed = true;
     outcome.commit_signature = Some(commit_sig);
@@ -190,7 +255,8 @@ pub fn run_rebalance_cycle(
     if current_slot / BATCH_WINDOW_SLOTS != batch_slot / BATCH_WINDOW_SLOTS {
         warn!(
             current_slot,
-            batch_slot, "skipping immediate reveal: moved outside batch window"
+            batch_slot,
+            "skipping immediate reveal: moved outside batch window"
         );
         return Ok(outcome);
     }
@@ -206,7 +272,7 @@ pub fn run_rebalance_cycle(
         cfg.max_rebalance_slippage_bps,
         batch_slot,
         reveal_salt,
-    );
+    )?;
 
     match utils::send_instructions(rpc, k1, &[k1, k2], vec![rebalance_ix]) {
         Ok(sig) => {
@@ -217,6 +283,7 @@ pub fn run_rebalance_cycle(
                 "rebalance reveal sent"
             );
             outcome.rebalance_signature = Some(sig);
+            memory.pending_reveal = None;
         }
         Err(err) => {
             warn!(
@@ -367,43 +434,10 @@ fn wait_until_slot(rpc: &RpcClient, target_slot: u64, max_wait_secs: u64) -> Res
     }
 }
 
-fn recover_reveal_preimage(
-    protocol_key: solana_sdk::pubkey::Pubkey,
-    pending_commit: [u8; 32],
-    pending_slot: u64,
-    pending_expiry: u64,
-    current_slot: u64,
-    target_weights: [u64; 4],
-) -> Option<(u64, [u8; 32])> {
-    if pending_commit == [0u8; 32] {
-        return None;
-    }
-
-    let search_start = pending_slot.saturating_sub(BATCH_WINDOW_SLOTS);
-    let search_end = pending_expiry.min(current_slot.saturating_add(BATCH_WINDOW_SLOTS));
-
-    for batch_slot in search_start..=search_end {
-        if current_slot / BATCH_WINDOW_SLOTS != batch_slot / BATCH_WINDOW_SLOTS {
-            continue;
-        }
-
-        let reveal_salt = build_reveal_salt(batch_slot);
-        let candidate =
-            compute_rebalance_commit(protocol_key, target_weights, batch_slot, reveal_salt);
-        if candidate == pending_commit {
-            return Some((batch_slot, reveal_salt));
-        }
-    }
-
-    None
-}
-
-fn build_reveal_salt(batch_slot: u64) -> [u8; 32] {
+fn build_reveal_salt() -> [u8; 32] {
+    let entropy = Keypair::new().to_bytes();
     let mut reveal_salt = [0u8; 32];
-    reveal_salt[..8].copy_from_slice(&batch_slot.to_le_bytes());
-    reveal_salt[8..16].copy_from_slice(&batch_slot.rotate_left(17).to_le_bytes());
-    reveal_salt[16..24].copy_from_slice(&batch_slot.rotate_left(33).to_le_bytes());
-    reveal_salt[24..32].copy_from_slice(&batch_slot.rotate_left(49).to_le_bytes());
+    reveal_salt.copy_from_slice(&entropy[..32]);
     reveal_salt
 }
 

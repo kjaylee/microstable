@@ -1,5 +1,6 @@
 {
   "rpc_url": "https://api.devnet.solana.com",
+  "secondary_rpc_url": null,
   "program_id": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
   "keeper_keypairs": [
     "~/.config/solana/devnet-keypair.json",
@@ -31,6 +32,7 @@
   "oracle_confidence_max_bps": 500,
   "min_collateral_ratio_bps": 10500,
   "emergency_collateral_ratio_bps": 10000,
+  "emergency_debounce_cycles": 3,
   "rebalance_deviation_bps": 300,
   "max_rebalance_slippage_bps": 200,
   "commit_valid_for_slots": 200,
@@ -42,5 +44,6 @@
   "watchdog_cr_drop_bps": 1500,
   "watchdog_oracle_stale_slots": 120,
   "watchdog_weight_shift_bps": 600,
-  "watchdog_history_limit": 64
+  "watchdog_history_limit": 64,
+  "max_consecutive_failed_cycles": 5
 }

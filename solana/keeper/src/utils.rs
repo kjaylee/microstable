@@ -9,7 +9,10 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use std::{
+    collections::HashSet,
+    fs,
     path::{Path, PathBuf},
+    process::Command,
     str::FromStr,
 };
 use tracing::Level;
@@ -26,8 +29,8 @@ impl DerivedAccounts {
     pub fn derive(program_id: &Pubkey) -> Self {
         let (protocol_state, _) = Pubkey::find_program_address(&[b"protocol_state"], program_id);
         let (circuit_breaker, _) = Pubkey::find_program_address(&[b"circuit_breaker"], program_id);
-        let vaults = [0u8, 1, 2, 3]
-            .map(|i| Pubkey::find_program_address(&[b"collateral_vault", &[i]], program_id).0);
+        let vaults =
+            [0u8, 1, 2, 3].map(|i| Pubkey::find_program_address(&[b"collateral_vault", &[i]], program_id).0);
 
         Self {
             protocol_state,
@@ -64,20 +67,115 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 
 pub fn load_keypairs(paths: &[PathBuf]) -> Result<Vec<Keypair>> {
     let mut out = Vec::with_capacity(paths.len());
+    let mut seen_pubkeys = HashSet::new();
+
     for path in paths {
         let expanded = expand_tilde(path);
+        validate_keypair_file_security(&expanded)?;
+
         let kp = read_keypair_file(&expanded)
             .map_err(|e| anyhow!("failed to read keypair {}: {e}", expanded.display()))?;
+
+        if !seen_pubkeys.insert(kp.pubkey()) {
+            return Err(anyhow!(
+                "duplicate keeper keypair detected in config: {}",
+                kp.pubkey()
+            ));
+        }
+
         out.push(kp);
     }
+
     Ok(out)
 }
 
-pub fn keeper_quorum(keepers: &[Keypair]) -> Result<(&Keypair, &Keypair)> {
-    if keepers.len() < 2 {
-        return Err(anyhow!("keeper quorum requires at least 2 keypairs"));
+fn validate_keypair_file_security(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to stat keypair path: {}", path.display()))?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!(
+            "refusing symlinked keypair file: {}",
+            path.display()
+        ));
     }
-    Ok((&keepers[0], &keepers[1]))
+
+    if !metadata.is_file() {
+        return Err(anyhow!("keypair path is not a file: {}", path.display()));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(anyhow!(
+                "insecure keypair file mode {:o} for {} (must not be group/world accessible)",
+                mode,
+                path.display()
+            ));
+        }
+
+        let owner_uid = metadata.uid();
+        let effective_uid = effective_uid()?;
+        if owner_uid != effective_uid {
+            return Err(anyhow!(
+                "keypair file {} owned by uid {}, expected uid {}",
+                path.display(),
+                owner_uid,
+                effective_uid
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn effective_uid() -> Result<u32> {
+    let output = Command::new("id")
+        .arg("-u")
+        .output()
+        .context("failed to execute `id -u` for keypair owner validation")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "`id -u` failed while validating keypair ownership"
+        ));
+    }
+
+    let raw = String::from_utf8(output.stdout).context("`id -u` returned non-utf8 output")?;
+    let uid = raw
+        .trim()
+        .parse::<u32>()
+        .context("failed to parse uid from `id -u` output")?;
+    Ok(uid)
+}
+
+pub fn keeper_quorum_for_protocol<'a>(
+    keepers: &'a [Keypair],
+    protocol_keeper_set: &[Pubkey; 3],
+) -> Result<(&'a Keypair, &'a Keypair)> {
+    let mut members: Vec<&Keypair> = Vec::new();
+
+    for kp in keepers {
+        let pubkey = kp.pubkey();
+        if protocol_keeper_set.iter().any(|k| *k == pubkey)
+            && !members.iter().any(|existing| existing.pubkey() == pubkey)
+        {
+            members.push(kp);
+        }
+    }
+
+    if members.len() < 2 {
+        return Err(anyhow!(
+            "configured keypairs do not satisfy protocol keeper quorum; protocol set={:?}",
+            protocol_keeper_set
+        ));
+    }
+
+    Ok((members[0], members[1]))
 }
 
 pub fn verify_program_deployed(rpc: &RpcClient, program_id: &Pubkey) -> Result<()> {

@@ -39,6 +39,7 @@ pub struct WatchdogOutcome {
 
 pub fn run_watchdog_cycle(
     rpc: &RpcClient,
+    secondary_rpc: Option<&RpcClient>,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
     derived: &DerivedAccounts,
@@ -54,6 +55,48 @@ pub fn run_watchdog_cycle(
     ];
 
     let current_slot = rpc.get_slot()?;
+    let global_cr_bps = total_collateral_ratio_bps(&protocol, &vaults);
+
+    if let Some(secondary) = secondary_rpc {
+        let secondary_protocol: wire::ProtocolState =
+            utils::fetch_account(secondary, &derived.protocol_state, "ProtocolState")?;
+        let secondary_vaults = [
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[0],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[1],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[2],
+                "CollateralVault",
+            )?,
+            utils::fetch_account::<wire::CollateralVault>(
+                secondary,
+                &derived.vaults[3],
+                "CollateralVault",
+            )?,
+        ];
+        let secondary_global_cr_bps = total_collateral_ratio_bps(&secondary_protocol, &secondary_vaults);
+
+        if global_cr_bps != secondary_global_cr_bps || protocol != secondary_protocol || vaults != secondary_vaults {
+            warn!(
+                primary_global_cr_bps = global_cr_bps,
+                secondary_global_cr_bps,
+                "watchdog cycle skipped: cross-RPC mismatch on protocol safety state"
+            );
+            return Ok(WatchdogOutcome {
+                anomalies: Vec::new(),
+                alert_signature: None,
+            });
+        }
+    }
+
     let mut anomalies = Vec::new();
 
     let weight_sum: u64 = protocol.weights.iter().sum();
@@ -72,7 +115,6 @@ pub fn run_watchdog_cycle(
         ));
     }
 
-    let global_cr_bps = total_collateral_ratio_bps(&protocol, &vaults);
     if protocol.total_supply > 0 && global_cr_bps < cfg.min_collateral_ratio_bps {
         anomalies.push(format!(
             "global collateral ratio low: {} bps (< {} bps)",
@@ -168,12 +210,12 @@ pub fn run_watchdog_cycle(
             "kind": "watchdog_alert",
             "program_id": cfg.program_id.to_string(),
             "slot": current_slot,
-            "anomalies": anomalies,
+            "anomalies": anomalies.clone(),
             "recent_history": recent_history,
         })
         .to_string();
 
-        let (k1, _) = utils::keeper_quorum(keepers)?;
+        let (k1, _) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
         let memo_ix = build_memo_instruction(k1.pubkey(), payload.into_bytes())?;
         Some(utils::send_instructions(rpc, k1, &[k1], vec![memo_ix])?)
     } else {

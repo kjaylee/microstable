@@ -1,26 +1,31 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{pubkey, pubkey::Pubkey};
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 pub const DEFAULT_CONFIG_PATH: &str = "keeper/config.devnet.json";
-const DEFAULT_PROGRAM_ID: &str = "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3";
 
 const DEFAULT_ORACLE_PUBLISH_MAX_AGE_SECS: u64 = 60;
 const DEFAULT_ORACLE_CONFIDENCE_MAX_BPS: u64 = 500;
 const DEFAULT_EMERGENCY_COLLATERAL_RATIO_BPS: u64 = 10_000;
+const DEFAULT_EMERGENCY_DEBOUNCE_CYCLES: u64 = 3;
 const DEFAULT_COMMIT_REVEAL_DELAY_SLOTS: u64 = 5;
 const DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS: u64 = 120;
 const DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS: u64 = 600;
 const DEFAULT_WATCHDOG_HISTORY_LIMIT: usize = 64;
+const DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 5;
+
+const MAX_WATCHDOG_HISTORY_LIMIT: usize = 4_096;
 
 #[derive(Debug, Clone)]
 pub struct KeeperConfig {
     pub rpc_url: String,
+    pub secondary_rpc_url: Option<String>,
     pub program_id: Pubkey,
     pub keeper_keypairs: Vec<PathBuf>,
     pub pyth_feeds: Vec<PythFeedConfig>,
@@ -30,6 +35,7 @@ pub struct KeeperConfig {
     pub oracle_confidence_max_bps: u64,
     pub min_collateral_ratio_bps: u64,
     pub emergency_collateral_ratio_bps: u64,
+    pub emergency_debounce_cycles: u64,
     pub rebalance_deviation_bps: u64,
     pub max_rebalance_slippage_bps: u64,
     pub commit_valid_for_slots: u64,
@@ -42,6 +48,7 @@ pub struct KeeperConfig {
     pub watchdog_oracle_stale_slots: u64,
     pub watchdog_weight_shift_bps: u64,
     pub watchdog_history_limit: usize,
+    pub max_consecutive_failed_cycles: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +62,7 @@ pub struct PythFeedConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KeeperConfigFile {
     rpc_url: String,
+    secondary_rpc_url: Option<String>,
     program_id: String,
     keeper_keypairs: Vec<String>,
     pyth_feeds: Vec<PythFeedFile>,
@@ -64,6 +72,7 @@ struct KeeperConfigFile {
     oracle_confidence_max_bps: Option<u64>,
     min_collateral_ratio_bps: u64,
     emergency_collateral_ratio_bps: Option<u64>,
+    emergency_debounce_cycles: Option<u64>,
     rebalance_deviation_bps: u64,
     max_rebalance_slippage_bps: u64,
     commit_valid_for_slots: u64,
@@ -76,6 +85,7 @@ struct KeeperConfigFile {
     watchdog_oracle_stale_slots: Option<u64>,
     watchdog_weight_shift_bps: Option<u64>,
     watchdog_history_limit: Option<usize>,
+    max_consecutive_failed_cycles: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +121,8 @@ impl KeeperConfig {
     pub fn default_devnet() -> Self {
         Self {
             rpc_url: "https://api.devnet.solana.com".to_string(),
-            program_id: Pubkey::from_str(DEFAULT_PROGRAM_ID).expect("valid program id"),
+            secondary_rpc_url: None,
+            program_id: pubkey!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"),
             keeper_keypairs: vec![
                 PathBuf::from("~/.config/solana/devnet-keypair.json"),
                 PathBuf::from("~/.config/solana/devnet-deploy.json"),
@@ -120,22 +131,19 @@ impl KeeperConfig {
                 PythFeedConfig {
                     symbol: "USDC/USD".to_string(),
                     collateral_index: 0,
-                    price_account: Pubkey::from_str("Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX")
-                        .expect("valid pubkey"),
+                    price_account: pubkey!("Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX"),
                     max_age_secs: 120,
                 },
                 PythFeedConfig {
                     symbol: "USDT/USD".to_string(),
                     collateral_index: 1,
-                    price_account: Pubkey::from_str("HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM")
-                        .expect("valid pubkey"),
+                    price_account: pubkey!("HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM"),
                     max_age_secs: 120,
                 },
                 PythFeedConfig {
                     symbol: "DAI/USD".to_string(),
                     collateral_index: 2,
-                    price_account: Pubkey::from_str("FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN")
-                        .expect("valid pubkey"),
+                    price_account: pubkey!("FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN"),
                     max_age_secs: 120,
                 },
             ],
@@ -145,6 +153,7 @@ impl KeeperConfig {
             oracle_confidence_max_bps: DEFAULT_ORACLE_CONFIDENCE_MAX_BPS,
             min_collateral_ratio_bps: 10_500,
             emergency_collateral_ratio_bps: DEFAULT_EMERGENCY_COLLATERAL_RATIO_BPS,
+            emergency_debounce_cycles: DEFAULT_EMERGENCY_DEBOUNCE_CYCLES,
             rebalance_deviation_bps: 300,
             max_rebalance_slippage_bps: 200,
             commit_valid_for_slots: 200,
@@ -157,6 +166,7 @@ impl KeeperConfig {
             watchdog_oracle_stale_slots: DEFAULT_WATCHDOG_ORACLE_STALE_SLOTS,
             watchdog_weight_shift_bps: DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS,
             watchdog_history_limit: DEFAULT_WATCHDOG_HISTORY_LIMIT,
+            max_consecutive_failed_cycles: DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES,
         }
     }
 
@@ -176,8 +186,9 @@ impl KeeperConfig {
             });
         }
 
-        Ok(Self {
+        let cfg = Self {
             rpc_url: file.rpc_url,
+            secondary_rpc_url: file.secondary_rpc_url,
             program_id,
             keeper_keypairs: file
                 .keeper_keypairs
@@ -197,6 +208,9 @@ impl KeeperConfig {
             emergency_collateral_ratio_bps: file
                 .emergency_collateral_ratio_bps
                 .unwrap_or(DEFAULT_EMERGENCY_COLLATERAL_RATIO_BPS),
+            emergency_debounce_cycles: file
+                .emergency_debounce_cycles
+                .unwrap_or(DEFAULT_EMERGENCY_DEBOUNCE_CYCLES),
             rebalance_deviation_bps: file.rebalance_deviation_bps,
             max_rebalance_slippage_bps: file.max_rebalance_slippage_bps,
             commit_valid_for_slots: file.commit_valid_for_slots,
@@ -217,12 +231,120 @@ impl KeeperConfig {
             watchdog_history_limit: file
                 .watchdog_history_limit
                 .unwrap_or(DEFAULT_WATCHDOG_HISTORY_LIMIT),
-        })
+            max_consecutive_failed_cycles: file
+                .max_consecutive_failed_cycles
+                .unwrap_or(DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES),
+        };
+
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.rpc_url.trim().is_empty() {
+            return Err(anyhow!("rpc_url cannot be empty"));
+        }
+
+        if let Some(secondary) = &self.secondary_rpc_url {
+            if secondary.trim().is_empty() {
+                return Err(anyhow!("secondary_rpc_url cannot be empty when provided"));
+            }
+            if *secondary == self.rpc_url {
+                return Err(anyhow!(
+                    "secondary_rpc_url must differ from rpc_url for cross-validation"
+                ));
+            }
+        }
+
+        if self.keeper_keypairs.len() < 2 {
+            return Err(anyhow!("keeper_keypairs must contain at least 2 entries"));
+        }
+
+        if self.pyth_feeds.is_empty() {
+            return Err(anyhow!("pyth_feeds must contain at least one feed"));
+        }
+
+        let mut seen_collateral_indexes = HashSet::new();
+        for feed in &self.pyth_feeds {
+            if feed.symbol.trim().is_empty() {
+                return Err(anyhow!("pyth feed symbol cannot be empty"));
+            }
+            if feed.collateral_index > 3 {
+                return Err(anyhow!(
+                    "pyth feed collateral_index out of range [0,3]: {}",
+                    feed.collateral_index
+                ));
+            }
+            if !seen_collateral_indexes.insert(feed.collateral_index) {
+                return Err(anyhow!(
+                    "duplicate pyth feed collateral_index in config: {}",
+                    feed.collateral_index
+                ));
+            }
+            if feed.max_age_secs == 0 {
+                return Err(anyhow!(
+                    "pyth feed max_age_secs must be > 0 for {}",
+                    feed.symbol
+                ));
+            }
+        }
+
+        if self.tick_interval_secs == 0 {
+            return Err(anyhow!("tick_interval_secs must be > 0"));
+        }
+        if self.oracle_max_age_secs == 0 {
+            return Err(anyhow!("oracle_max_age_secs must be > 0"));
+        }
+        if self.oracle_publish_max_age_secs == 0 {
+            return Err(anyhow!("oracle_publish_max_age_secs must be > 0"));
+        }
+        if self.oracle_confidence_max_bps > 10_000 {
+            return Err(anyhow!("oracle_confidence_max_bps must be <= 10000"));
+        }
+        if self.min_collateral_ratio_bps == 0 {
+            return Err(anyhow!("min_collateral_ratio_bps must be > 0"));
+        }
+        if self.emergency_collateral_ratio_bps == 0 {
+            return Err(anyhow!("emergency_collateral_ratio_bps must be > 0"));
+        }
+        if self.emergency_collateral_ratio_bps > self.min_collateral_ratio_bps {
+            return Err(anyhow!(
+                "emergency_collateral_ratio_bps must be <= min_collateral_ratio_bps"
+            ));
+        }
+        if self.emergency_debounce_cycles == 0 {
+            return Err(anyhow!("emergency_debounce_cycles must be > 0"));
+        }
+        if self.max_rebalance_slippage_bps > 10_000 {
+            return Err(anyhow!("max_rebalance_slippage_bps must be <= 10000"));
+        }
+        if self.commit_valid_for_slots == 0 {
+            return Err(anyhow!("commit_valid_for_slots must be > 0"));
+        }
+        if self.commit_reveal_delay_slots == 0 {
+            return Err(anyhow!("commit_reveal_delay_slots must be > 0"));
+        }
+        if self.watchdog_history_limit == 0 {
+            return Err(anyhow!("watchdog_history_limit must be > 0"));
+        }
+        if self.watchdog_history_limit > MAX_WATCHDOG_HISTORY_LIMIT {
+            return Err(anyhow!(
+                "watchdog_history_limit too large: {} (max {})",
+                self.watchdog_history_limit,
+                MAX_WATCHDOG_HISTORY_LIMIT
+            ));
+        }
+        if self.max_consecutive_failed_cycles == 0 {
+            return Err(anyhow!("max_consecutive_failed_cycles must be > 0"));
+        }
+
+        Ok(())
     }
 
     fn to_file(&self) -> KeeperConfigFile {
         KeeperConfigFile {
             rpc_url: self.rpc_url.clone(),
+            secondary_rpc_url: self.secondary_rpc_url.clone(),
             program_id: self.program_id.to_string(),
             keeper_keypairs: self
                 .keeper_keypairs
@@ -245,6 +367,7 @@ impl KeeperConfig {
             oracle_confidence_max_bps: Some(self.oracle_confidence_max_bps),
             min_collateral_ratio_bps: self.min_collateral_ratio_bps,
             emergency_collateral_ratio_bps: Some(self.emergency_collateral_ratio_bps),
+            emergency_debounce_cycles: Some(self.emergency_debounce_cycles),
             rebalance_deviation_bps: self.rebalance_deviation_bps,
             max_rebalance_slippage_bps: self.max_rebalance_slippage_bps,
             commit_valid_for_slots: self.commit_valid_for_slots,
@@ -257,6 +380,7 @@ impl KeeperConfig {
             watchdog_oracle_stale_slots: Some(self.watchdog_oracle_stale_slots),
             watchdog_weight_shift_bps: Some(self.watchdog_weight_shift_bps),
             watchdog_history_limit: Some(self.watchdog_history_limit),
+            max_consecutive_failed_cycles: Some(self.max_consecutive_failed_cycles),
         }
     }
 }
