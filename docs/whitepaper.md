@@ -1,4 +1,4 @@
-# microstable: A Deterministic, Agent-Native Multi-Collateral Stablecoin Protocol
+# microstable: A Self-Evolving, Agent-Native Multi-Collateral Stablecoin Protocol
 
 **Version**: Draft v0.3  
 **Status**: Research Whitepaper (Educational / Hobby Project)  
@@ -11,7 +11,7 @@
 
 ## 1. Abstract
 
-Stablecoins remain essential settlement primitives, but typical failure modes are persistent: collateral concentration, delayed policy updates, oracle degradation, and weak emergency controls. **microstable** proposes a bounded and inspectable design: deterministic settlement on-chain, rule-based policy computation off-chain, and strict safety guards at every transition.
+Stablecoins remain essential settlement primitives, but typical failure modes are persistent: collateral concentration, delayed policy updates, oracle degradation, and weak emergency controls. **microstable** proposes a bounded and inspectable design: deterministic settlement on-chain, adaptive policy off-chain, and strict safety guards at every transition.
 
 Draft **v0.3** updates the architecture and operations model to reflect production direction:
 
@@ -48,42 +48,13 @@ The Python simulator under `simulation/` is now treated as **archived educationa
 
 ## 4. Protocol Model (Summary)
 
-### 4.1 Current Implementation: Deterministic Rule-Based Rebalancing
-
-microstable v0.3 uses a **static, deterministic rule-based** rebalancing model — not gradient-based optimization. The design deliberately prioritizes auditability and predictability over autonomy.
-
-**Weight computation** (`compute_target_weights`):
-
-For each collateral vault *i* with deposits *dᵢ*, oracle price *pᵢ*, risk score *rᵢ*, and weight cap *cᵢ*:
-
-1. Compute collateral value: *vᵢ = dᵢ × pᵢ*
-2. Compute value ratio: *ratioᵢ = vᵢ / Σvⱼ*
-3. Apply risk discount: *scoreᵢ = ratioᵢ × (1 − rᵢ)*
-4. Normalize: *wᵢ = scoreᵢ / Σscoreⱼ*
-5. Enforce weight caps: clamp each *wᵢ ≤ cᵢ*, redistribute excess proportionally
-
-This is a **closed-form, stateless formula** — no loss function, no gradient, no learning rate, no history dependence. The same inputs always produce the same outputs.
-
-**Circuit breaker state fields**: The on-chain `CircuitBreakerState` contains `optimizer_enabled` and `learning_rate_scale` fields. In the current implementation, these function as **simple toggle flags** (`optimizer_enabled` gates whether the keeper can submit rebalance proposals; `learning_rate_scale` switches between 100% and 50% weight-change dampening). They do not implement actual optimization or learning.
-
-**"Adaptive" behaviors**: The keeper's `adaptive_secondary_confirm_window_secs` adjusts RPC confirmation timeouts based on observed network latency — a standard operational heuristic, not a learning algorithm.
-
-### 4.2 Future Research Direction: Bounded Gradient Optimization
-
-A potential evolution would introduce bounded gradient-based parameter adaptation:
+Let protocol parameters be \(\theta_t\) and feasible safety set be \(\Omega\):
 
 $$
-\theta_{t+1}=\Pi_{\Omega}\left(\theta_t-\alpha_t\nabla_\theta\mathcal{L}_t\right)
+\theta_{t+1}=\Pi_{\Omega}\left(\theta_t-\alpha_t\nabla\mathcal{L}_t\right)
 $$
 
-where \(\Pi_{\Omega}\) projects onto the feasible safety set (caps/floors/simplex/fee limits/CB states), and \(\mathcal{L}_t\) is a composite loss over peg deviation, collateral concentration, and liquidity utilization.
-
-**This formula describes a research target, not the current implementation.** Any future adoption would require:
-
-- formal specification of \(\mathcal{L}_t\) and proof of convergence within \(\Omega\),
-- on-chain bounds enforcement independent of keeper correctness,
-- adversarial robustness analysis (gradient manipulation, oracle poisoning through loss surface),
-- governance approval for the transition from rule-based to adaptive mode.
+where projection \(\Pi_{\Omega}\) enforces hard bounds (caps/floors/simplex/fee limits/CB states). Optimization is subordinate to solvency and liveness.
 
 ## 5. On-Chain Instruction Surface (13)
 
@@ -187,12 +158,11 @@ The protocol integration layer now includes published MCP tooling:
 microstable v0.3 keeps the same thesis with clearer implementation posture:
 
 - on-chain settlement and invariants in Solana Anchor/Rust,
-- off-chain deterministic rule-based policy in a hardened Rust keeper,
-- gradient-based optimization reserved as a future research direction (§4.2),
+- off-chain adaptive logic in a hardened Rust keeper,
 - archived Python simulation for education and verification,
 - explicit safety-cycle evidence and reproducible integration status.
 
-The current design deliberately chooses auditability and predictability over autonomous adaptation. Every weight computation is a stateless, closed-form function — the same inputs always produce the same outputs. The project remains intentionally incremental, inspectable, and safety-first.
+The project remains intentionally incremental, inspectable, and safety-first.
 
 ## 13. References (Selected)
 
