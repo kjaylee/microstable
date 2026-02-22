@@ -39,5 +39,7 @@ Thumbs.db
 # Outputs (regenerable)
 outputs/*.csv
 outputs/*.log
+simulation/outputs/*.csv
+simulation/outputs/*.log
 __pycache__/
 target/

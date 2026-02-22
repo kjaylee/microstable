@@ -1,0 +1,39 @@
+{
+  "rpc_url": "https://api.devnet.solana.com",
+  "program_id": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+  "keeper_keypairs": [
+    "~/.config/solana/id.json",
+    "~/.config/solana/keeper2.json"
+  ],
+  "pyth_feeds": [
+    {
+      "symbol": "USDC/USD",
+      "collateral_index": 0,
+      "price_account": "Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX",
+      "max_age_secs": 120
+    },
+    {
+      "symbol": "USDT/USD",
+      "collateral_index": 1,
+      "price_account": "HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM",
+      "max_age_secs": 120
+    },
+    {
+      "symbol": "DAI/USD",
+      "collateral_index": 2,
+      "price_account": "FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN",
+      "max_age_secs": 120
+    }
+  ],
+  "tick_interval_secs": 30,
+  "oracle_max_age_secs": 120,
+  "min_collateral_ratio_bps": 10500,
+  "rebalance_deviation_bps": 300,
+  "max_rebalance_slippage_bps": 200,
+  "commit_valid_for_slots": 200,
+  "auto_emergency_shutdown": false,
+  "send_watchdog_alert_tx": false,
+  "execute_rebalance_immediately": false,
+  "watchdog_supply_spike_bps": 2500,
+  "watchdog_cr_drop_bps": 1500
+}
