@@ -1,0 +1,36 @@
+{
+  "cluster": "devnet",
+  "mints": {
+    "usdc": "VLDKjAMvPXK2rGbhKynrShXgALfikwrwD517CxLRb8C",
+    "usdt": "6muD8Dtn4TVbENmXxVN7yoznwB2cVH9Y8cHNZ6hpvxJd",
+    "dai": "6zTaf6yZ6HBFt2Bvi43fhoaXDid2dmLsCk64tq58CvZ4",
+    "usds": "HtFssc7CKVTf67zDPMmK6LiurKgjHEWtaviqG24XKWjk",
+    "mstb": "EZUwC88f1s3k9prgv5DGY6wML8giBqdpRxoA2rLtGA6R"
+  },
+  "keeper_set": [
+    "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+    "2CuNvyo4zFUMhQn6USd8j9MDM8ZrZqJnAFURnTHJ3nZE",
+    "2gAL9LCtSpGCWGvAiL6aAYpf5cPrQxxzyeGSa9gAd46E"
+  ],
+  "pyth": {
+    "programs": {
+      "receiver": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+      "price_feed": "pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT"
+    },
+    "shard": 0,
+    "feeds": {
+      "usdc_usd": {
+        "id": "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a",
+        "account": "Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX"
+      },
+      "usdt_usd": {
+        "id": "2b89b9dc8fdf9f34709a5b106b472f0f39bb6ca9ce04b0fd7f2e971688e2e53b",
+        "account": "HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM"
+      },
+      "dai_usd": {
+        "id": "b0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd",
+        "account": "FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN"
+      }
+    }
+  }
+}

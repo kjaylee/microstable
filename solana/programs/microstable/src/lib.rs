@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::hash::hashv;
+use anchor_lang::solana_program::{hash::hashv, program::invoke, system_instruction};
 use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Mint as TokenMint, Token, TokenAccount, TransferChecked};
 
@@ -20,6 +20,7 @@ const ADAPTIVE_RECOVERY_BPS_MAX: u64 = 15_000; // +1.5%
 
 // // BLUE-TEAM: F12 - restrict initializer to trusted deploy authority.
 const TRUSTED_INITIALIZER: Pubkey = pubkey!("3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk");
+const PYTH_RECEIVER_PROGRAM: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 
 // // BLUE-TEAM: INPUT-HARDEN - strict bounds for external numeric inputs.
 const PRICE_MIN: u64 = 500_000; // $0.50
@@ -48,7 +49,9 @@ pub mod microstable {
             ErrorCode::UnauthorizedInitializer
         );
         require!(
-            keeper_set.iter().any(|k| *k == ctx.accounts.authority.key()),
+            keeper_set
+                .iter()
+                .any(|k| *k == ctx.accounts.authority.key()),
             ErrorCode::InvalidKeeperSet
         );
 
@@ -133,6 +136,140 @@ pub mod microstable {
         Ok(())
     }
 
+    pub fn migrate_legacy_state(
+        ctx: Context<MigrateLegacyState>,
+        keeper_set: [Pubkey; 3],
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.authority.key(),
+            TRUSTED_INITIALIZER,
+            ErrorCode::UnauthorizedInitializer
+        );
+        validate_keeper_set(&keeper_set)?;
+        require!(
+            keeper_set
+                .iter()
+                .any(|k| *k == ctx.accounts.authority.key()),
+            ErrorCode::InvalidKeeperSet
+        );
+
+        let program_id = ctx.program_id;
+        let slot = Clock::get()?.slot;
+
+        let (protocol_pda, protocol_bump) =
+            Pubkey::find_program_address(&[b"protocol_state"], program_id);
+        require_keys_eq!(
+            ctx.accounts.protocol_state.key(),
+            protocol_pda,
+            ErrorCode::InvalidLegacyAccount
+        );
+        require_keys_eq!(
+            *ctx.accounts.protocol_state.owner,
+            *program_id,
+            ErrorCode::InvalidLegacyAccount
+        );
+        ensure_account_space(
+            &ctx.accounts.protocol_state.to_account_info(),
+            &ctx.accounts.authority,
+            &ctx.accounts.system_program,
+            ProtocolState::SPACE,
+        )?;
+
+        let protocol = ProtocolState {
+            weights: [400_000, 300_000, 200_000, 100_000],
+            fee_rate: 2_000,
+            cr_target: 1_200_000,
+            total_supply: 0,
+            last_update_slot: slot,
+            keeper_set,
+            emergency_shutdown: false,
+            pending_rebalance_commit: [0u8; 32],
+            pending_rebalance_slot: 0,
+            pending_rebalance_expiry: 0,
+            bump: protocol_bump,
+        };
+        write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
+
+        let (circuit_pda, circuit_bump) =
+            Pubkey::find_program_address(&[b"circuit_breaker"], program_id);
+        require_keys_eq!(
+            ctx.accounts.circuit_breaker.key(),
+            circuit_pda,
+            ErrorCode::InvalidLegacyAccount
+        );
+        require_keys_eq!(
+            *ctx.accounts.circuit_breaker.owner,
+            *program_id,
+            ErrorCode::InvalidLegacyAccount
+        );
+        ensure_account_space(
+            &ctx.accounts.circuit_breaker.to_account_info(),
+            &ctx.accounts.authority,
+            &ctx.accounts.system_program,
+            CircuitBreakerState::SPACE,
+        )?;
+
+        let circuit = CircuitBreakerState {
+            status: [BreakerStatus::Inactive as u8; 4],
+            activation_tick: [0; 4],
+            trigger_count: [0; 4],
+            cooldown_until: [0; 4],
+            last_trigger_tick: [0; 4],
+            recent_trigger_count: [0; 4],
+            recovery_tick: [0; 4],
+            cb1_collateral_index: 0,
+            mint_rate_limit: SCALE,
+            optimizer_enabled: true,
+            learning_rate_scale: SCALE,
+            max_activation_duration: MAX_ACTIVATION_DURATION,
+            bump: circuit_bump,
+        };
+        write_anchor_account(&ctx.accounts.circuit_breaker.to_account_info(), &circuit)?;
+
+        migrate_vault_account(
+            &ctx.accounts.vault_usdc.to_account_info(),
+            0,
+            ctx.accounts.usdc_mint.key(),
+            protocol_pda,
+            550_000,
+            50_000,
+            slot,
+            program_id,
+        )?;
+        migrate_vault_account(
+            &ctx.accounts.vault_usdt.to_account_info(),
+            1,
+            ctx.accounts.usdt_mint.key(),
+            protocol_pda,
+            450_000,
+            70_000,
+            slot,
+            program_id,
+        )?;
+        migrate_vault_account(
+            &ctx.accounts.vault_dai.to_account_info(),
+            2,
+            ctx.accounts.dai_mint.key(),
+            protocol_pda,
+            450_000,
+            80_000,
+            slot,
+            program_id,
+        )?;
+        migrate_vault_account(
+            &ctx.accounts.vault_usds.to_account_info(),
+            3,
+            ctx.accounts.usds_mint.key(),
+            protocol_pda,
+            350_000,
+            100_000,
+            slot,
+            program_id,
+        )?;
+
+        Ok(())
+    }
+
     pub fn update_oracle(
         ctx: Context<UpdateOracle>,
         collateral_index: u8,
@@ -154,8 +291,14 @@ pub mod microstable {
         let slot = Clock::get()?.slot;
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
-        require!(price >= PRICE_MIN && price <= PRICE_MAX, ErrorCode::InvalidPrice);
-        require!(confidence <= ORACLE_CONFIDENCE_MAX, ErrorCode::ConfidenceTooHigh);
+        require!(
+            price >= PRICE_MIN && price <= PRICE_MAX,
+            ErrorCode::InvalidPrice
+        );
+        require!(
+            confidence <= ORACLE_CONFIDENCE_MAX,
+            ErrorCode::ConfidenceTooHigh
+        );
         require!(observed_slot <= slot, ErrorCode::InvalidObservedSlot);
         require!(
             slot.saturating_sub(observed_slot) <= ORACLE_STALENESS_MAX,
@@ -163,10 +306,108 @@ pub mod microstable {
         );
 
         match collateral_index {
-            0 => update_vault_oracle(&mut ctx.accounts.vault_usdc, price, confidence, observed_slot)?,
-            1 => update_vault_oracle(&mut ctx.accounts.vault_usdt, price, confidence, observed_slot)?,
-            2 => update_vault_oracle(&mut ctx.accounts.vault_dai, price, confidence, observed_slot)?,
-            3 => update_vault_oracle(&mut ctx.accounts.vault_usds, price, confidence, observed_slot)?,
+            0 => update_vault_oracle(
+                &mut ctx.accounts.vault_usdc,
+                price,
+                confidence,
+                observed_slot,
+            )?,
+            1 => update_vault_oracle(
+                &mut ctx.accounts.vault_usdt,
+                price,
+                confidence,
+                observed_slot,
+            )?,
+            2 => update_vault_oracle(
+                &mut ctx.accounts.vault_dai,
+                price,
+                confidence,
+                observed_slot,
+            )?,
+            3 => update_vault_oracle(
+                &mut ctx.accounts.vault_usds,
+                price,
+                confidence,
+                observed_slot,
+            )?,
+            _ => return err!(ErrorCode::InvalidCollateralIndex),
+        }
+
+        ctx.accounts.protocol_state.last_update_slot = slot;
+        let vaults = [
+            &ctx.accounts.vault_usdc,
+            &ctx.accounts.vault_usdt,
+            &ctx.accounts.vault_dai,
+            &ctx.accounts.vault_usds,
+        ];
+        assert_invariants(&ctx.accounts.protocol_state, vaults)?;
+        Ok(())
+    }
+
+    pub fn set_pyth_feed(
+        ctx: Context<SetPythFeed>,
+        collateral_index: u8,
+        pyth_price_feed: Pubkey,
+    ) -> Result<()> {
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
+        require!(
+            pyth_price_feed != Pubkey::default(),
+            ErrorCode::PythFeedNotConfigured
+        );
+
+        match collateral_index {
+            0 => ctx.accounts.vault_usdc.pyth_price_feed = pyth_price_feed,
+            1 => ctx.accounts.vault_usdt.pyth_price_feed = pyth_price_feed,
+            2 => ctx.accounts.vault_dai.pyth_price_feed = pyth_price_feed,
+            3 => ctx.accounts.vault_usds.pyth_price_feed = pyth_price_feed,
+            _ => return err!(ErrorCode::InvalidCollateralIndex),
+        }
+
+        ctx.accounts.protocol_state.last_update_slot = Clock::get()?.slot;
+        let vaults = [
+            &ctx.accounts.vault_usdc,
+            &ctx.accounts.vault_usdt,
+            &ctx.accounts.vault_dai,
+            &ctx.accounts.vault_usds,
+        ];
+        assert_invariants(&ctx.accounts.protocol_state, vaults)?;
+        Ok(())
+    }
+
+    pub fn update_oracle_pyth(ctx: Context<UpdateOraclePyth>, collateral_index: u8) -> Result<()> {
+        require!(
+            !ctx.accounts.protocol_state.emergency_shutdown,
+            ErrorCode::EmergencyShutdownActive
+        );
+
+        let slot = Clock::get()?.slot;
+        refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
+
+        match collateral_index {
+            0 => update_vault_oracle_from_pyth(
+                &mut ctx.accounts.vault_usdc,
+                &ctx.accounts.pyth_price_account,
+                slot,
+            )?,
+            1 => update_vault_oracle_from_pyth(
+                &mut ctx.accounts.vault_usdt,
+                &ctx.accounts.pyth_price_account,
+                slot,
+            )?,
+            2 => update_vault_oracle_from_pyth(
+                &mut ctx.accounts.vault_dai,
+                &ctx.accounts.pyth_price_account,
+                slot,
+            )?,
+            3 => update_vault_oracle_from_pyth(
+                &mut ctx.accounts.vault_usds,
+                &ctx.accounts.pyth_price_account,
+                slot,
+            )?,
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         }
 
@@ -184,7 +425,10 @@ pub mod microstable {
     pub fn mint(ctx: Context<Mint>, collateral_index: u8, collateral_amount: u64) -> Result<()> {
         require!(collateral_index < 4, ErrorCode::InvalidCollateralIndex);
         require!(collateral_amount > 0, ErrorCode::InvalidAmount);
-        require!(collateral_amount <= MAX_COLLATERAL_AMOUNT, ErrorCode::AmountTooLarge);
+        require!(
+            collateral_amount <= MAX_COLLATERAL_AMOUNT,
+            ErrorCode::AmountTooLarge
+        );
         require!(
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
@@ -194,10 +438,10 @@ pub mod microstable {
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
         let vaults_before = [
-            &ctx.accounts.vault_usdc,
-            &ctx.accounts.vault_usdt,
-            &ctx.accounts.vault_dai,
-            &ctx.accounts.vault_usds,
+            ctx.accounts.vault_usdc.as_ref(),
+            ctx.accounts.vault_usdt.as_ref(),
+            ctx.accounts.vault_dai.as_ref(),
+            ctx.accounts.vault_usds.as_ref(),
         ];
         assert_invariants(&ctx.accounts.protocol_state, vaults_before)?;
 
@@ -217,28 +461,32 @@ pub mod microstable {
         let price = match collateral_index {
             0 => {
                 require!(
-                    slot.saturating_sub(ctx.accounts.vault_usdc.last_oracle_slot) <= ORACLE_STALENESS_MAX,
+                    slot.saturating_sub(ctx.accounts.vault_usdc.last_oracle_slot)
+                        <= ORACLE_STALENESS_MAX,
                     ErrorCode::OracleStale
                 );
                 ctx.accounts.vault_usdc.price
             }
             1 => {
                 require!(
-                    slot.saturating_sub(ctx.accounts.vault_usdt.last_oracle_slot) <= ORACLE_STALENESS_MAX,
+                    slot.saturating_sub(ctx.accounts.vault_usdt.last_oracle_slot)
+                        <= ORACLE_STALENESS_MAX,
                     ErrorCode::OracleStale
                 );
                 ctx.accounts.vault_usdt.price
             }
             2 => {
                 require!(
-                    slot.saturating_sub(ctx.accounts.vault_dai.last_oracle_slot) <= ORACLE_STALENESS_MAX,
+                    slot.saturating_sub(ctx.accounts.vault_dai.last_oracle_slot)
+                        <= ORACLE_STALENESS_MAX,
                     ErrorCode::OracleStale
                 );
                 ctx.accounts.vault_dai.price
             }
             3 => {
                 require!(
-                    slot.saturating_sub(ctx.accounts.vault_usds.last_oracle_slot) <= ORACLE_STALENESS_MAX,
+                    slot.saturating_sub(ctx.accounts.vault_usds.last_oracle_slot)
+                        <= ORACLE_STALENESS_MAX,
                     ErrorCode::OracleStale
                 );
                 ctx.accounts.vault_usds.price
@@ -247,14 +495,23 @@ pub mod microstable {
         };
 
         let gross_musd = mul_div_floor(collateral_amount, price, SCALE)?;
-        let max_mintable_by_cr = mul_div_floor(gross_musd, SCALE, ctx.accounts.protocol_state.cr_target)?;
-        let fee = mul_div_ceil(max_mintable_by_cr, ctx.accounts.protocol_state.fee_rate, SCALE)?;
+        let max_mintable_by_cr =
+            mul_div_floor(gross_musd, SCALE, ctx.accounts.protocol_state.cr_target)?;
+        let fee = mul_div_ceil(
+            max_mintable_by_cr,
+            ctx.accounts.protocol_state.fee_rate,
+            SCALE,
+        )?;
         let minted_musd = max_mintable_by_cr
             .checked_sub(fee)
             .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
         require!(minted_musd > 0, ErrorCode::InvalidAmount);
 
-        let max_mint = mul_div_floor(gross_musd, ctx.accounts.circuit_breaker.mint_rate_limit, SCALE)?;
+        let max_mint = mul_div_floor(
+            gross_musd,
+            ctx.accounts.circuit_breaker.mint_rate_limit,
+            SCALE,
+        )?;
         require!(minted_musd <= max_mint, ErrorCode::MintRateLimited);
 
         // FIX CR-01: validate selected collateral mint/vault bindings and canonical ATA addresses.
@@ -265,7 +522,11 @@ pub mod microstable {
             3 => (ctx.accounts.vault_usds.mint, ctx.accounts.vault_usds.vault),
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         };
-        require_keys_eq!(ctx.accounts.collateral_mint.key(), expected_mint, ErrorCode::InvalidCollateralMint);
+        require_keys_eq!(
+            ctx.accounts.collateral_mint.key(),
+            expected_mint,
+            ErrorCode::InvalidCollateralMint
+        );
         require_keys_eq!(
             ctx.accounts.vault_collateral_ata.key(),
             expected_vault_ata,
@@ -280,8 +541,16 @@ pub mod microstable {
             &ctx.accounts.protocol_state.key(),
             &ctx.accounts.collateral_mint.key(),
         );
-        require_keys_eq!(ctx.accounts.user_collateral_ata.key(), expected_user_ata, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.vault_collateral_ata.key(), expected_protocol_ata, ErrorCode::InvalidTokenAccount);
+        require_keys_eq!(
+            ctx.accounts.user_collateral_ata.key(),
+            expected_user_ata,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.vault_collateral_ata.key(),
+            expected_protocol_ata,
+            ErrorCode::InvalidTokenAccount
+        );
 
         // FIX CR-01: execute real SPL transfer before mutating accounting state.
         token::transfer_checked(
@@ -335,10 +604,10 @@ pub mod microstable {
         }
 
         let vaults_after = [
-            &ctx.accounts.vault_usdc,
-            &ctx.accounts.vault_usdt,
-            &ctx.accounts.vault_dai,
-            &ctx.accounts.vault_usds,
+            ctx.accounts.vault_usdc.as_ref(),
+            ctx.accounts.vault_usdt.as_ref(),
+            ctx.accounts.vault_dai.as_ref(),
+            ctx.accounts.vault_usds.as_ref(),
         ];
         let total_value = total_collateral_value(vaults_after)?;
         let new_supply = ctx
@@ -347,15 +616,23 @@ pub mod microstable {
             .total_supply
             .checked_add(minted_musd)
             .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
-        let required_value = mul_div_ceil(new_supply, ctx.accounts.protocol_state.cr_target, SCALE)?;
-        require!(total_value >= required_value, ErrorCode::InsufficientCollateralRatio);
+        let required_value =
+            mul_div_ceil(new_supply, ctx.accounts.protocol_state.cr_target, SCALE)?;
+        require!(
+            total_value >= required_value,
+            ErrorCode::InsufficientCollateralRatio
+        );
 
         let user_position = &mut ctx.accounts.user_position;
         if user_position.owner == Pubkey::default() {
             user_position.owner = ctx.accounts.user.key();
             user_position.bump = ctx.bumps.user_position;
         }
-        require_keys_eq!(user_position.owner, ctx.accounts.user.key(), ErrorCode::Unauthorized);
+        require_keys_eq!(
+            user_position.owner,
+            ctx.accounts.user.key(),
+            ErrorCode::Unauthorized
+        );
 
         user_position.usd_balance = user_position
             .usd_balance
@@ -375,7 +652,10 @@ pub mod microstable {
 
     pub fn redeem(ctx: Context<Redeem>, musd_amount: u64) -> Result<()> {
         require!(musd_amount > 0, ErrorCode::InvalidAmount);
-        require!(musd_amount <= MAX_COLLATERAL_AMOUNT, ErrorCode::AmountTooLarge);
+        require!(
+            musd_amount <= MAX_COLLATERAL_AMOUNT,
+            ErrorCode::AmountTooLarge
+        );
         require!(
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
@@ -385,16 +665,23 @@ pub mod microstable {
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
         let vaults_before = [
-            &ctx.accounts.vault_usdc,
-            &ctx.accounts.vault_usdt,
-            &ctx.accounts.vault_dai,
-            &ctx.accounts.vault_usds,
+            ctx.accounts.vault_usdc.as_ref(),
+            ctx.accounts.vault_usdt.as_ref(),
+            ctx.accounts.vault_dai.as_ref(),
+            ctx.accounts.vault_usds.as_ref(),
         ];
         assert_invariants(&ctx.accounts.protocol_state, vaults_before)?;
 
         let user_position = &mut ctx.accounts.user_position;
-        require_keys_eq!(user_position.owner, ctx.accounts.user.key(), ErrorCode::Unauthorized);
-        require!(user_position.usd_balance >= musd_amount, ErrorCode::InsufficientBalance);
+        require_keys_eq!(
+            user_position.owner,
+            ctx.accounts.user.key(),
+            ErrorCode::Unauthorized
+        );
+        require!(
+            user_position.usd_balance >= musd_amount,
+            ErrorCode::InsufficientBalance
+        );
         require!(
             ctx.accounts.protocol_state.total_supply >= musd_amount,
             ErrorCode::InsufficientBalance
@@ -410,24 +697,76 @@ pub mod microstable {
         };
 
         // FIX CR-01: validate canonical mint/vault token-account bindings for all collateral legs.
-        require_keys_eq!(ctx.accounts.usdc_mint.key(), ctx.accounts.vault_usdc.mint, ErrorCode::InvalidCollateralMint);
-        require_keys_eq!(ctx.accounts.usdt_mint.key(), ctx.accounts.vault_usdt.mint, ErrorCode::InvalidCollateralMint);
-        require_keys_eq!(ctx.accounts.dai_mint.key(), ctx.accounts.vault_dai.mint, ErrorCode::InvalidCollateralMint);
-        require_keys_eq!(ctx.accounts.usds_mint.key(), ctx.accounts.vault_usds.mint, ErrorCode::InvalidCollateralMint);
+        require_keys_eq!(
+            ctx.accounts.usdc_mint.key(),
+            ctx.accounts.vault_usdc.mint,
+            ErrorCode::InvalidCollateralMint
+        );
+        require_keys_eq!(
+            ctx.accounts.usdt_mint.key(),
+            ctx.accounts.vault_usdt.mint,
+            ErrorCode::InvalidCollateralMint
+        );
+        require_keys_eq!(
+            ctx.accounts.dai_mint.key(),
+            ctx.accounts.vault_dai.mint,
+            ErrorCode::InvalidCollateralMint
+        );
+        require_keys_eq!(
+            ctx.accounts.usds_mint.key(),
+            ctx.accounts.vault_usds.mint,
+            ErrorCode::InvalidCollateralMint
+        );
 
-        require_keys_eq!(ctx.accounts.vault_usdc_ata.key(), ctx.accounts.vault_usdc.vault, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.vault_usdt_ata.key(), ctx.accounts.vault_usdt.vault, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.vault_dai_ata.key(), ctx.accounts.vault_dai.vault, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.vault_usds_ata.key(), ctx.accounts.vault_usds.vault, ErrorCode::InvalidTokenAccount);
+        require_keys_eq!(
+            ctx.accounts.vault_usdc_ata.key(),
+            ctx.accounts.vault_usdc.vault,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.vault_usdt_ata.key(),
+            ctx.accounts.vault_usdt.vault,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.vault_dai_ata.key(),
+            ctx.accounts.vault_dai.vault,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.vault_usds_ata.key(),
+            ctx.accounts.vault_usds.vault,
+            ErrorCode::InvalidTokenAccount
+        );
 
-        let expected_user_usdc = get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.usdc_mint.key());
-        let expected_user_usdt = get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.usdt_mint.key());
-        let expected_user_dai = get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.dai_mint.key());
-        let expected_user_usds = get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.usds_mint.key());
-        require_keys_eq!(ctx.accounts.user_usdc_ata.key(), expected_user_usdc, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.user_usdt_ata.key(), expected_user_usdt, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.user_dai_ata.key(), expected_user_dai, ErrorCode::InvalidTokenAccount);
-        require_keys_eq!(ctx.accounts.user_usds_ata.key(), expected_user_usds, ErrorCode::InvalidTokenAccount);
+        let expected_user_usdc =
+            get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.usdc_mint.key());
+        let expected_user_usdt =
+            get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.usdt_mint.key());
+        let expected_user_dai =
+            get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.dai_mint.key());
+        let expected_user_usds =
+            get_associated_token_address(&ctx.accounts.user.key(), &ctx.accounts.usds_mint.key());
+        require_keys_eq!(
+            ctx.accounts.user_usdc_ata.key(),
+            expected_user_usdc,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.user_usdt_ata.key(),
+            expected_user_usdt,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.user_dai_ata.key(),
+            expected_user_dai,
+            ErrorCode::InvalidTokenAccount
+        );
+        require_keys_eq!(
+            ctx.accounts.user_usds_ata.key(),
+            expected_user_usds,
+            ErrorCode::InvalidTokenAccount
+        );
 
         let payout_usdc = preview_redeem_from_vault(
             ctx.accounts.vault_usdc.total_deposits,
@@ -520,10 +859,10 @@ pub mod microstable {
         ctx.accounts.protocol_state.last_update_slot = slot;
 
         let vaults_after = [
-            &ctx.accounts.vault_usdc,
-            &ctx.accounts.vault_usdt,
-            &ctx.accounts.vault_dai,
-            &ctx.accounts.vault_usds,
+            ctx.accounts.vault_usdc.as_ref(),
+            ctx.accounts.vault_usdt.as_ref(),
+            ctx.accounts.vault_dai.as_ref(),
+            ctx.accounts.vault_usds.as_ref(),
         ];
         assert_invariants(&ctx.accounts.protocol_state, vaults_after)?;
         Ok(())
@@ -544,8 +883,14 @@ pub mod microstable {
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
         );
-        require!(valid_for_slots >= COMMIT_REVEAL_DELAY_SLOTS, ErrorCode::InvalidCommitWindow);
-        require!(valid_for_slots <= COMMIT_REVEAL_MAX_VALIDITY, ErrorCode::InvalidCommitWindow);
+        require!(
+            valid_for_slots >= COMMIT_REVEAL_DELAY_SLOTS,
+            ErrorCode::InvalidCommitWindow
+        );
+        require!(
+            valid_for_slots <= COMMIT_REVEAL_MAX_VALIDITY,
+            ErrorCode::InvalidCommitWindow
+        );
 
         let slot = Clock::get()?.slot;
         let protocol = &mut ctx.accounts.protocol_state;
@@ -577,7 +922,10 @@ pub mod microstable {
         let slot = Clock::get()?.slot;
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
-        require!(max_slippage_bps <= MAX_REBALANCE_SLIPPAGE_BPS, ErrorCode::InvalidSlippageBound);
+        require!(
+            max_slippage_bps <= MAX_REBALANCE_SLIPPAGE_BPS,
+            ErrorCode::InvalidSlippageBound
+        );
         validate_batch_window(slot, batch_slot)?;
         validate_weight_sum(new_weights)?;
 
@@ -586,7 +934,9 @@ pub mod microstable {
         for i in 0..4 {
             let d = abs_diff(old_weights[i], new_weights[i]);
             require!(d <= WEIGHT_STEP_LIMIT, ErrorCode::WeightStepTooLarge);
-            l1 = l1.checked_add(d).ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+            l1 = l1
+                .checked_add(d)
+                .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
         }
         let turnover = l1 / 2;
         require!(turnover <= TURNOVER_LIMIT, ErrorCode::TurnoverTooHigh);
@@ -598,12 +948,27 @@ pub mod microstable {
         // // BLUE-TEAM: I25 - commit/reveal required for large turnover operations.
         if turnover >= LARGE_REBALANCE_THRESHOLD {
             let protocol = &mut ctx.accounts.protocol_state;
-            require!(protocol.pending_rebalance_commit != [0u8; 32], ErrorCode::MissingCommitReveal);
-            require!(slot >= protocol.pending_rebalance_slot.saturating_add(COMMIT_REVEAL_DELAY_SLOTS), ErrorCode::CommitRevealTooEarly);
-            require!(slot <= protocol.pending_rebalance_expiry, ErrorCode::CommitRevealExpired);
+            require!(
+                protocol.pending_rebalance_commit != [0u8; 32],
+                ErrorCode::MissingCommitReveal
+            );
+            require!(
+                slot >= protocol
+                    .pending_rebalance_slot
+                    .saturating_add(COMMIT_REVEAL_DELAY_SLOTS),
+                ErrorCode::CommitRevealTooEarly
+            );
+            require!(
+                slot <= protocol.pending_rebalance_expiry,
+                ErrorCode::CommitRevealExpired
+            );
 
-            let expected = compute_rebalance_commit(protocol.key(), new_weights, batch_slot, reveal_salt);
-            require!(expected == protocol.pending_rebalance_commit, ErrorCode::CommitRevealMismatch);
+            let expected =
+                compute_rebalance_commit(protocol.key(), new_weights, batch_slot, reveal_salt);
+            require!(
+                expected == protocol.pending_rebalance_commit,
+                ErrorCode::CommitRevealMismatch
+            );
 
             protocol.pending_rebalance_commit = [0u8; 32];
             protocol.pending_rebalance_slot = 0;
@@ -669,7 +1034,10 @@ pub mod microstable {
             !is_active_like(circuit.status[idx]),
             ErrorCode::CircuitBreakerAlreadyActive
         );
-        require!(slot >= circuit.cooldown_until[idx], ErrorCode::CircuitBreakerCoolingDown);
+        require!(
+            slot >= circuit.cooldown_until[idx],
+            ErrorCode::CircuitBreakerCoolingDown
+        );
 
         if slot.saturating_sub(circuit.last_trigger_tick[idx]) <= 30 {
             circuit.recent_trigger_count[idx] = circuit.recent_trigger_count[idx].saturating_add(1);
@@ -760,13 +1128,20 @@ pub mod microstable {
         let idx = cb_to_index(cb_index)?;
         let (status, activation_tick, cb1_index) = {
             let view = &ctx.accounts.circuit_breaker;
-            (view.status[idx], view.activation_tick[idx], view.cb1_collateral_index)
+            (
+                view.status[idx],
+                view.activation_tick[idx],
+                view.cb1_collateral_index,
+            )
         };
 
         require!(is_active_like(status), ErrorCode::CircuitBreakerNotActive);
 
         let min_hold = effective_min_hold(cb_index, status);
-        require!(slot.saturating_sub(activation_tick) >= min_hold, ErrorCode::MinHoldNotMet);
+        require!(
+            slot.saturating_sub(activation_tick) >= min_hold,
+            ErrorCode::MinHoldNotMet
+        );
 
         {
             let vaults = [
@@ -838,6 +1213,42 @@ pub mod microstable {
 
         Ok(())
     }
+}
+
+#[derive(Accounts)]
+pub struct MigrateLegacyState<'info> {
+    /// CHECK: legacy account migration path; PDA and owner checked in instruction.
+    #[account(mut)]
+    pub protocol_state: UncheckedAccount<'info>,
+
+    /// CHECK: legacy account migration path; PDA and owner checked in instruction.
+    #[account(mut)]
+    pub circuit_breaker: UncheckedAccount<'info>,
+
+    /// CHECK: legacy account migration path; PDA and owner checked in instruction.
+    #[account(mut)]
+    pub vault_usdc: UncheckedAccount<'info>,
+
+    /// CHECK: legacy account migration path; PDA and owner checked in instruction.
+    #[account(mut)]
+    pub vault_usdt: UncheckedAccount<'info>,
+
+    /// CHECK: legacy account migration path; PDA and owner checked in instruction.
+    #[account(mut)]
+    pub vault_dai: UncheckedAccount<'info>,
+
+    /// CHECK: legacy account migration path; PDA and owner checked in instruction.
+    #[account(mut)]
+    pub vault_usds: UncheckedAccount<'info>,
+
+    pub usdc_mint: Account<'info, TokenMint>,
+    pub usdt_mint: Account<'info, TokenMint>,
+    pub dai_mint: Account<'info, TokenMint>,
+    pub usds_mint: Account<'info, TokenMint>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -932,7 +1343,28 @@ pub struct UpdateOracle<'info> {
 }
 
 #[derive(Accounts)]
-pub struct Mint<'info> {
+pub struct SetPythFeed<'info> {
+    #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [0u8].as_ref()], bump = vault_usdc.bump)]
+    pub vault_usdc: Account<'info, CollateralVault>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [1u8].as_ref()], bump = vault_usdt.bump)]
+    pub vault_usdt: Account<'info, CollateralVault>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [2u8].as_ref()], bump = vault_dai.bump)]
+    pub vault_dai: Account<'info, CollateralVault>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [3u8].as_ref()], bump = vault_usds.bump)]
+    pub vault_usds: Account<'info, CollateralVault>,
+
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateOraclePyth<'info> {
     #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -950,6 +1382,30 @@ pub struct Mint<'info> {
 
     #[account(mut, seeds = [b"collateral_vault".as_ref(), [3u8].as_ref()], bump = vault_usds.bump)]
     pub vault_usds: Account<'info, CollateralVault>,
+
+    /// CHECK: ownership and feed binding are validated in instruction logic.
+    pub pyth_price_account: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct Mint<'info> {
+    #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    #[account(mut, seeds = [b"circuit_breaker"], bump = circuit_breaker.bump)]
+    pub circuit_breaker: Box<Account<'info, CircuitBreakerState>>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [0u8].as_ref()], bump = vault_usdc.bump)]
+    pub vault_usdc: Box<Account<'info, CollateralVault>>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [1u8].as_ref()], bump = vault_usdt.bump)]
+    pub vault_usdt: Box<Account<'info, CollateralVault>>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [2u8].as_ref()], bump = vault_dai.bump)]
+    pub vault_dai: Box<Account<'info, CollateralVault>>,
+
+    #[account(mut, seeds = [b"collateral_vault".as_ref(), [3u8].as_ref()], bump = vault_usds.bump)]
+    pub vault_usds: Box<Account<'info, CollateralVault>>,
 
     #[account(mut)]
     pub user: Signer<'info>,
@@ -961,7 +1417,7 @@ pub struct Mint<'info> {
         seeds = [b"user_position", user.key().as_ref()],
         bump
     )]
-    pub user_position: Account<'info, UserPosition>,
+    pub user_position: Box<Account<'info, UserPosition>>,
 
     /// FIX CR-01: enforce canonical user ATA for selected collateral.
     #[account(
@@ -969,7 +1425,7 @@ pub struct Mint<'info> {
         associated_token::mint = collateral_mint,
         associated_token::authority = user,
     )]
-    pub user_collateral_ata: Account<'info, TokenAccount>,
+    pub user_collateral_ata: Box<Account<'info, TokenAccount>>,
 
     /// FIX CR-01: enforce canonical protocol vault ATA for selected collateral.
     #[account(
@@ -977,9 +1433,9 @@ pub struct Mint<'info> {
         associated_token::mint = collateral_mint,
         associated_token::authority = protocol_state,
     )]
-    pub vault_collateral_ata: Account<'info, TokenAccount>,
+    pub vault_collateral_ata: Box<Account<'info, TokenAccount>>,
 
-    pub collateral_mint: Account<'info, TokenMint>,
+    pub collateral_mint: Box<Account<'info, TokenMint>>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -988,22 +1444,22 @@ pub struct Mint<'info> {
 #[derive(Accounts)]
 pub struct Redeem<'info> {
     #[account(mut, seeds = [b"protocol_state"], bump = protocol_state.bump)]
-    pub protocol_state: Account<'info, ProtocolState>,
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
     #[account(mut, seeds = [b"circuit_breaker"], bump = circuit_breaker.bump)]
-    pub circuit_breaker: Account<'info, CircuitBreakerState>,
+    pub circuit_breaker: Box<Account<'info, CircuitBreakerState>>,
 
     #[account(mut, seeds = [b"collateral_vault".as_ref(), [0u8].as_ref()], bump = vault_usdc.bump)]
-    pub vault_usdc: Account<'info, CollateralVault>,
+    pub vault_usdc: Box<Account<'info, CollateralVault>>,
 
     #[account(mut, seeds = [b"collateral_vault".as_ref(), [1u8].as_ref()], bump = vault_usdt.bump)]
-    pub vault_usdt: Account<'info, CollateralVault>,
+    pub vault_usdt: Box<Account<'info, CollateralVault>>,
 
     #[account(mut, seeds = [b"collateral_vault".as_ref(), [2u8].as_ref()], bump = vault_dai.bump)]
-    pub vault_dai: Account<'info, CollateralVault>,
+    pub vault_dai: Box<Account<'info, CollateralVault>>,
 
     #[account(mut, seeds = [b"collateral_vault".as_ref(), [3u8].as_ref()], bump = vault_usds.bump)]
-    pub vault_usds: Account<'info, CollateralVault>,
+    pub vault_usds: Box<Account<'info, CollateralVault>>,
 
     #[account(mut)]
     pub user: Signer<'info>,
@@ -1014,32 +1470,32 @@ pub struct Redeem<'info> {
         bump = user_position.bump,
         constraint = user_position.owner == user.key() @ ErrorCode::Unauthorized
     )]
-    pub user_position: Account<'info, UserPosition>,
+    pub user_position: Box<Account<'info, UserPosition>>,
 
     /// FIX CR-01: canonical user ATAs for all collateral payouts.
     #[account(mut, associated_token::mint = usdc_mint, associated_token::authority = user)]
-    pub user_usdc_ata: Account<'info, TokenAccount>,
+    pub user_usdc_ata: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = usdt_mint, associated_token::authority = user)]
-    pub user_usdt_ata: Account<'info, TokenAccount>,
+    pub user_usdt_ata: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = dai_mint, associated_token::authority = user)]
-    pub user_dai_ata: Account<'info, TokenAccount>,
+    pub user_dai_ata: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = usds_mint, associated_token::authority = user)]
-    pub user_usds_ata: Account<'info, TokenAccount>,
+    pub user_usds_ata: Box<Account<'info, TokenAccount>>,
 
     /// FIX CR-01: canonical protocol vault ATAs for all collateral payouts.
     #[account(mut, associated_token::mint = usdc_mint, associated_token::authority = protocol_state)]
-    pub vault_usdc_ata: Account<'info, TokenAccount>,
+    pub vault_usdc_ata: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = usdt_mint, associated_token::authority = protocol_state)]
-    pub vault_usdt_ata: Account<'info, TokenAccount>,
+    pub vault_usdt_ata: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = dai_mint, associated_token::authority = protocol_state)]
-    pub vault_dai_ata: Account<'info, TokenAccount>,
+    pub vault_dai_ata: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = usds_mint, associated_token::authority = protocol_state)]
-    pub vault_usds_ata: Account<'info, TokenAccount>,
+    pub vault_usds_ata: Box<Account<'info, TokenAccount>>,
 
-    pub usdc_mint: Account<'info, TokenMint>,
-    pub usdt_mint: Account<'info, TokenMint>,
-    pub dai_mint: Account<'info, TokenMint>,
-    pub usds_mint: Account<'info, TokenMint>,
+    pub usdc_mint: Box<Account<'info, TokenMint>>,
+    pub usdt_mint: Box<Account<'info, TokenMint>>,
+    pub dai_mint: Box<Account<'info, TokenMint>>,
+    pub usds_mint: Box<Account<'info, TokenMint>>,
 
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
@@ -1145,10 +1601,12 @@ pub struct CollateralVault {
     pub last_oracle_slot: u64,
     pub total_deposits: u64,
     pub bump: u8,
+    /// Optional Pyth feed account (receiver-owned price feed account).
+    pub pyth_price_feed: Pubkey,
 }
 
 impl CollateralVault {
-    pub const SPACE: usize = 8 + 256;
+    pub const SPACE: usize = 8 + 192;
 }
 
 #[account]
@@ -1281,6 +1739,140 @@ pub enum ErrorCode {
     InvalidSlippageBound,
     #[msg("Rebalance slippage exceeds caller bound")]
     SlippageExceeded,
+    #[msg("Pyth feed is not configured for collateral")]
+    PythFeedNotConfigured,
+    #[msg("Pyth feed account does not match configured vault feed")]
+    InvalidPythFeedAccount,
+    #[msg("Pyth feed account owner is invalid")]
+    InvalidPythFeedOwner,
+    #[msg("Pyth price account data is invalid")]
+    InvalidPythAccountData,
+    #[msg("Pyth price must be positive")]
+    PythPriceNonPositive,
+    #[msg("Pyth verification level is insufficient")]
+    PythVerificationLevelTooLow,
+    #[msg("Pyth scaling overflow")]
+    PythScaleOverflow,
+    #[msg("Legacy state account is invalid")]
+    InvalidLegacyAccount,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+enum RawPythVerificationLevel {
+    Partial { num_signatures: u8 },
+    Full,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+struct RawPythPriceFeedMessage {
+    feed_id: [u8; 32],
+    price: i64,
+    conf: u64,
+    exponent: i32,
+    publish_time: i64,
+    prev_publish_time: i64,
+    ema_price: i64,
+    ema_conf: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+struct RawPythPriceUpdateV2 {
+    write_authority: Pubkey,
+    verification_level: RawPythVerificationLevel,
+    price_message: RawPythPriceFeedMessage,
+    posted_slot: u64,
+}
+
+fn ensure_account_space<'info>(
+    account: &AccountInfo<'info>,
+    payer: &Signer<'info>,
+    system_program: &Program<'info, System>,
+    target_space: usize,
+) -> Result<()> {
+    let rent = Rent::get()?;
+    let required_lamports = rent.minimum_balance(target_space);
+    if account.lamports() < required_lamports {
+        let diff = required_lamports.saturating_sub(account.lamports());
+        invoke(
+            &system_instruction::transfer(&payer.key(), account.key, diff),
+            &[
+                payer.to_account_info(),
+                account.clone(),
+                system_program.to_account_info(),
+            ],
+        )?;
+    }
+
+    if account.data_len() < target_space {
+        account.realloc(target_space, false)?;
+    }
+
+    Ok(())
+}
+
+fn write_anchor_account<T: AnchorSerialize + Discriminator>(
+    account: &AccountInfo,
+    value: &T,
+) -> Result<()> {
+    let mut data = account
+        .try_borrow_mut_data()
+        .map_err(|_| error!(ErrorCode::InvalidLegacyAccount))?;
+    require!(data.len() >= 8, ErrorCode::InvalidLegacyAccount);
+
+    data[..8].copy_from_slice(&T::DISCRIMINATOR);
+    let mut payload = &mut data[8..];
+    value
+        .serialize(&mut payload)
+        .map_err(|_| error!(ErrorCode::InvalidLegacyAccount))?;
+    Ok(())
+}
+
+fn build_vault_struct(
+    index: u8,
+    mint: Pubkey,
+    protocol_authority: Pubkey,
+    cap: u64,
+    risk_score: u64,
+    slot: u64,
+    bump: u8,
+) -> CollateralVault {
+    CollateralVault {
+        index,
+        mint,
+        vault: get_associated_token_address(&protocol_authority, &mint),
+        oracle: Pubkey::default(),
+        risk_score,
+        weight_cap: cap,
+        base_weight_cap: cap,
+        price: SCALE,
+        confidence: 1_000,
+        last_oracle_slot: slot,
+        total_deposits: 0,
+        bump,
+        pyth_price_feed: Pubkey::default(),
+    }
+}
+
+fn migrate_vault_account(
+    account: &AccountInfo,
+    index: u8,
+    mint: Pubkey,
+    protocol_authority: Pubkey,
+    cap: u64,
+    risk_score: u64,
+    slot: u64,
+    program_id: &Pubkey,
+) -> Result<()> {
+    let seed_idx = [index];
+    let (expected, bump) = Pubkey::find_program_address(
+        &[b"collateral_vault".as_ref(), seed_idx.as_ref()],
+        program_id,
+    );
+    require_keys_eq!(*account.key, expected, ErrorCode::InvalidLegacyAccount);
+    require_keys_eq!(*account.owner, *program_id, ErrorCode::InvalidLegacyAccount);
+
+    let vault = build_vault_struct(index, mint, protocol_authority, cap, risk_score, slot, bump);
+    write_anchor_account(account, &vault)
 }
 
 fn init_vault(
@@ -1306,6 +1898,7 @@ fn init_vault(
     vault.last_oracle_slot = slot;
     vault.total_deposits = 0;
     vault.bump = bump;
+    vault.pyth_price_feed = Pubkey::default();
 }
 
 fn update_vault_oracle(
@@ -1322,6 +1915,119 @@ fn update_vault_oracle(
     vault.confidence = confidence;
     vault.last_oracle_slot = observed_slot;
     Ok(())
+}
+
+fn update_vault_oracle_from_pyth(
+    vault: &mut Account<CollateralVault>,
+    pyth_price_account: &UncheckedAccount,
+    current_slot: u64,
+) -> Result<()> {
+    require!(
+        vault.pyth_price_feed != Pubkey::default(),
+        ErrorCode::PythFeedNotConfigured
+    );
+    require_keys_eq!(
+        pyth_price_account.key(),
+        vault.pyth_price_feed,
+        ErrorCode::InvalidPythFeedAccount
+    );
+
+    let (price, confidence, observed_slot) = read_pyth_price_update(pyth_price_account)?;
+
+    require!(
+        price >= PRICE_MIN && price <= PRICE_MAX,
+        ErrorCode::InvalidPrice
+    );
+    require!(
+        confidence <= ORACLE_CONFIDENCE_MAX,
+        ErrorCode::ConfidenceTooHigh
+    );
+    require!(
+        observed_slot <= current_slot,
+        ErrorCode::InvalidObservedSlot
+    );
+    require!(
+        current_slot.saturating_sub(observed_slot) <= ORACLE_STALENESS_MAX,
+        ErrorCode::OracleStale
+    );
+
+    update_vault_oracle(vault, price, confidence, observed_slot)
+}
+
+fn read_pyth_price_update(pyth_price_account: &UncheckedAccount) -> Result<(u64, u64, u64)> {
+    let info = pyth_price_account.to_account_info();
+    require_keys_eq!(
+        *info.owner,
+        PYTH_RECEIVER_PROGRAM,
+        ErrorCode::InvalidPythFeedOwner
+    );
+
+    let data = info
+        .try_borrow_data()
+        .map_err(|_| error!(ErrorCode::InvalidPythAccountData))?;
+    require!(data.len() >= 8, ErrorCode::InvalidPythAccountData);
+
+    let mut payload: &[u8] = &data[8..];
+    let price_update = RawPythPriceUpdateV2::deserialize(&mut payload)
+        .map_err(|_| error!(ErrorCode::InvalidPythAccountData))?;
+
+    match price_update.verification_level {
+        RawPythVerificationLevel::Full => {}
+        _ => return err!(ErrorCode::PythVerificationLevelTooLow),
+    }
+
+    require!(
+        price_update.price_message.price > 0,
+        ErrorCode::PythPriceNonPositive
+    );
+
+    let price = scale_signed_to_six_decimals(
+        i128::from(price_update.price_message.price),
+        price_update.price_message.exponent,
+    )?;
+    let confidence = scale_unsigned_to_six_decimals(
+        u128::from(price_update.price_message.conf),
+        price_update.price_message.exponent,
+    )?;
+
+    Ok((price, confidence, price_update.posted_slot))
+}
+
+fn scale_signed_to_six_decimals(value: i128, exponent: i32) -> Result<u64> {
+    let unsigned = u128::try_from(value).map_err(|_| error!(ErrorCode::PythPriceNonPositive))?;
+    scale_unsigned_to_six_decimals(unsigned, exponent)
+}
+
+fn scale_unsigned_to_six_decimals(value: u128, exponent: i32) -> Result<u64> {
+    let shift = exponent
+        .checked_add(6)
+        .ok_or_else(|| error!(ErrorCode::PythScaleOverflow))?;
+
+    let scaled = if shift >= 0 {
+        let factor = pow10_u128(shift as u32)?;
+        value
+            .checked_mul(factor)
+            .ok_or_else(|| error!(ErrorCode::PythScaleOverflow))?
+    } else {
+        let factor = pow10_u128((-shift) as u32)?;
+        value
+            .checked_add(factor.saturating_sub(1))
+            .ok_or_else(|| error!(ErrorCode::PythScaleOverflow))?
+            .checked_div(factor)
+            .ok_or_else(|| error!(ErrorCode::PythScaleOverflow))?
+    };
+
+    u64::try_from(scaled).map_err(|_| error!(ErrorCode::PythScaleOverflow))
+}
+
+fn pow10_u128(exp: u32) -> Result<u128> {
+    let mut acc = 1u128;
+    for _ in 0..exp {
+        acc = acc
+            .checked_mul(10)
+            .ok_or_else(|| error!(ErrorCode::PythScaleOverflow))?;
+    }
+    Ok(acc)
 }
 
 fn validate_keeper_set(keeper_set: &[Pubkey; 3]) -> Result<()> {
@@ -1348,7 +2054,11 @@ fn require_keeper_member(protocol: &ProtocolState, signer: Pubkey) -> Result<()>
     Ok(())
 }
 
-fn require_keeper_quorum(protocol: &ProtocolState, signer_a: Pubkey, signer_b: Pubkey) -> Result<()> {
+fn require_keeper_quorum(
+    protocol: &ProtocolState,
+    signer_a: Pubkey,
+    signer_b: Pubkey,
+) -> Result<()> {
     require!(signer_a != signer_b, ErrorCode::DuplicateKeeperSigner);
     let ok_a = keeper_member(protocol, signer_a);
     let ok_b = keeper_member(protocol, signer_b);
@@ -1424,7 +2134,9 @@ fn validate_weight_sum(weights: [u64; 4]) -> Result<()> {
     let mut sum = 0u64;
     for w in weights {
         require!(w <= SCALE, ErrorCode::WeightCapExceeded);
-        sum = sum.checked_add(w).ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        sum = sum
+            .checked_add(w)
+            .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
     }
     require!(abs_diff(sum, SCALE) <= 1, ErrorCode::WeightSumInvariant);
     Ok(())
@@ -1437,7 +2149,10 @@ fn assert_invariants<'info>(
     validate_weight_sum(protocol.weights)?;
     require!(protocol.cr_target > 0, ErrorCode::InvalidCrTarget);
     for (i, v) in vaults.iter().enumerate() {
-        require!(protocol.weights[i] <= v.weight_cap, ErrorCode::WeightCapExceeded);
+        require!(
+            protocol.weights[i] <= v.weight_cap,
+            ErrorCode::WeightCapExceeded
+        );
     }
     Ok(())
 }
@@ -1586,14 +2301,14 @@ fn refresh_circuit_breakers(circuit: &mut CircuitBreakerState, slot: u64) {
         let overtime = slot
             .saturating_sub(circuit.activation_tick[1])
             .saturating_sub(circuit.max_activation_duration);
-        let adaptive_boost = ((overtime / 10).saturating_mul(50_000)).min(ADAPTIVE_RECOVERY_BPS_MAX);
+        let adaptive_boost =
+            ((overtime / 10).saturating_mul(50_000)).min(ADAPTIVE_RECOVERY_BPS_MAX);
         let start = 500_000u64.saturating_add(adaptive_boost).min(SCALE);
 
         circuit.mint_rate_limit = start.saturating_add(increment).min(SCALE);
     } else if circuit.status[1] == BreakerStatus::Inactive as u8 {
         circuit.mint_rate_limit = SCALE;
     }
-
 }
 
 fn is_active_like(status: u8) -> bool {
