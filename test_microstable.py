@@ -6,6 +6,7 @@ Run: python test_microstable.py
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
@@ -934,13 +935,20 @@ def run_finite_difference_checks() -> Tuple[bool, str]:
     return True, f"checks={len(checks)}"
 
 
-def run_monte_carlo_100() -> Tuple[bool, str, Dict[str, Dict[str, Dict[str, float]]], Dict[str, str]]:
+def run_monte_carlo_100() -> Tuple[
+    bool,
+    str,
+    Dict[str, Dict[str, Dict[str, float]]],
+    Dict[str, str],
+    Dict[str, Dict[str, object]],
+]:
     scenarios = ["normal", "single_depeg", "multi_depeg", "volatile", "gradient_attack", "oracle_failure"]
     runs = 100
     ticks = 80
 
     stats: Dict[str, Dict[str, Dict[str, float]]] = {}
     hist: Dict[str, str] = {}
+    gate_a: Dict[str, Dict[str, object]] = {}
 
     for sc in scenarios:
         maes: List[float] = []
@@ -949,6 +957,11 @@ def run_monte_carlo_100() -> Tuple[bool, str, Dict[str, Dict[str, Dict[str, floa
         max_turns: List[float] = []
         cr_viol: List[float] = []
         fp_rates: List[float] = []
+        breaker_acts: List[float] = []
+
+        pass_count = 0
+        fail_count = 0
+        metric_fail_counts = {"peg": 0, "cr": 0, "fp": 0}
 
         for seed in range(runs):
             r = ms.run_scenario(sc, seed=seed, ticks=ticks, enforce_invariants=True)
@@ -958,25 +971,124 @@ def run_monte_carlo_100() -> Tuple[bool, str, Dict[str, Dict[str, Dict[str, floa
             max_turns.append(r.max_turnover)
             cr_viol.append(r.cr_violation_rate)
             fp_rates.append(r.breaker_false_positive_rate)
+            breaker_acts.append(float(sum(r.breaker_activations.values())))
+
+            peg_ok = r.mae < 0.0015
+            cr_ok = r.cr_violation_rate < 0.01
+            fp_ok = r.breaker_false_positive_rate < 0.05
+            scenario_ok = peg_ok and cr_ok and fp_ok
+
+            if scenario_ok:
+                pass_count += 1
+            else:
+                fail_count += 1
+                if not peg_ok:
+                    metric_fail_counts["peg"] += 1
+                if not cr_ok:
+                    metric_fail_counts["cr"] += 1
+                if not fp_ok:
+                    metric_fail_counts["fp"] += 1
 
         stats[sc] = {
             "mae": ms.summarize_stats(maes),
             "rmse": ms.summarize_stats(rmses),
-            "min_cr": ms.summarize_stats(min_crs),
+            "min_cr": ms.summarize_stats(min_crs, lower_is_worse=True),
             "max_turnover": ms.summarize_stats(max_turns),
             "cr_violation_rate": ms.summarize_stats(cr_viol),
             "fp_rate": ms.summarize_stats(fp_rates),
+            "breaker_activations": ms.summarize_stats(breaker_acts),
         }
         hist[sc] = ms.text_histogram(maes, bins=10, width=24)
+        gate_a[sc] = {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "fail_rate": fail_count / float(runs),
+            "metric_fail_counts": metric_fail_counts,
+            "status": "PASS" if fail_count < 3 else "FAIL",
+        }
 
+    # Gate-level sanity on normal scenario distribution + stop condition
     ok = True
-    # Gate-level sanity on normal scenario distribution
     if stats["normal"]["mae"]["p95"] >= 0.0015:
         ok = False
     if stats["normal"]["cr_violation_rate"]["worst"] >= 0.01:
         ok = False
+    if stats["normal"]["min_cr"]["worst"] < 1.20:
+        ok = False
+    if any(int(g["fail_count"]) >= 3 for g in gate_a.values()):
+        ok = False
 
-    return ok, f"runs={runs} scenarios={len(scenarios)}", stats, hist
+    return ok, f"runs={runs} scenarios={len(scenarios)}", stats, hist, gate_a
+
+
+def write_m4_analysis(
+    stats: Dict[str, Dict[str, Dict[str, float]]],
+    hist: Dict[str, str],
+    gate_a: Dict[str, Dict[str, object]],
+) -> None:
+    scenarios = ["normal", "single_depeg", "multi_depeg", "volatile", "gradient_attack", "oracle_failure"]
+    runs = 100
+
+    payload: Dict[str, object] = {
+        "config": {
+            "runs": runs,
+            "ticks": 80,
+            "scenarios": scenarios,
+        },
+        "scenarios": {},
+    }
+
+    scenario_map: Dict[str, object] = {}
+    for sc in scenarios:
+        g = gate_a[sc]
+        metric_fails = g["metric_fail_counts"]
+        peg_fails = int(metric_fails["peg"])  # type: ignore[index]
+        cr_fails = int(metric_fails["cr"])  # type: ignore[index]
+        fp_fails = int(metric_fails["fp"])  # type: ignore[index]
+
+        scenario_map[sc] = {
+            "stats": {
+                "peg_MAE": stats[sc]["mae"],
+                "RMSE": stats[sc]["rmse"],
+                "CR_min": stats[sc]["min_cr"],
+                "turnover": stats[sc]["max_turnover"],
+                "cr_violation_rate": stats[sc]["cr_violation_rate"],
+                "fp_rate": stats[sc]["fp_rate"],
+                "breaker_activations": stats[sc]["breaker_activations"],
+            },
+            "gateA": g,
+            "gate_components": {
+                "peg_mae_lt_0.0015": {
+                    "pass_count": runs - peg_fails,
+                    "fail_count": peg_fails,
+                    "worst": stats[sc]["mae"]["worst"],
+                },
+                "cr_violation_lt_1pct": {
+                    "pass_count": runs - cr_fails,
+                    "fail_count": cr_fails,
+                    "worst": stats[sc]["cr_violation_rate"]["worst"],
+                },
+                "fp_lt_5pct": {
+                    "pass_count": runs - fp_fails,
+                    "fail_count": fp_fails,
+                    "worst": stats[sc]["fp_rate"]["worst"],
+                },
+                "cr_min_floor_gte_1.20": {
+                    "pass_count": runs if stats[sc]["min_cr"]["worst"] >= 1.20 else 0,
+                    "fail_count": 0 if stats[sc]["min_cr"]["worst"] >= 1.20 else runs,
+                    "worst": stats[sc]["min_cr"]["worst"],
+                },
+            },
+            "histograms": {
+                "peg_MAE": hist[sc],
+            },
+        }
+
+    payload["scenarios"] = scenario_map
+
+    out_path = os.path.join(OUTPUT_DIR, "m4-montecarlo-analysis.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def run_fuzzing_1000() -> Tuple[bool, str]:
@@ -1246,7 +1358,7 @@ def main() -> None:
     ok_fuzz, msg_fuzz = run_fuzzing_1000()
     print(f"[{'PASS' if ok_fuzz else 'FAIL'}] VER-004 fuzzing(1000) - {msg_fuzz}")
 
-    ok_mc, msg_mc, stats, hist = run_monte_carlo_100()
+    ok_mc, msg_mc, stats, hist, gate_a = run_monte_carlo_100()
     print(f"[{'PASS' if ok_mc else 'FAIL'}] VER-002/006 Monte-Carlo(100) + KPI stats - {msg_mc}")
 
     print("\nMonte Carlo KPI summary (mean/median/p5/p95/worst):")
@@ -1259,6 +1371,20 @@ def main() -> None:
             )
         print("  MAE histogram:")
         print("    " + hist[sc].replace("\n", "\n    "))
+
+    print("\nGate A per-scenario pass_count/fail_count (100 runs each):")
+    for sc, g in gate_a.items():
+        print(
+            f"  {sc:16s} pass_count={int(g['pass_count']):3d} "
+            f"fail_count={int(g['fail_count']):3d} "
+            f"fail_rate={float(g['fail_rate']):.2%} status={g['status']} "
+            f"peg_worst={stats[sc]['mae']['worst']:.6f} "
+            f"cr_min_worst={stats[sc]['min_cr']['worst']:.6f} "
+            f"cr_violation_worst={stats[sc]['cr_violation_rate']['worst']:.6f} "
+            f"fp_worst={stats[sc]['fp_rate']['worst']:.6f}"
+        )
+
+    write_m4_analysis(stats, hist, gate_a)
 
     # Save outputs requested by task
     scenario_results = ms.run_all_scenarios(
@@ -1300,6 +1426,7 @@ def main() -> None:
     print("\nOutputs written:")
     print(f"- {os.path.join(OUTPUT_DIR, 'metrics.csv')}")
     print(f"- {os.path.join(OUTPUT_DIR, 'events.log')}")
+    print(f"- {os.path.join(OUTPUT_DIR, 'm4-montecarlo-analysis.json')}")
 
     print("\nFINAL RESULT:", "PASS" if overall_ok else "FAIL")
 

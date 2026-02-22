@@ -135,10 +135,20 @@ microstable is not “purely continuous optimization.” It is optimization **in
 
 Circuit breaker classes:
 
-1. **Depeg breaker**: if an asset depegs beyond threshold $\delta$ for duration $\tau$, reduce its max weight and pause mint expansions.
-2. **Collateral stress breaker**: if projected $CR$ breaches safety floor under stress simulation, increase targetCR and tighten mint path.
-3. **Oracle breaker**: if feed divergence/latency exceeds bounds, freeze optimization updates and switch to conservative static profile.
-4. **Liquidity breaker**: if implied rebalance slippage exceeds cap, spread reallocation over multiple epochs.
+1. **Depeg breaker (CB-1)**: if an asset depegs beyond threshold $\delta$ for duration $\tau$, reduce its max weight and pause mint expansions.
+2. **Collateral stress breaker (CB-2)**: if projected $CR$ breaches safety floor under stress simulation, increase targetCR and tighten mint path.
+3. **Oracle breaker (CB-3)**: if feed divergence/latency exceeds bounds, freeze optimization updates and switch to conservative static profile.
+4. **Numerical/rollback breaker (CB-4)**: if non-finite loss/gradient or unsafe optimizer state is detected, rollback to last checkpoint and enter conservative mode.
+
+### 4.6 Liquidity / Slippage Constraints (separate from CB-4)
+
+Liquidity/slippage controls are an **execution constraint layer**, not the CB-4 numerical safety breaker.
+
+- Slippage caps and turnover bounds limit how much reallocation can execute per epoch.
+- If projected impact is high, rebalance is sliced over multiple epochs.
+- This mechanism controls market impact risk even when optimization math remains valid.
+
+In short: **CB-4 protects numerical integrity and rollback safety**, while **liquidity/slippage controls protect market execution quality**.
 
 ## 5. Architecture
 
@@ -223,21 +233,21 @@ This section is updated with **real M4 verification data** from the current impl
 - Full raw log: `outputs/m4-test_microstable-full-output.txt`
 - Aggregate stats artifact: `outputs/m4-montecarlo-analysis.json`
 
-### 7.2 Gate A Outcomes (Per Scenario, 100/100 runs)
+### 7.2 Gate A Outcomes (Per Scenario, 100 runs each)
 
 Gate A criteria:
 - peg MAE < 0.0015
 - CR violation rate < 1%
 - breaker false positive rate < 5%
 
-| Scenario | Gate A status | Failures (out of 100) | peg MAE worst | CR violation worst | FP worst |
-|---|---:|---:|---:|---:|---:|
-| normal | PASS | 0 | 0.000366 | 0.000000% | 0.000000% |
-| single_depeg | PASS | 0 | 0.000456 | 0.000000% | 0.000000% |
-| multi_depeg | PASS | 0 | 0.001331 | 0.000000% | 0.000000% |
-| volatile | PASS | 0 | 0.000504 | 0.000000% | 0.000000% |
-| gradient_attack | PASS | 0 | 0.000389 | 0.000000% | 0.000000% |
-| oracle_failure | PASS | 0 | 0.000639 | 0.000000% | 0.000000% |
+| Scenario | pass_count | fail_count | Gate A status | peg MAE worst | CR_min worst (lowest) | CR violation worst | FP worst |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| normal | 100 | 0 | PASS | 0.000366 | 1.201000 | 0.000000% | 0.000000% |
+| single_depeg | 100 | 0 | PASS | 0.000460 | 1.201000 | 0.000000% | 0.000000% |
+| multi_depeg | 100 | 0 | PASS | 0.001171 | 1.202422 | 0.000000% | 0.000000% |
+| volatile | 100 | 0 | PASS | 0.000504 | 1.201000 | 0.000000% | 0.000000% |
+| gradient_attack | 100 | 0 | PASS | 0.000389 | 1.201000 | 0.000000% | 0.000000% |
+| oracle_failure | 100 | 0 | PASS | 0.000639 | 1.202554 | 0.000000% | 0.000000% |
 
 **Result**: all scenarios pass Gate A; stop condition (≥3 failures on any scenario) was not triggered.
 
@@ -248,8 +258,8 @@ Gate A criteria:
 | Scenario | mean | median | p5 | p95 | worst |
 |---|---:|---:|---:|---:|---:|
 | normal | 0.000336 | 0.000336 | 0.000321 | 0.000353 | 0.000366 |
-| single_depeg | 0.000402 | 0.000402 | 0.000374 | 0.000436 | 0.000456 |
-| multi_depeg | 0.001274 | 0.001274 | 0.001244 | 0.001304 | 0.001331 |
+| single_depeg | 0.000405 | 0.000406 | 0.000378 | 0.000439 | 0.000460 |
+| multi_depeg | 0.001113 | 0.001113 | 0.001083 | 0.001143 | 0.001171 |
 | volatile | 0.000405 | 0.000406 | 0.000354 | 0.000457 | 0.000504 |
 | gradient_attack | 0.000334 | 0.000334 | 0.000307 | 0.000366 | 0.000389 |
 | oracle_failure | 0.000585 | 0.000586 | 0.000558 | 0.000614 | 0.000639 |
@@ -270,18 +280,18 @@ Gate A criteria:
 | Scenario | turnover mean | turnover p95 | turnover worst | breaker activations mean | breaker activations worst |
 |---|---:|---:|---:|---:|---:|
 | normal | 0.000003 | 0.000003 | 0.000003 | 0.0 | 0 |
-| single_depeg | 0.001334 | 0.001336 | 0.001337 | 1.0 | 1 |
-| multi_depeg | 0.001761 | 0.002305 | 0.002305 | 2.0 | 2 |
+| single_depeg | 0.001369 | 0.001370 | 0.001370 | 1.0 | 1 |
+| multi_depeg | 0.001658 | 0.001929 | 0.001938 | 2.0 | 2 |
 | volatile | 0.000010 | 0.000023 | 0.000039 | 0.0 | 0 |
 | gradient_attack | 0.000003 | 0.000003 | 0.000004 | 0.0 | 0 |
 | oracle_failure | 0.000003 | 0.000004 | 0.000004 | 1.0 | 1 |
 
 ### 7.4 Interpretation
 
-1. **Peg robustness**: all scenarios remain below the MAE threshold (0.0015), with `multi_depeg` as the closest stress case (worst 0.001331).
+1. **Peg robustness**: all scenarios remain below the MAE threshold (0.0015), with `multi_depeg` as the closest stress case (worst 0.001171).
 2. **Solvency safety**: no CR hard-floor violations observed in any of 600 runs.
-3. **Breaker quality**: zero false positives under this scenario set; breaker activations align with intended stress classes (depeg/oracle-linked routing).
-4. **Operational note**: current stress generators produce highly structured breaker counts; future work should include heavier tail stress combinations to test additional headroom.
+3. **CR_min direction fix confirmed**: for CR_min (lower is worse), the reported `worst` value is now the minimum observed value (`min(vals)`), and Gate A tables use this directional definition.
+4. **Breaker quality**: zero false positives under this scenario set; breaker activations align with intended stress classes (depeg/oracle-linked routing).
 
 ## 8. Comparison with Existing Approaches
 
@@ -316,7 +326,13 @@ The project starts intentionally small: a dependency-free Python simulation wher
 
 In that sense, microstable follows the same engineering ethos that inspired it: keep the algorithm understandable, keep the safety rails hard, and treat optimization as a servant of solvency—not a replacement for it.
 
-## 11. References
+## 11. Reproducibility
+
+- All results generated at commit: `2bff8d6` (and regenerated from this working tree update)
+- Command: `python3 test_microstable.py`
+- Environment: Python 3.x, no external dependencies
+
+## 12. References
 
 1. S. Nakamoto, *Bitcoin: A Peer-to-Peer Electronic Cash System*, 2008.  
 2. A. Karpathy, *micrograd / microgpt educational implementations* (public repositories and lectures).  

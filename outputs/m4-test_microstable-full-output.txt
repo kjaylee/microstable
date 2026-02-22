@@ -1,4 +1,4 @@
-Running 55 spec test cases...
+Running 71 spec test cases...
 
 [PASS] TC-V001 (Value) - y=0.500000000000
 [PASS] TC-V002 (Value) - grads=(1.000000,1.000000)
@@ -28,7 +28,7 @@ Running 55 spec test cases...
 [PASS] TC-O006 (Optimizer) - fee_delta=0.001000
 [PASS] TC-O007 (Optimizer) - norm=1.000000
 [PASS] TC-O008 (Optimizer) - final_w=[0.3386255402433813, 0.3502523273124825, 0.22746634756802256, 0.08365578487611372], fee=0.006938
-[PASS] TC-CB001 (CircuitBreaker) - cap1=0.225000, mint_limit=0.250
+[PASS] TC-CB001 (CircuitBreaker) - cap1=0.280000, mint_limit=0.250
 [PASS] TC-CB002 (CircuitBreaker) - cb1 recovered
 [PASS] TC-CB003 (CircuitBreaker) - cb2 active
 [PASS] TC-CB004 (CircuitBreaker) - MINT_PAUSED_BY_CB2
@@ -42,7 +42,7 @@ Running 55 spec test cases...
 [PASS] TC-CB012 (CircuitBreaker) - cb2 priority applied
 [PASS] TC-CB013 (CircuitBreaker) - cooldown respected
 [PASS] TC-CB014 (CircuitBreaker) - extended_factor=3
-[PASS] TC-CB015 (CircuitBreaker) - recover_order=[4, 2, 3, 1]
+[PASS] TC-CB015 (CircuitBreaker) - recover_order=[4, 3, 2, 1]
 [PASS] TC-S001 (Scenario) - mae=0.000339
 [PASS] TC-S002 (Scenario) - cr_final=1.2010, target=1.2000
 [PASS] TC-S003 (Scenario) - recovery_time=22
@@ -55,9 +55,25 @@ Running 55 spec test cases...
 [PASS] TC-A002 (Agent) - forced={'cb1': True, 'cb1_idx': 0, 'cb3': True}
 [PASS] TC-A003 (Agent) - violations=['INV_WEIGHT_SUM']
 [PASS] TC-A004 (Agent) - dist=[300.0, 100.0, 50.0, 550.0]
+[PASS] TC-SEC001 (Security) - cb2_activations=20
+[PASS] TC-SEC002 (Security) - ok=ok bad=cr_target_out_of_range
+[PASS] TC-SEC003 (Security) - action=REJECT_OR_WAIT
+[PASS] TC-SEC004 (Security) - validation=asset_denylisted
+[PASS] TC-SEC005 (Security) - reason=missing_proposal_binding
+[PASS] TC-SEC006 (Security) - entropy_mixed_rng_ok
+[PASS] TC-SEC007 (Security) - depth=65
+[PASS] TC-SEC008 (Security) - cycle_detected
+[PASS] TC-SEC009 (Security) - minted_bad=0, minted_ok=831666
+[PASS] TC-SEC010 (Security) - edge=0
+[PASS] TC-SEC011 (Security) - cb4_lr_restore_guard_present
+[PASS] TC-SEC012 (Security) - admitted=3
+[PASS] TC-SEC013 (Security) - admitted=3
+[PASS] TC-SEC014 (Security) - trusted_initializer_and_multisig_present
+[PASS] TC-SEC015 (Security) - pnl=-2995.500000
+[PASS] TC-SEC016 (Security) - treasury=1000000.00
 
 ------------------------------------------------------------------------
-Spec testcases: 55/55 PASS
+Spec testcases: 71/71 PASS
 ------------------------------------------------------------------------
 
 Running verification suite...
@@ -75,6 +91,7 @@ Scenario: normal
   max_turnover       mean=0.000003 median=0.000003 p5=0.000003 p95=0.000003 worst=0.000003
   cr_violation_rate  mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   fp_rate            mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
+  breaker_activations mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   MAE histogram:
     0.000319..0.000323 | ############# (11)
     0.000323..0.000328 | ################## (15)
@@ -88,42 +105,44 @@ Scenario: normal
     0.000361..0.000366 | ## (2)
 
 Scenario: single_depeg
-  mae                mean=0.000402 median=0.000402 p5=0.000374 p95=0.000436 worst=0.000456
-  rmse               mean=0.000469 median=0.000469 p5=0.000439 p95=0.000499 worst=0.000520
+  mae                mean=0.000405 median=0.000406 p5=0.000378 p95=0.000439 worst=0.000460
+  rmse               mean=0.000476 median=0.000476 p5=0.000446 p95=0.000507 worst=0.000526
   min_cr             mean=1.201000 median=1.201000 p5=1.201000 p95=1.201000 worst=1.201000
-  max_turnover       mean=0.001334 median=0.001336 p5=0.001332 p95=0.001336 worst=0.001337
+  max_turnover       mean=0.001369 median=0.001369 p5=0.001368 p95=0.001370 worst=0.001370
   cr_violation_rate  mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   fp_rate            mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
+  breaker_activations mean=1.000000 median=1.000000 p5=1.000000 p95=1.000000 worst=1.000000
   MAE histogram:
-    0.000366..0.000375 | ######## (7)
-    0.000375..0.000384 | ################ (14)
-    0.000384..0.000393 | ################ (14)
-    0.000393..0.000402 | ################## (15)
-    0.000402..0.000411 | ######################## (20)
-    0.000411..0.000420 | ############## (12)
-    0.000420..0.000429 | ############## (12)
-    0.000429..0.000438 | ### (3)
-    0.000438..0.000447 | # (1)
-    0.000447..0.000456 | ## (2)
+    0.000370..0.000379 | ######## (7)
+    0.000379..0.000388 | ################ (14)
+    0.000388..0.000397 | ################ (14)
+    0.000397..0.000406 | ################## (15)
+    0.000406..0.000415 | ######################## (20)
+    0.000415..0.000424 | ############## (12)
+    0.000424..0.000433 | ############## (12)
+    0.000433..0.000442 | ### (3)
+    0.000442..0.000451 | # (1)
+    0.000451..0.000460 | ## (2)
 
 Scenario: multi_depeg
-  mae                mean=0.001274 median=0.001274 p5=0.001244 p95=0.001304 worst=0.001331
-  rmse               mean=0.002365 median=0.002365 p5=0.002325 p95=0.002403 worst=0.002420
-  min_cr             mean=1.202941 median=1.202961 p5=1.202601 p95=1.203325 worst=1.203653
-  max_turnover       mean=0.001761 median=0.001658 p5=0.001657 p95=0.002305 worst=0.002305
+  mae                mean=0.001113 median=0.001113 p5=0.001083 p95=0.001143 worst=0.001171
+  rmse               mean=0.001926 median=0.001926 p5=0.001885 p95=0.001964 worst=0.001985
+  min_cr             mean=1.202941 median=1.202961 p5=1.202601 p95=1.203325 worst=1.202422
+  max_turnover       mean=0.001658 median=0.001605 p5=0.001604 p95=0.001929 worst=0.001938
   cr_violation_rate  mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   fp_rate            mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
+  breaker_activations mean=2.000000 median=2.000000 p5=2.000000 p95=2.000000 worst=2.000000
   MAE histogram:
-    0.001234..0.001244 | ###### (5)
-    0.001244..0.001253 | #################### (16)
-    0.001253..0.001263 | ############# (11)
-    0.001263..0.001273 | #################### (16)
-    0.001273..0.001283 | ######################## (19)
-    0.001283..0.001292 | ################ (13)
-    0.001292..0.001302 | ############### (12)
-    0.001302..0.001312 | ### (3)
-    0.001312..0.001321 | ### (3)
-    0.001321..0.001331 | ## (2)
+    0.001074..0.001084 | ####### (6)
+    0.001084..0.001093 | ################## (15)
+    0.001093..0.001103 | ################# (14)
+    0.001103..0.001113 | ################## (15)
+    0.001113..0.001123 | ######################## (19)
+    0.001123..0.001132 | ################ (13)
+    0.001132..0.001142 | ############ (10)
+    0.001142..0.001152 | ### (3)
+    0.001152..0.001161 | ### (3)
+    0.001161..0.001171 | ## (2)
 
 Scenario: volatile
   mae                mean=0.000405 median=0.000406 p5=0.000354 p95=0.000457 worst=0.000504
@@ -132,6 +151,7 @@ Scenario: volatile
   max_turnover       mean=0.000010 median=0.000006 p5=0.000003 p95=0.000023 worst=0.000039
   cr_violation_rate  mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   fp_rate            mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
+  breaker_activations mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   MAE histogram:
     0.000315..0.000334 | ## (3)
     0.000334..0.000353 |  (1)
@@ -151,6 +171,7 @@ Scenario: gradient_attack
   max_turnover       mean=0.000003 median=0.000003 p5=0.000003 p95=0.000003 worst=0.000004
   cr_violation_rate  mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   fp_rate            mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
+  breaker_activations mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   MAE histogram:
     0.000303..0.000312 | ################## (15)
     0.000312..0.000320 | ########## (9)
@@ -166,10 +187,11 @@ Scenario: gradient_attack
 Scenario: oracle_failure
   mae                mean=0.000585 median=0.000586 p5=0.000558 p95=0.000614 worst=0.000639
   rmse               mean=0.000723 median=0.000723 p5=0.000685 p95=0.000762 worst=0.000778
-  min_cr             mean=1.202944 median=1.202959 p5=1.202689 p95=1.203232 worst=1.203478
+  min_cr             mean=1.202944 median=1.202959 p5=1.202689 p95=1.203232 worst=1.202554
   max_turnover       mean=0.000003 median=0.000003 p5=0.000003 p95=0.000004 worst=0.000004
   cr_violation_rate  mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
   fp_rate            mean=0.000000 median=0.000000 p5=0.000000 p95=0.000000 worst=0.000000
+  breaker_activations mean=1.000000 median=1.000000 p5=1.000000 p95=1.000000 worst=1.000000
   MAE histogram:
     0.000551..0.000560 | ############# (10)
     0.000560..0.000568 | ################## (14)
@@ -181,6 +203,14 @@ Scenario: oracle_failure
     0.000613..0.000621 | ## (2)
     0.000621..0.000630 | #### (3)
     0.000630..0.000639 | ## (2)
+
+Gate A per-scenario pass_count/fail_count (100 runs each):
+  normal           pass_count=100 fail_count=  0 fail_rate=0.00% status=PASS peg_worst=0.000366 cr_min_worst=1.201000 cr_violation_worst=0.000000 fp_worst=0.000000
+  single_depeg     pass_count=100 fail_count=  0 fail_rate=0.00% status=PASS peg_worst=0.000460 cr_min_worst=1.201000 cr_violation_worst=0.000000 fp_worst=0.000000
+  multi_depeg      pass_count=100 fail_count=  0 fail_rate=0.00% status=PASS peg_worst=0.001171 cr_min_worst=1.202422 cr_violation_worst=0.000000 fp_worst=0.000000
+  volatile         pass_count=100 fail_count=  0 fail_rate=0.00% status=PASS peg_worst=0.000504 cr_min_worst=1.201000 cr_violation_worst=0.000000 fp_worst=0.000000
+  gradient_attack  pass_count=100 fail_count=  0 fail_rate=0.00% status=PASS peg_worst=0.000389 cr_min_worst=1.201000 cr_violation_worst=0.000000 fp_worst=0.000000
+  oracle_failure   pass_count=100 fail_count=  0 fail_rate=0.00% status=PASS peg_worst=0.000639 cr_min_worst=1.202554 cr_violation_worst=0.000000 fp_worst=0.000000
 
 ========================================================================
 GATE A RESULTS
@@ -194,5 +224,6 @@ breaker false positive : 0.000000% (target < 5%) PASS
 Outputs written:
 - /Users/kjaylee/.openclaw/workspace/microstable/outputs/metrics.csv
 - /Users/kjaylee/.openclaw/workspace/microstable/outputs/events.log
+- /Users/kjaylee/.openclaw/workspace/microstable/outputs/m4-montecarlo-analysis.json
 
 FINAL RESULT: PASS
