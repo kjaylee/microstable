@@ -6,7 +6,7 @@ Pure Python (numpy optional). Python 3.12+ compatible.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import hashlib
 import json
 import math
@@ -130,10 +130,14 @@ class AgentRegistry:
         min_stake_by_type: Optional[Dict[str, float]] = None,
         max_agents_per_type: Optional[Dict[str, int]] = None,
         cooldown_epochs: int = 5,
+        require_challenge_exam: bool = False,
+        challenge_exam_checker: Optional[Callable[[str, str, float], bool]] = None,
     ) -> None:
         self.min_stake_by_type = min_stake_by_type or dict(MIN_STAKE_DEFAULT)
         self.max_agents_per_type = max_agents_per_type or {}
         self.cooldown_epochs = cooldown_epochs
+        self.require_challenge_exam = require_challenge_exam
+        self.challenge_exam_checker = challenge_exam_checker
         self.records: Dict[str, AgentRecord] = {}
         self.cooldowns: Dict[str, int] = {}
         self.meta: Dict[str, Dict[str, Any]] = {}
@@ -141,9 +145,36 @@ class AgentRegistry:
     def _now(self, epoch: Optional[int]) -> int:
         return int(epoch if epoch is not None else 0)
 
-    def register(self, agent_id: str, agent_type: str, stake: float, epoch: Optional[int] = None) -> bool:
+    def configure_intelligence_gate(
+        self,
+        required: bool,
+        checker: Optional[Callable[[str, str, float], bool]] = None,
+    ) -> None:
+        """Enable/disable Challenge Exam admission checks.
+
+        When enabled, register() requires either:
+        - challenge_exam_passed=True, or
+        - checker callback returns True.
+        """
+        self.require_challenge_exam = bool(required)
+        self.challenge_exam_checker = checker
+
+    def register(
+        self,
+        agent_id: str,
+        agent_type: str,
+        stake: float,
+        epoch: Optional[int] = None,
+        challenge_exam_passed: Optional[bool] = None,
+    ) -> bool:
         if agent_type not in AGENT_TYPES:
             return False
+        if self.require_challenge_exam:
+            passed = challenge_exam_passed
+            if passed is None and self.challenge_exam_checker is not None:
+                passed = bool(self.challenge_exam_checker(agent_id, agent_type, float(stake)))
+            if not passed:
+                return False
         min_stake = self.min_stake_by_type.get(agent_type, 0.0)
         if stake < min_stake:
             return False
