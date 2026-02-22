@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>µStable — Live Protocol Dashboard</title>
+  <meta name="description" content="µStable (Microstable) single-page protocol dashboard with live verification metrics." />
+  <style>
+    :root{
+      --bg:#070b14;
+      --bg2:#0d1322;
+      --card:#101a2e;
+      --text:#e9f3ff;
+      --muted:#92a9c6;
+      --neon:#3ef0ff;
+      --violet:#8b6cff;
+      --green:#1ee39b;
+      --amber:#ffcc66;
+      --red:#ff5f73;
+      --border:rgba(118,146,190,.25);
+      --shadow:0 12px 40px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      color:var(--text);
+      background:
+        radial-gradient(circle at 10% -10%, rgba(62,240,255,.15), transparent 35%),
+        radial-gradient(circle at 100% 0%, rgba(139,108,255,.12), transparent 35%),
+        linear-gradient(180deg,var(--bg),var(--bg2));
+      line-height:1.45;
+    }
+    a{color:var(--neon);text-decoration:none}
+    .wrap{max-width:1120px;margin:0 auto;padding:0 16px}
+    .topnav{
+      position:sticky;top:0;z-index:30;
+      backdrop-filter:blur(8px);
+      background:rgba(7,11,20,.75);
+      border-bottom:1px solid var(--border);
+    }
+    .nav-inner{display:flex;gap:14px;overflow:auto;padding:12px 0;white-space:nowrap}
+    .nav-inner a{color:var(--muted);font-size:13px}
+    .nav-inner a:hover{color:var(--text)}
+    .hero{padding:52px 0 28px}
+    .badge{display:inline-block;padding:5px 10px;border-radius:999px;border:1px solid var(--border);font-size:12px;color:var(--muted)}
+    h1{font-size:clamp(32px,7vw,54px);margin:10px 0 8px;line-height:1.08}
+    .subtitle{font-size:clamp(14px,2.8vw,20px);color:#c8d9ef;max-width:900px}
+    .hero-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+    .btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#0f192e;color:#dff3ff;font-weight:600}
+    .btn:hover{border-color:var(--neon)}
+
+    section{padding:26px 0}
+    .section-title{font-size:24px;margin:0 0 14px}
+    .section-sub{color:var(--muted);margin:0 0 16px;font-size:14px}
+
+    .kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:14px;padding:14px;box-shadow:var(--shadow)}
+    .card h3{margin:0 0 6px;font-size:14px;color:#b9d0eb;font-weight:600}
+    .big{font-size:26px;font-weight:800;letter-spacing:.2px}
+    .small{font-size:12px;color:var(--muted)}
+
+    .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+
+    .status-pass{color:var(--green);font-weight:700}
+    .status-fail{color:var(--red);font-weight:700}
+    .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}
+    .chip-pass{background:rgba(30,227,155,.14);color:var(--green);border:1px solid rgba(30,227,155,.35)}
+    .chip-pending{background:rgba(255,204,102,.12);color:var(--amber);border:1px solid rgba(255,204,102,.3)}
+
+    .pipeline .item{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid var(--border);border-radius:10px;padding:10px 11px;background:rgba(10,18,32,.55)}
+    .pipeline .milestone{font-size:14px}
+    .pipeline .evidence{font-size:11px;color:var(--muted);margin-top:4px}
+
+    .scenario-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .metric-row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.1)}
+    .metric-row:last-child{border-bottom:none}
+
+    details{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:rgba(15,23,39,.45)}
+    summary{cursor:pointer;color:#d9ebff;font-weight:600}
+    table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
+    th,td{padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left}
+    th{color:#9fc2e8}
+
+    pre.diagram{overflow:auto;background:#090f1c;border:1px solid var(--border);border-radius:12px;padding:14px;color:#b8d4ef;font-size:12px}
+
+    .agent{min-height:130px}
+    .agent .role{font-size:16px;font-weight:700;margin-bottom:4px}
+
+    .bar-wrap{display:grid;gap:10px}
+    .bar-label{display:flex;justify-content:space-between;font-size:13px;color:#d4e6ff}
+    .bar{height:11px;background:#0a1324;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+    .bar .fill{height:100%;width:0;background:linear-gradient(90deg,var(--neon),var(--violet));transition:width 1.1s ease}
+
+    .placeholder{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;margin-bottom:8px;background:rgba(7,12,22,.35)}
+
+    .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--neon);border-radius:50%;display:inline-block;animation:spin 1s linear infinite;vertical-align:middle}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    footer{padding:36px 0 48px;color:var(--muted);font-size:13px;text-align:center}
+
+    @media (max-width:900px){
+      .kpis,.grid-4,.grid-2,.scenario-grid{grid-template-columns:1fr}
+      .hero{padding-top:34px}
+    }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <div class="wrap nav-inner">
+      <a href="#hero">Hero</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#gate-a">Gate A</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#agents">Agents</a>
+      <a href="#basket">Collateral</a>
+      <a href="#stress">Stress Tests</a>
+      <a href="#security">Security</a>
+      <a href="#specs">Tech Specs</a>
+    </div>
+  </nav>
+
+  <main class="wrap">
+    <section id="hero" class="hero">
+      <span class="badge">MIT Licensed</span>
+      <h1>µStable (Microstable)</h1>
+      <p class="subtitle">Self-Evolving Multi-Collateral Stablecoin Protocol</p>
+      <p class="section-sub">Autonomous AI Agent Governance • Gradient-Based Optimization • Multi-Collateral Basket</p>
+      <div class="hero-meta">
+        <a class="btn" href="https://github.com/kjaylee/microstable" target="_blank" rel="noreferrer">GitHub Repository</a>
+        <span class="badge">Gate A: PASS</span>
+        <span class="badge">Scenarios: 6/6 PASS</span>
+      </div>
+    </section>
+
+    <section id="pipeline">
+      <h2 class="section-title">Pipeline Status Dashboard</h2>
+      <p class="section-sub">Status generated from repository artifacts (tests, docs, build outputs, and agent modules).</p>
+      <div id="pipelineGrid" class="pipeline grid-2"></div>
+    </section>
+
+    <section id="gate-a">
+      <h2 class="section-title">Gate A Results (Live Metrics)</h2>
+      <p class="section-sub">Sources: <code>outputs/metrics.csv</code>, <code>outputs/m4-test_microstable-full-output.txt</code>, <code>outputs/m4-montecarlo-analysis.json</code></p>
+
+      <div class="kpis">
+        <div class="card">
+          <h3>Global peg MAE</h3>
+          <div class="big"><span class="counter" data-target="0.000331" data-decimals="6">0</span></div>
+          <div class="small">Target &lt; 0.0015</div>
+        </div>
+        <div class="card">
+          <h3>CR violation rate</h3>
+          <div class="big"><span class="counter" data-target="0" data-decimals="3">0</span>%</div>
+          <div class="small">Target &lt; 1%</div>
+        </div>
+        <div class="card">
+          <h3>Breaker false positive</h3>
+          <div class="big"><span class="counter" data-target="0" data-decimals="3">0</span>%</div>
+          <div class="small">Target &lt; 5%</div>
+        </div>
+      </div>
+
+      <div id="scenarioGrid" class="scenario-grid" style="margin-top:12px"></div>
+
+      <details style="margin-top:12px">
+        <summary>Show detailed scenario table (Monte Carlo mean values)</summary>
+        <table id="scenarioTable"></table>
+      </details>
+    </section>
+
+    <section id="architecture">
+      <h2 class="section-title">Protocol Architecture</h2>
+      <pre class="diagram">[Collateral Basket] → [Loss Function] → [Adam Optimizer] → [Weight Update]
+        ↑                                                         ↓
+  [Oracle Feeds] ←── [Circuit Breakers] ←── [Invariant Checks]
+        ↑                    ↑
+  [Watchdog Agent]    [Auditor Agent]
+        ↓
+  [Keeper Agent] → [Rebalance TX] → [Solana Program]</pre>
+    </section>
+
+    <section id="agents">
+      <h2 class="section-title">Agent Dashboard</h2>
+      <div class="grid-4">
+        <div class="card agent"><div class="role">🔧 Optimizer Keeper</div><div>Gradient descent, weight rebalancing</div><div class="small" style="margin-top:8px">Fee share: 30%</div></div>
+        <div class="card agent"><div class="role">👁️ Watchdog</div><div>Price monitoring, CB detection</div><div class="small" style="margin-top:8px">Fee share: 10%</div></div>
+        <div class="card agent"><div class="role">📋 Auditor</div><div>Invariant validation, compliance</div><div class="small" style="margin-top:8px">Fee share: 5%</div></div>
+        <div class="card agent"><div class="role">🏦 Treasury</div><div>Protocol reserve management</div><div class="small" style="margin-top:8px">Fee share: 55%</div></div>
+      </div>
+    </section>
+
+    <section id="basket">
+      <h2 class="section-title">Collateral Basket</h2>
+      <div class="card">
+        <div class="bar-wrap">
+          <div>
+            <div class="bar-label"><span>USDC</span><span>40%</span></div>
+            <div class="bar"><div class="fill progress-fill" data-pct="40%"></div></div>
+          </div>
+          <div>
+            <div class="bar-label"><span>USDT</span><span>30%</span></div>
+            <div class="bar"><div class="fill progress-fill" data-pct="30%"></div></div>
+          </div>
+          <div>
+            <div class="bar-label"><span>DAI</span><span>20%</span></div>
+            <div class="bar"><div class="fill progress-fill" data-pct="20%"></div></div>
+          </div>
+          <div>
+            <div class="bar-label"><span>USDS</span><span>10%</span></div>
+            <div class="bar"><div class="fill progress-fill" data-pct="10%"></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="stress">
+      <h2 class="section-title">Stress Test Results (Placeholder)</h2>
+      <div class="placeholder"><span>Death Spiral</span><span class="chip chip-pending">PENDING</span></div>
+      <div class="placeholder"><span>Flash Crash</span><span class="chip chip-pending">PENDING</span></div>
+      <div class="placeholder"><span>Oracle Manipulation</span><span class="chip chip-pending">PENDING</span></div>
+      <div class="placeholder"><span>Liquidity Vacuum</span><span class="chip chip-pending">PENDING</span></div>
+    </section>
+
+    <section id="security">
+      <h2 class="section-title">Security Audit (Placeholder)</h2>
+      <div class="card">
+        <p style="margin:0 0 8px">Severity Matrix: <span class="small">(Critical / High / Medium / Low — awaiting findings)</span></p>
+        <p style="margin:0"><span class="spinner" aria-hidden="true"></span> Audit in progress...</p>
+      </div>
+    </section>
+
+    <section id="specs">
+      <h2 class="section-title">Technical Specs</h2>
+      <div class="grid-2">
+        <div class="card">Simulator: <strong>1,437 lines</strong> pure Python, zero dependencies</div>
+        <div class="card">On-chain: <strong>Solana/Anchor</strong>, fixed-point <strong>u64</strong> arithmetic</div>
+        <div class="card">Test coverage: <strong>55 test cases</strong> + <strong>100-run Monte Carlo × 6 scenarios</strong></div>
+        <div class="card">Verification: finite-diff gradients, 1000-input fuzzing, CB state machine exhaustive</div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    MIT License • <a href="https://github.com/kjaylee/microstable" target="_blank" rel="noreferrer">github.com/kjaylee/microstable</a><br/>
+    Built with autonomous AI agents
+  </footer>
+
+  <script>
+    const thresholds = { pegMae: 0.0015, cr: 0.01, fp: 0.05 };
+
+    const pipeline = [
+      { m: 'M0 Agent Governance', s: '✅ Complete', e: 'agents/__init__.py exports 4 modules' },
+      { m: 'M1 Algorithm Verification', s: '✅ Complete', e: 'docs/algorithm-verification.md' },
+      { m: 'M1.5 Circuit Breaker Fix', s: '✅ Complete', e: 'TC-CB001..015 PASS in outputs/m4-test_microstable-full-output.txt' },
+      { m: 'M2 Test Cases (55 TCs)', s: '✅ Complete', e: 'Spec testcases: 55/55 PASS' },
+      { m: 'M3 Python Simulator', s: '✅ Gate A Pass', e: 'FINAL RESULT: PASS (python3 test_microstable.py)' },
+      { m: 'M4 Scenario Verification', s: '✅ 6/6 Scenarios Pass', e: 'docs/m4-verification-report.md' },
+      { m: 'M5 Solana Anchor', s: '✅ Build + 7/7 Tests', e: 'solana/target/deploy/microstable.so + 7 test blocks (solana/tests/microstable.ts)' },
+      { m: 'M6 Deployment', s: '✅ Local Validated', e: 'README.md Phase 2 (M6) local-validated' },
+      { m: 'M7 Agent Interfaces', s: '✅ 4 Agents Ready', e: 'keeper/watchdog/auditor/consensus' }
+    ];
+
+    const scenarios = [
+      { name: 'normal', pegMae: 0.0003361698126734477, cr: 0, fp: 0 },
+      { name: 'single_depeg', pegMae: 0.00040179193814023794, cr: 0, fp: 0 },
+      { name: 'multi_depeg', pegMae: 0.0012735632056638496, cr: 0, fp: 0 },
+      { name: 'volatile', pegMae: 0.00040489972941571697, cr: 0, fp: 0 },
+      { name: 'gradient_attack', pegMae: 0.00033406003246278334, cr: 0, fp: 0 },
+      { name: 'oracle_failure', pegMae: 0.0005853864417442123, cr: 0, fp: 0 }
+    ];
+
+    const pipelineGrid = document.getElementById('pipelineGrid');
+    pipeline.forEach(x => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = `<div><div class="milestone">${x.m}</div><div class="evidence">${x.e}</div></div><div class="status-pass">${x.s}</div>`;
+      pipelineGrid.appendChild(el);
+    });
+
+    const scenarioGrid = document.getElementById('scenarioGrid');
+    const scenarioTable = document.getElementById('scenarioTable');
+    scenarioTable.innerHTML = '<tr><th>Scenario</th><th>peg MAE</th><th>CR violation rate</th><th>Breaker FP rate</th></tr>';
+
+    scenarios.forEach(x => {
+      const pegPass = x.pegMae < thresholds.pegMae;
+      const crPass = x.cr < thresholds.cr;
+      const fpPass = x.fp < thresholds.fp;
+      const allPass = pegPass && crPass && fpPass;
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <h3 style="display:flex;justify-content:space-between;align-items:center">
+          <span>${x.name}</span>
+          <span class="chip ${allPass ? 'chip-pass' : ''}">${allPass ? 'PASS' : 'FAIL'}</span>
+        </h3>
+        <div class="metric-row"><span>peg MAE</span><span class="${pegPass ? 'status-pass':'status-fail'}">${x.pegMae.toFixed(6)}</span></div>
+        <div class="metric-row"><span>CR violation rate</span><span class="${crPass ? 'status-pass':'status-fail'}">${(x.cr*100).toFixed(4)}%</span></div>
+        <div class="metric-row"><span>Breaker FP rate</span><span class="${fpPass ? 'status-pass':'status-fail'}">${(x.fp*100).toFixed(4)}%</span></div>
+      `;
+      scenarioGrid.appendChild(card);
+
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${x.name}</td><td>${x.pegMae.toFixed(6)}</td><td>${(x.cr*100).toFixed(4)}%</td><td>${(x.fp*100).toFixed(4)}%</td>`;
+      scenarioTable.appendChild(row);
+    });
+
+    const animateCounter = (el) => {
+      const end = Number(el.dataset.target || 0);
+      const d = Number(el.dataset.decimals || 0);
+      const duration = 900;
+      const start = performance.now();
+      const from = 0;
+      const tick = (now) => {
+        const p = Math.min(1, (now - start) / duration);
+        const value = from + (end - from) * (1 - Math.pow(1 - p, 3));
+        el.textContent = value.toFixed(d);
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        if (entry.target.classList.contains('counter') && !entry.target.dataset.done) {
+          entry.target.dataset.done = '1';
+          animateCounter(entry.target);
+        }
+        if (entry.target.classList.contains('progress-fill')) {
+          entry.target.style.width = entry.target.dataset.pct;
+        }
+      });
+    }, { threshold: 0.2 });
+
+    document.querySelectorAll('.counter,.progress-fill').forEach(el => io.observe(el));
+  </script>
+</body>
+</html>
