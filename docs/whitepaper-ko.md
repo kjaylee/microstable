@@ -1,7 +1,7 @@
 # microstable: 자기진화형( Self-Evolving ) 에이전트 네이티브( Agent-Native ) 다중 담보 스테이블코인 프로토콜
 
-**버전(Version)**: Draft v0.2  
-**상태(Status)**: 연구 백서(Research Whitepaper, Educational / Hobby Project)  
+**버전(Version)**: v0.3 (Implementation Sync)  
+**상태(Status)**: 구현 정합 백서(Implementation-aligned, Educational / Hobby Project)  
 **런타임 아키텍처(Runtime Architecture)**: Solana 온체인 프로그램 + Rust 오프체인 키퍼 데몬(Keeper Daemon)  
 **프로그램 ID (Devnet)**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
 
@@ -13,7 +13,7 @@
 
 스테이블코인(Stablecoin)은 핵심 결제 인프라가 되었지만, 여전히 담보 집중(Collateral Concentration), 거버넌스 지연(Governance Latency), 오라클 취약성(Oracle Fragility), 정적 파라미터(Static Parameter) 문제를 반복한다. **microstable**은 이를 위해 “작고 검증 가능한 구조 + 경계가 있는 적응”을 제안한다.
 
-Draft v0.2는 세 가지 확장을 포함한다. 첫째, 허가 없는 참여(Permissionless Participation)를 지원하는 **Open Agent Economy (OAE)**. 둘째, Tier 0→3 단계 검증을 수행하는 **Agent Intelligence Gate (AIG)**. 셋째, Solana devnet 배포, Pyth 연동, SPL Token E2E 검증, 그리고 Purple/Red/Crimson 보안 순환 결과를 반영한 실제 구현 진전이다.
+v0.3은 백서와 구현을 동기화한다. **Open Agent Economy (OAE)**는 온체인 Agent Registry 및 라이프사이클 제어(`solana/programs/microstable/src/lib.rs`), 토너먼트 평가(`solana/keeper/src/tournament.rs`), keeper 스케줄링(`solana/keeper/src/agent_loop.rs`)으로 구현되었다. **Agent Intelligence Gate (AIG)**는 오프체인 챌린지 러너(`solana/keeper/src/aig.rs`)와 keeper 루프 연동으로 제공된다. 또한 Solana devnet 배포, Pyth 연동, SPL Token E2E 검증, Purple/Red/Crimson 보안 순환 결과를 반영한다.
 
 핵심 원칙은 동일하다. 최적화(Optimization)는 지급여력(Solvency)의 대체재가 아니라 보조 수단이어야 한다.
 
@@ -82,6 +82,8 @@ $$
 
 각 업데이트는 스텝당 변화량 제한(Delta Cap)을 만족해야 한다.
 
+**구현 참조:** `solana/keeper/src/optimizer.rs` (`ParamVector`), `solana/keeper/src/rebalance.rs` (파라미터 전파), `solana/programs/microstable/src/lib.rs` (`update_protocol_params`).
+
 ### 4.3 손실함수(Loss Function)
 
 $$
@@ -96,6 +98,8 @@ $$
 
 해석: 페그 유지, 과소담보 억제, 집중도·턴오버 감소, 오라클 저신뢰 구간 보수화.
 
+**구현 참조:** `solana/keeper/src/optimizer.rs` (`LossFunction::compute`, `LossTerms`, `LossGradients`).
+
 ### 4.4 최적화와 안전 투영
 
 Gradient/Adam 업데이트는 다음을 모두 통과해야 반영된다.
@@ -105,6 +109,8 @@ Gradient/Adam 업데이트는 다음을 모두 통과해야 반영된다.
 - simplex + cap projection,
 - safety gate.
 
+**구현 참조:** `solana/keeper/src/optimizer.rs` (`AdamOptimizer`, `project_to_safety_set`, `optimize_step`) 및 `solana/keeper/src/rebalance.rs` (optimizer wiring).
+
 ### 4.5 회로 차단기(Circuit Breaker)
 
 - **CB-1**: 단일/국소 디페그 대응,
@@ -112,13 +118,15 @@ Gradient/Adam 업데이트는 다음을 모두 통과해야 반영된다.
 - **CB-3**: 오라클 열화 시 보수 모드,
 - **CB-4**: 수치 불안정 시 롤백.
 
+**구현 참조:** `solana/keeper/src/optimizer.rs` (`OptimizerCheckpoint`, `optimize_step`).
+
 ### 4.6 유동성 실행 제약
 
 수치 안정성(CB-4)과 시장 실행 품질(슬리피지, 턴오버 슬라이싱)은 분리해 관리한다.
 
 ## 5. 아키텍처(Architecture)
 
-v0.2는 **2계층 구조(Two-Layer Architecture)**를 명시한다.
+v0.3은 **2계층 구조(Two-Layer Architecture)**를 명시한다.
 
 ### 5.1 온체인(Solana)
 
@@ -130,10 +138,11 @@ v0.2는 **2계층 구조(Two-Layer Architecture)**를 명시한다.
 
 ### 5.2 오프체인(Rust keeper daemon)
 
-- 오라클 수집,
-- 리밸런스 제안 계산,
-- 모니터/워치독 루프,
-- 키퍼 쿼럼 제출.
+- 오라클 수집 (`oracle.rs`),
+- 리밸런스 제안 + optimizer (`rebalance.rs`, `optimizer.rs`),
+- 모니터/워치독 + 리스크 매니저 (`monitor.rs`, `watchdog.rs`, `risk_manager.rs`),
+- AIG/토너먼트 스케줄링 (`aig.rs`, `tournament.rs`, `agent_loop.rs`),
+- 키퍼 쿼럼 제출 (`utils.rs`, `wire.rs`).
 
 구현 경로: `solana/keeper/` (`microstable-keeper`).
 
@@ -143,7 +152,7 @@ v0.2는 **2계층 구조(Two-Layer Architecture)**를 명시한다.
 
 ## 6. 보안 분석(Security Analysis)
 
-v0.2 보안 분석은 가정 기반이 아니라 다회차 Purple/Red/Crimson 실측 결과를 반영한다.
+v0.3 보안 분석은 가정 기반이 아니라 다회차 Purple/Red/Crimson 실측 결과를 반영한다.
 
 ### 6.1 실전에서 관측된 공격군
 
@@ -169,7 +178,7 @@ v0.2 보안 분석은 가정 기반이 아니라 다회차 Purple/Red/Crimson �
 
 ## 7. Open Agent Economy
 
-(OAE 문서 1~3절 기반)
+(온체인 + keeper 구현)
 
 ### 7.1 참여 모델
 
@@ -177,17 +186,23 @@ v0.2 보안 분석은 가정 기반이 아니라 다회차 Purple/Red/Crimson �
 - 역할 분화(Optimizer / Monitor / Auditor / Liquidator),
 - 스테이킹 + 평판 기반 운영.
 
+**구현 참조:** `solana/programs/microstable/src/lib.rs` (Agent Registry + lifecycle instructions).
+
 ### 7.2 Agent Registry
 
 Agent Registry(PDA)는 stake, reputation, 제안/채택 이력, 상태(Active/Cooldown/Slashed/Deregistered)를 기록한다.
 
+**구현 참조:** `solana/programs/microstable/src/lib.rs` (`AgentRecord`, `register_agent`, `deregister_agent`, `update_agent_score`, `promote_agent`, `demote_agent`, `slash_agent`, `claim_stake`).
+
 ### 7.3 ACP (Agent Communication Protocol)
 
-ACP v1은 JSON-RPC 형태의 서명 메시지(Signature Message) 기반으로 제안 제출, 이상 보고, 투표, 보상 청구를 표준화한다.
+ACP v1은 MCP 서버(`mcp-server/`)를 통해 JSON-RPC 형태로 노출되며 제안 제출, 이상 보고, 상태 조회에 사용된다. 온체인 enforcement는 Agent Registry instructions로 처리된다.
 
 ### 7.4 최적화 토너먼트(Optimization Tournament)
 
-Commit-Reveal 호환 구조, copycat penalty, 최소 stake, stake-weighted reputation을 통해 경쟁형 제안 선택을 수행한다.
+Commit-Reveal 호환 구조, copycat penalty, 최소 stake, stake-weighted reputation을 통해 경쟁형 제안 선택과 score 조정을 수행한다.
+
+**구현 참조:** `solana/keeper/src/tournament.rs` (proposal scoring) + `solana/programs/microstable/src/lib.rs` (`commit_rebalance`, `rebalance`).
 
 ## 8. Agent Intelligence Gate
 
@@ -199,6 +214,8 @@ AIG는 “등록 가능”과 “운영 신뢰”를 분리해 단계적으로 �
 - **Tier 1**: 100 epoch 샌드박스,
 - **Tier 2**: 제한 권한 probation(최소 30 epoch),
 - **Tier 3**: 정식 참여 + 상시 감시.
+
+**구현 참조:** `solana/keeper/src/aig.rs` (challenge runner), `solana/keeper/src/agent_loop.rs` (scheduler), `solana/programs/microstable/src/lib.rs` (`AgentRecord.tier`).
 
 ### 8.2 AgentScore
 
@@ -381,7 +398,7 @@ Worst peg MAE: **0.001171** (`multi_depeg`).
 
 ## 15. 비교(Comparison)
 
-| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.2 |
+| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.3 |
 |---|---|---|---|---|
 | 담보 모델(Collateral model) | Over-collateralized | Fractional/hybrid | Basket aggregation | Basket + adaptive CR |
 | 파라미터 갱신(Parameter updates) | Governance epochs | Controller dependent | Mostly static | Bounded gradient updates |
@@ -408,7 +425,7 @@ Worst peg MAE: **0.001171** (`multi_depeg`).
 
 ## 17. 결론(Conclusion)
 
-microstable v0.2의 핵심은 “완성 선언”이 아니라 “방법론 선언”이다.
+microstable v0.3의 핵심은 “완성 선언”이 아니라 “방법론 선언”이다.
 
 - 메커니즘은 작게,
 - 적응은 경계 안에서,
@@ -421,7 +438,7 @@ microstable v0.2의 핵심은 “완성 선언”이 아니라 “방법론 선�
 
 ### 18.1 재현성(Reproducibility)
 
-- 본 백서 기준 커밋(commit): `f9f5dae`
+- 본 백서 기준 커밋(commit): `main` (post-doc sync)
 - 주요 아티팩트:
   - `simulation/outputs/open-agent-economy-test-report.md`
   - `simulation/outputs/adversarial-agent-report.md`

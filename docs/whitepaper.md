@@ -1,7 +1,7 @@
 # microstable: A Self-Evolving, Agent-Native Multi-Collateral Stablecoin Protocol
 
-**Version**: Draft v0.2  
-**Status**: Research Whitepaper (Educational / Hobby Project)  
+**Version**: v0.3 (Implementation Sync)  
+**Status**: Implementation-aligned whitepaper (Educational / Hobby Project)  
 **Runtime Architecture**: Solana on-chain program + off-chain Rust keeper daemon  
 **Program ID (Devnet)**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
 
@@ -13,7 +13,7 @@
 
 Stablecoins remain essential digital settlement primitives, but they still fail in predictable ways: concentrated collateral exposure, delayed governance reactions, oracle fragility, and static policy parameters that do not adapt to regime shifts. **microstable** proposes a bounded, inspectable alternative: a multi-collateral stablecoin protocol that continuously re-optimizes selected parameters while preserving hard safety invariants.
 
-Draft v0.2 extends prior design and simulation work in three directions. First, it introduces an **Open Agent Economy (OAE)** where participation is permissionless but stake- and reputation-constrained. Second, it adds an **Agent Intelligence Gate (AIG)** with progressive Tier 0→3 admission and runtime demotion logic. Third, it reports concrete implementation progress with Solana devnet deployment, Pyth integration, SPL-token E2E flow validation, and continuous red/purple/crimson adversarial campaigns.
+Version v0.3 syncs the whitepaper with the implemented codebase. It includes an **Open Agent Economy (OAE)** with on-chain Agent Registry and lifecycle controls (`solana/programs/microstable/src/lib.rs`), competitive tournament evaluation (`solana/keeper/src/tournament.rs`), and keeper wiring (`solana/keeper/src/agent_loop.rs`). It also includes an **Agent Intelligence Gate (AIG)** with an off-chain challenge runner (`solana/keeper/src/aig.rs`) wired into the keeper loop. The release reflects Solana devnet deployment, Pyth integration, SPL-token E2E flow validation, and continuous red/purple/crimson adversarial campaigns.
 
 The central claim remains unchanged: optimization should be a servant of solvency. microstable keeps settlement deterministic on-chain, pushes heavy optimization off-chain, and enforces strict circuit breakers, bounded deltas, and rollback-safe state transitions.
 
@@ -66,7 +66,7 @@ microstable keeps basket diversification but adds agent-native optimization and 
 
 ### 3.3 Agent-native protocol context
 
-Agent-native protocols need deterministic interfaces (for automation) plus anti-sybil economics (for adversarial environments). Draft v0.2 therefore expands from “adaptive stablecoin” to “adaptive stablecoin with accountable machine participants.”
+Agent-native protocols need deterministic interfaces (for automation) plus anti-sybil economics (for adversarial environments). v0.3 therefore expands from “adaptive stablecoin” to “adaptive stablecoin with accountable machine participants.”
 
 ## 4. System Design
 
@@ -88,6 +88,8 @@ $$
 
 Updates are clipped by per-epoch movement caps (e.g., bounded weight and fee deltas).
 
+**Implementation reference:** `solana/keeper/src/optimizer.rs` (`ParamVector`), `solana/keeper/src/rebalance.rs` (parameter propagation), `solana/programs/microstable/src/lib.rs` (`update_protocol_params`).
+
 ### 4.3 Loss function
 
 A representative objective:
@@ -104,6 +106,8 @@ $$
 
 Interpretation: preserve peg, avoid under-collateralization, reduce concentration and turnover, and penalize low-confidence oracle regimes.
 
+**Implementation reference:** `solana/keeper/src/optimizer.rs` (`LossFunction::compute`, `LossTerms`, `LossGradients`).
+
 ### 4.4 Optimization and projection
 
 microstable applies gradient/Adam-like updates only after:
@@ -113,6 +117,8 @@ microstable applies gradient/Adam-like updates only after:
 - simplex + cap projection,
 - safety-gate acceptance.
 
+**Implementation reference:** `solana/keeper/src/optimizer.rs` (`AdamOptimizer`, `project_to_safety_set`, `optimize_step`) and `solana/keeper/src/rebalance.rs` (optimizer wiring).
+
 ### 4.5 Circuit breakers
 
 - **CB-1 (depeg)**: asset-level depeg response and weight-cap reduction.
@@ -120,13 +126,15 @@ microstable applies gradient/Adam-like updates only after:
 - **CB-3 (oracle degraded)**: conservative mode and optimization freeze.
 - **CB-4 (numerical rollback)**: checkpoint rollback on non-finite/unsafe optimizer state.
 
+**Implementation reference:** `solana/keeper/src/optimizer.rs` (`OptimizerCheckpoint`, rollback logic in `optimize_step`).
+
 ### 4.6 Liquidity execution guardrails
 
 Execution constraints (slippage and turnover slicing) are distinct from numerical safety breakers, preventing optimization-valid but market-toxic moves.
 
 ## 5. Architecture
 
-Draft v0.2 formalizes a **two-layer production architecture**:
+v0.3 formalizes a **two-layer production architecture**:
 
 ### 5.1 On-chain (Solana program)
 
@@ -138,10 +146,11 @@ Draft v0.2 formalizes a **two-layer production architecture**:
 
 ### 5.2 Off-chain (Rust keeper daemon)
 
-- oracle ingestion,
-- rebalance proposal generation,
-- monitor/watchdog loops,
-- keeper quorum coordination and submission.
+- oracle ingestion (`oracle.rs`),
+- rebalance proposals + optimizer (`rebalance.rs`, `optimizer.rs`),
+- monitor/watchdog + risk manager (`monitor.rs`, `watchdog.rs`, `risk_manager.rs`),
+- AIG/tournament scheduling (`aig.rs`, `tournament.rs`, `agent_loop.rs`),
+- keeper quorum coordination and submission (`utils.rs`, `wire.rs`).
 
 Reference implementation: `solana/keeper/` (`microstable-keeper`).
 
@@ -151,7 +160,7 @@ The Python simulator remains preserved under `simulation/` as an **archived refe
 
 ## 6. Security Analysis
 
-Security analysis in v0.2 is informed by multi-round adversarial campaigns rather than purely hypothetical threat narratives.
+Security analysis in v0.3 is informed by multi-round adversarial campaigns rather than purely hypothetical threat narratives.
 
 ### 6.1 Attack classes observed in practice
 
@@ -177,7 +186,7 @@ Remaining risk clusters are economic griefing and edge-case semantics under adve
 
 ## 7. Open Agent Economy
 
-(From OAE spec sections 1–3)
+(Implemented in on-chain + keeper modules)
 
 ### 7.1 Participation model
 
@@ -187,22 +196,28 @@ microstable moves from fixed 3-agent operation toward permissionless participati
 - role specialization (Optimizer, Monitor, Auditor, Liquidator),
 - on-chain Agent Registry records status, stake, and reputation.
 
+**Implementation reference:** `solana/programs/microstable/src/lib.rs` (agent registry + lifecycle instructions).
+
 ### 7.2 Agent Registry
 
-Each agent is tracked through a registry account (PDA design in spec), including:
+Each agent is tracked through a registry account (PDA), including:
 
 - stake,
 - reputation,
 - accepted/proposed counts,
 - lifecycle status (Active/Cooldown/Slashed/Deregistered).
 
+**Implementation reference:** `solana/programs/microstable/src/lib.rs` (`AgentRecord`, `register_agent`, `deregister_agent`, `update_agent_score`, `promote_agent`, `demote_agent`, `slash_agent`, `claim_stake`).
+
 ### 7.3 ACP (Agent Communication Protocol)
 
-ACP v1 uses JSON-RPC style envelopes with signed messages for operations such as proposal submission, anomaly reporting, voting, and reward claiming.
+ACP v1 is exposed through the MCP server (`mcp-server/`) as a JSON-RPC style interface for proposal submission, anomaly reporting, and state queries. On-chain enforcement is handled by the Agent Registry instructions.
 
 ### 7.4 Optimization tournaments
 
-OAE introduces competitive proposal selection (commit/reveal compatible) with reward distribution and anti-gaming controls (copycat penalties, minimum stake, stake-weighted reputation).
+OAE introduces competitive proposal selection (commit/reveal compatible) with score adjustments and anti-gaming controls (copycat penalties, minimum stake, stake-weighted reputation).
+
+**Implementation reference:** `solana/keeper/src/tournament.rs` (proposal scoring) + `solana/programs/microstable/src/lib.rs` (`commit_rebalance`, `rebalance`).
 
 ## 8. Agent Intelligence Gate
 
@@ -214,6 +229,8 @@ AIG adds progressive trust before full protocol influence.
 - **Tier 1**: sandbox trial (100 epochs).
 - **Tier 2**: probation with restricted authority (minimum 30 epochs).
 - **Tier 3**: full participation with ongoing demotion checks.
+
+**Implementation reference:** `solana/keeper/src/aig.rs` (challenge runner), `solana/keeper/src/agent_loop.rs` (scheduler), `solana/programs/microstable/src/lib.rs` (`AgentRecord.tier`).
 
 ### 8.2 AgentScore model
 
@@ -413,7 +430,7 @@ Agent integrations are intended to be machine-friendly while keeping protocol in
 
 ## 15. Comparison
 
-| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.2 |
+| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.3 |
 |---|---|---|---|---|
 | Collateral model | Over-collateralized | Fractional/hybrid | Basket aggregation | Basket + adaptive CR |
 | Parameter updates | Governance epochs | Controller/policy dependent | Mostly static/rule-based | Bounded gradient updates |
@@ -440,7 +457,7 @@ Priority future work:
 
 ## 17. Conclusion
 
-microstable v0.2 is not a claim of finality; it is a claim of method.
+microstable v0.3 is not a claim of finality; it is a claim of method.
 
 - keep mechanism compact,
 - keep adaptation bounded,
@@ -453,7 +470,7 @@ The protocol’s path is intentionally incremental: archived simulation rigor, p
 
 ### 18.1 Reproducibility pointers
 
-- Reference commit for this whitepaper snapshot: `f9f5dae`
+- Reference commit for this whitepaper snapshot: `main` (post-doc sync)
 - Key artifacts:
   - `simulation/outputs/open-agent-economy-test-report.md`
   - `simulation/outputs/adversarial-agent-report.md`
