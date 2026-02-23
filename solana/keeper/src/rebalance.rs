@@ -191,7 +191,12 @@ pub fn run_rebalance_cycle(
             );
         } else if let Some(local_pending) = memory.pending_reveal.clone().filter(|pending| {
             pending.commit_hash == protocol.pending_rebalance_commit
-                && pending.batch_slot == protocol.pending_rebalance_slot
+                && deferred_reveal_ready(
+                    current_slot,
+                    pending.batch_slot,
+                    protocol.pending_rebalance_slot,
+                    cfg.commit_reveal_delay_slots,
+                )
         }) {
             let rebalance_ix = wire::ix_rebalance(
                 cfg.program_id,
@@ -323,7 +328,7 @@ pub fn run_rebalance_cycle(
         }
     }
 
-    let batch_slot = select_batch_slot(current_slot, cfg.commit_reveal_delay_slots);
+    let batch_slot = select_batch_slot(current_slot);
     let reveal_salt = build_reveal_salt();
     let commit_hash = compute_rebalance_commit(
         derived.protocol_state,
@@ -859,8 +864,18 @@ fn weight_deviation_bps(current: [u64; 4], target: [u64; 4]) -> u64 {
     ((l1.saturating_mul(10_000)) / WEIGHT_SCALE as u128) as u64
 }
 
-fn select_batch_slot(current_slot: u64, reveal_delay_slots: u64) -> u64 {
-    current_slot.saturating_add(reveal_delay_slots)
+fn select_batch_slot(current_slot: u64) -> u64 {
+    current_slot
+}
+
+fn deferred_reveal_ready(
+    current_slot: u64,
+    batch_slot: u64,
+    protocol_pending_slot: u64,
+    reveal_delay_slots: u64,
+) -> bool {
+    batch_slot == protocol_pending_slot
+        && current_slot >= batch_slot.saturating_add(reveal_delay_slots)
 }
 
 fn wait_until_slot(rpc: &RpcClient, target_slot: u64, max_wait_secs: u64) -> Result<u64> {
@@ -1246,5 +1261,24 @@ mod tests {
             RpcFilterType::DataSize(size) => assert_eq!(size, AGENT_RECORD_ACCOUNT_DATA_SIZE),
             _ => panic!("second filter should be dataSize"),
         }
+    }
+
+    #[test]
+    fn tc_ow_12_deferred_reveal_becomes_reachable_after_delay() {
+        let commit_slot = 1_000;
+        let delay = 5;
+
+        assert!(!deferred_reveal_ready(
+            commit_slot + delay - 1,
+            commit_slot,
+            commit_slot,
+            delay,
+        ));
+        assert!(deferred_reveal_ready(
+            commit_slot + delay,
+            commit_slot,
+            commit_slot,
+            delay,
+        ));
     }
 }
