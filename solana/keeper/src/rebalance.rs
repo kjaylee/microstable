@@ -7,11 +7,12 @@ use crate::{
 use anyhow::{anyhow, Result};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-    hash::hashv,
+    commitment_config::CommitmentConfig,
+    hash::{hash, hashv},
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
-use std::{thread, time::Duration};
+use std::{collections::HashSet, thread, time::Duration};
 use tracing::{info, warn};
 
 const WEIGHT_SCALE: u64 = 1_000_000;
@@ -268,6 +269,50 @@ pub fn run_rebalance_cycle(
         return Ok(outcome);
     }
 
+    let eligible_agents = match fetch_eligible_commit_agents(rpc, cfg.program_id) {
+        Ok(agents) => agents,
+        Err(err) => {
+            warn!(
+                error = %err,
+                "rebalance commit skipped: failed to query eligible registered agents"
+            );
+            return Ok(outcome);
+        }
+    };
+
+    let Some(submitting_agent_signer) =
+        select_commit_submitting_signer(keepers, &eligible_agents, k1.pubkey())
+    else {
+        warn!(
+            eligible_agents = eligible_agents.len(),
+            "rebalance commit skipped: no locally-available tier-2 active registered agent"
+        );
+        return Ok(outcome);
+    };
+
+    let submitting_agent = submitting_agent_signer.pubkey();
+    let agent_record = derive_agent_record_pda(cfg.program_id, submitting_agent);
+    match preflight_agent_record_exists(rpc, agent_record, cfg.program_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            warn!(
+                agent = %submitting_agent,
+                agent_record = %agent_record,
+                "rebalance commit skipped: submitting agent record PDA missing or invalid"
+            );
+            return Ok(outcome);
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                agent = %submitting_agent,
+                agent_record = %agent_record,
+                "rebalance commit skipped: failed agent_record preflight check"
+            );
+            return Ok(outcome);
+        }
+    }
+
     let batch_slot = select_batch_slot(current_slot, cfg.commit_reveal_delay_slots);
     let reveal_salt = build_reveal_salt();
     let commit_hash = compute_rebalance_commit(
@@ -277,11 +322,10 @@ pub fn run_rebalance_cycle(
         reveal_salt,
     );
 
-    let submitting_agent = k1.pubkey();
     let commit_ix = wire::ix_commit_rebalance(
         cfg.program_id,
         derived.protocol_state,
-        derive_agent_record_pda(cfg.program_id, submitting_agent),
+        agent_record,
         submitting_agent,
         k1.pubkey(),
         k2.pubkey(),
@@ -289,12 +333,17 @@ pub fn run_rebalance_cycle(
         cfg.commit_valid_for_slots,
     )?;
 
+    let mut commit_signers = vec![k1, k2];
+    if submitting_agent != k1.pubkey() && submitting_agent != k2.pubkey() {
+        commit_signers.push(submitting_agent_signer);
+    }
+
     let commit_sig = utils::send_instructions(
         rpc,
         secondary_rpc,
         secondary_mode,
         k1,
-        &[k1, k2],
+        &commit_signers,
         vec![commit_ix],
     )?;
     info!(
@@ -834,6 +883,73 @@ fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"agent", agent.as_ref()], &program_id).0
 }
 
+fn fetch_eligible_commit_agents(rpc: &RpcClient, program_id: Pubkey) -> Result<Vec<Pubkey>> {
+    let discriminator = agent_record_discriminator();
+    let mut agents = Vec::new();
+
+    for (_, account) in rpc.get_program_accounts(&program_id)? {
+        let data = account.data;
+        if data.len() < 8 || data[..8] != discriminator {
+            continue;
+        }
+
+        let record = match wire::decode_account::<wire::AgentRecord>(&data, "AgentRecord") {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+
+        if record.status != wire::AgentStatus::Active || record.tier < 2 {
+            continue;
+        }
+
+        agents.push(record.agent);
+    }
+
+    agents.sort();
+    agents.dedup();
+    Ok(agents)
+}
+
+fn select_commit_submitting_signer<'a>(
+    keepers: &'a [Keypair],
+    eligible_agents: &[Pubkey],
+    preferred_signer: Pubkey,
+) -> Option<&'a Keypair> {
+    let eligible: HashSet<Pubkey> = eligible_agents.iter().copied().collect();
+
+    if eligible.contains(&preferred_signer) {
+        if let Some(preferred) = keepers
+            .iter()
+            .find(|signer| signer.pubkey() == preferred_signer)
+        {
+            return Some(preferred);
+        }
+    }
+
+    keepers
+        .iter()
+        .find(|signer| eligible.contains(&signer.pubkey()))
+}
+
+fn preflight_agent_record_exists(
+    rpc: &RpcClient,
+    agent_record: Pubkey,
+    program_id: Pubkey,
+) -> Result<bool> {
+    let response = rpc.get_account_with_commitment(&agent_record, CommitmentConfig::processed())?;
+    let Some(account) = response.value else {
+        return Ok(false);
+    };
+
+    Ok(account.owner == program_id)
+}
+
+fn agent_record_discriminator() -> [u8; 8] {
+    let mut discriminator = [0u8; 8];
+    discriminator.copy_from_slice(&hash(b"account:AgentRecord").to_bytes()[..8]);
+    discriminator
+}
+
 fn compute_rebalance_commit(
     protocol_key: solana_sdk::pubkey::Pubkey,
     new_weights: [u64; 4],
@@ -879,6 +995,8 @@ mod tests {
             pending_rebalance_commit: [0u8; 32],
             pending_rebalance_slot: 0,
             pending_rebalance_expiry: 0,
+            pending_keeper_set: [[0u8; 32]; 3],
+            pending_keeper_activation_slot: 0,
             bump: 255,
         }
     }
@@ -1055,5 +1173,37 @@ mod tests {
 
         assert_ne!(h1, h2, "salt must change commit hash");
         assert_ne!(h1, h3, "batch slot must change commit hash");
+    }
+
+    #[test]
+    fn tc_ow_09_commit_submitter_prefers_primary_keeper_when_eligible() {
+        let k1 = Keypair::new();
+        let k2 = Keypair::new();
+        let keepers = vec![k1, k2];
+
+        let selected = select_commit_submitting_signer(
+            &keepers,
+            &[keepers[0].pubkey(), keepers[1].pubkey()],
+            keepers[0].pubkey(),
+        )
+        .expect("eligible signer should resolve");
+
+        assert_eq!(selected.pubkey(), keepers[0].pubkey());
+    }
+
+    #[test]
+    fn tc_ow_10_commit_submitter_falls_back_to_other_eligible_keeper() {
+        let k1 = Keypair::new();
+        let k2 = Keypair::new();
+        let keepers = vec![k1, k2];
+
+        let selected = select_commit_submitting_signer(
+            &keepers,
+            &[keepers[1].pubkey()],
+            keepers[0].pubkey(),
+        )
+        .expect("fallback signer should resolve");
+
+        assert_eq!(selected.pubkey(), keepers[1].pubkey());
     }
 }

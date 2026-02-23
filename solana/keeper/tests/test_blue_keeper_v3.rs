@@ -27,6 +27,8 @@ fn base_protocol() -> wire::ProtocolState {
         pending_rebalance_commit: [0u8; 32],
         pending_rebalance_slot: 0,
         pending_rebalance_expiry: 0,
+        pending_keeper_set: [[0u8; 32]; 3],
+        pending_keeper_activation_slot: 0,
         bump: 255,
     }
 }

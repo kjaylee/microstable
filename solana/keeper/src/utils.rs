@@ -572,6 +572,27 @@ pub fn validate_protocol_state_with_tolerance(
         ));
     }
 
+    if primary.pending_keeper_set != secondary.pending_keeper_set {
+        return Err(anyhow!(
+            "protocol.pending_keeper_set mismatch (primary={:?}, secondary={:?})",
+            primary.pending_keeper_set,
+            secondary.pending_keeper_set
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.pending_keeper_activation_slot,
+        secondary.pending_keeper_activation_slot,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.pending_keeper_activation_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.pending_keeper_activation_slot,
+            secondary.pending_keeper_activation_slot,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
     if primary.bump != secondary.bump {
         return Err(anyhow!(
             "protocol.bump mismatch (primary={}, secondary={})",

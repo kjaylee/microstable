@@ -9,7 +9,7 @@ use crate::{
 use anyhow::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-    hash::hash,
+    hash::{hash, hashv},
     instruction::Instruction,
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
@@ -135,9 +135,21 @@ fn maybe_run_aig_cycle_inner(
             }
         };
 
-        if let Some(agent) = select_candidate_agent(&registered_agents) {
-            match resolve_keeper_signer(rpc, keepers, derived) {
-                Ok(keeper_signer) => {
+        let selection_slot = match rpc.get_slot() {
+            Ok(slot) => slot,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "aig tx submission skipped: failed to fetch current slot for weighted selection"
+                );
+                state.last_aig_run = Some(now);
+                return Ok(());
+            }
+        };
+
+        if let Some(agent) = select_candidate_agent(&registered_agents, selection_slot) {
+            match resolve_keeper_quorum_signers(rpc, keepers, derived) {
+                Ok((keeper_one, keeper_two)) => {
                     let actions = aig_actions_for_outcome(
                         agent,
                         AIG_CURRENT_TIER,
@@ -150,8 +162,8 @@ fn maybe_run_aig_cycle_inner(
                             rpc,
                             secondary_rpc,
                             secondary_mode,
-                            keeper_signer,
-                            &[keeper_signer],
+                            keeper_one,
+                            &[keeper_one, keeper_two],
                             instructions,
                         )
                     };
@@ -159,7 +171,8 @@ fn maybe_run_aig_cycle_inner(
                     submit_agent_actions(
                         cfg,
                         derived,
-                        keeper_signer.pubkey(),
+                        keeper_one.pubkey(),
+                        keeper_two.pubkey(),
                         &actions,
                         &mut sender,
                     );
@@ -167,7 +180,7 @@ fn maybe_run_aig_cycle_inner(
                 Err(err) => {
                     warn!(
                         error = %err,
-                        "aig tx submission skipped: failed to resolve keeper signer"
+                        "aig tx submission skipped: failed to resolve keeper quorum signers"
                     );
                 }
             }
@@ -223,7 +236,7 @@ fn maybe_run_tournament_cycle_inner(
     let snapshot = ProtocolSnapshot::default();
     let mut tournament = tournament::create_tournament(snapshot, round, 1);
 
-    let mut participants: Vec<Pubkey> = if let Some((rpc, _, _, keepers, _)) = tx_runtime {
+    let registered_agents: Vec<RegisteredAgent> = if let Some((rpc, _, _, keepers, _)) = tx_runtime {
         match fetch_registered_agents(rpc, cfg.program_id, keepers) {
             Ok(agents) => agents,
             Err(err) => {
@@ -238,16 +251,37 @@ fn maybe_run_tournament_cycle_inner(
         Vec::new()
     };
 
-    if participants.len() < 2 {
+    if registered_agents.len() < 2 {
         warn!(
-            participants = participants.len(),
+            participants = registered_agents.len(),
             "tournament cycle skipped: not enough participant agents"
         );
         state.last_tournament_run = Some(now);
         return Ok(());
     }
 
-    participants.truncate(2);
+    let selection_slot = if let Some((rpc, _, _, _, _)) = tx_runtime {
+        match rpc.get_slot() {
+            Ok(slot) => slot,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "tournament cycle skipped: failed to fetch current slot for weighted selection"
+                );
+                state.last_tournament_run = Some(now);
+                return Ok(());
+            }
+        }
+    } else {
+        round
+    };
+
+    let participants = select_tournament_participants(&registered_agents, selection_slot, 2);
+    if participants.len() < 2 {
+        warn!("tournament cycle skipped: weighted sampling returned insufficient participants");
+        state.last_tournament_run = Some(now);
+        return Ok(());
+    }
 
     let base_proposal = ParamVector::default();
     let challenger_proposal = ParamVector {
@@ -273,8 +307,8 @@ fn maybe_run_tournament_cycle_inner(
     );
 
     if let Some((rpc, secondary_rpc, secondary_mode, keepers, derived)) = tx_runtime {
-        match resolve_keeper_signer(rpc, keepers, derived) {
-            Ok(keeper_signer) => {
+        match resolve_keeper_quorum_signers(rpc, keepers, derived) {
+            Ok((keeper_one, keeper_two)) => {
                 let actions = tournament_actions_from_rankings(
                     &tournament.proposals,
                     TOURNAMENT_BASE_AGENT_SCORE,
@@ -285,18 +319,25 @@ fn maybe_run_tournament_cycle_inner(
                         rpc,
                         secondary_rpc,
                         secondary_mode,
-                        keeper_signer,
-                        &[keeper_signer],
+                        keeper_one,
+                        &[keeper_one, keeper_two],
                         instructions,
                     )
                 };
 
-                submit_agent_actions(cfg, derived, keeper_signer.pubkey(), &actions, &mut sender);
+                submit_agent_actions(
+                    cfg,
+                    derived,
+                    keeper_one.pubkey(),
+                    keeper_two.pubkey(),
+                    &actions,
+                    &mut sender,
+                );
             }
             Err(err) => {
                 warn!(
                     error = %err,
-                    "tournament tx submission skipped: failed to resolve keeper signer"
+                    "tournament tx submission skipped: failed to resolve keeper quorum signers"
                 );
             }
         }
@@ -317,15 +358,81 @@ fn interval_elapsed(last_run: Option<Instant>, interval_secs: u64, now: Instant)
     }
 }
 
-fn select_candidate_agent(registered_agents: &[Pubkey]) -> Option<Pubkey> {
-    registered_agents.first().copied()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RegisteredAgent {
+    agent: Pubkey,
+    stake: u64,
+}
+
+fn select_candidate_agent(registered_agents: &[RegisteredAgent], slot_seed: u64) -> Option<Pubkey> {
+    weighted_random_index(registered_agents, slot_seed, 0)
+        .map(|idx| registered_agents[idx].agent)
+}
+
+fn select_tournament_participants(
+    registered_agents: &[RegisteredAgent],
+    slot_seed: u64,
+    count: usize,
+) -> Vec<Pubkey> {
+    let mut pool = registered_agents.to_vec();
+    let mut selected = Vec::with_capacity(count);
+
+    for nonce in 0..count {
+        let Some(idx) = weighted_random_index(&pool, slot_seed, nonce as u64 + 1) else {
+            break;
+        };
+
+        selected.push(pool.swap_remove(idx).agent);
+    }
+
+    selected
+}
+
+fn weighted_random_index(
+    candidates: &[RegisteredAgent],
+    slot_seed: u64,
+    nonce: u64,
+) -> Option<usize> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let total_weight: u128 = candidates
+        .iter()
+        .map(|candidate| u128::from(candidate.stake.max(1)))
+        .sum();
+
+    if total_weight == 0 {
+        return None;
+    }
+
+    let digest = hashv(&[
+        b"microstable-agent-selection-v2",
+        &slot_seed.to_le_bytes(),
+        &nonce.to_le_bytes(),
+    ])
+    .to_bytes();
+
+    let mut draw_bytes = [0u8; 16];
+    draw_bytes.copy_from_slice(&digest[..16]);
+    let draw = u128::from_le_bytes(draw_bytes) % total_weight;
+
+    let mut cursor = 0u128;
+    for (idx, candidate) in candidates.iter().enumerate() {
+        cursor = cursor.saturating_add(u128::from(candidate.stake.max(1)));
+        if draw < cursor {
+            return Some(idx);
+        }
+    }
+
+    Some(candidates.len().saturating_sub(1))
 }
 
 fn fetch_registered_agents(
     rpc: &RpcClient,
     program_id: Pubkey,
     keepers: &[Keypair],
-) -> Result<Vec<Pubkey>> {
+) -> Result<Vec<RegisteredAgent>> {
     let keeper_pubkeys: HashSet<Pubkey> = keepers.iter().map(Keypair::pubkey).collect();
     let discriminator = agent_record_discriminator();
 
@@ -344,15 +451,21 @@ fn fetch_registered_agents(
         if record.status != wire::AgentStatus::Active {
             continue;
         }
+        if record.stake == 0 {
+            continue;
+        }
         if keeper_pubkeys.contains(&record.agent) {
             continue;
         }
 
-        agents.push(record.agent);
+        agents.push(RegisteredAgent {
+            agent: record.agent,
+            stake: record.stake,
+        });
     }
 
-    agents.sort();
-    agents.dedup();
+    agents.sort_by_key(|candidate| candidate.agent);
+    agents.dedup_by(|lhs, rhs| lhs.agent == rhs.agent);
     Ok(agents)
 }
 
@@ -362,15 +475,14 @@ fn agent_record_discriminator() -> [u8; 8] {
     discriminator
 }
 
-fn resolve_keeper_signer<'a>(
+fn resolve_keeper_quorum_signers<'a>(
     rpc: &RpcClient,
     keepers: &'a [Keypair],
     derived: &DerivedAccounts,
-) -> Result<&'a Keypair> {
+) -> Result<(&'a Keypair, &'a Keypair)> {
     let protocol: wire::ProtocolState =
         utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
-    let (keeper, _) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
-    Ok(keeper)
+    utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,7 +575,8 @@ fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
 fn submit_agent_actions<F>(
     cfg: &KeeperConfig,
     derived: &DerivedAccounts,
-    keeper: Pubkey,
+    keeper_one: Pubkey,
+    keeper_two: Pubkey,
     actions: &[AgentTxAction],
     sender: &mut F,
 ) where
@@ -477,7 +590,8 @@ fn submit_agent_actions<F>(
                 wire::ix_update_agent_score(
                     cfg.program_id,
                     derived.protocol_state,
-                    keeper,
+                    keeper_one,
+                    keeper_two,
                     derive_agent_record_pda(cfg.program_id, *agent),
                     *agent,
                     (*new_score).min(aig::MAX_AIG_SCORE),
@@ -489,7 +603,8 @@ fn submit_agent_actions<F>(
                 wire::ix_promote_agent(
                     cfg.program_id,
                     derived.protocol_state,
-                    keeper,
+                    keeper_one,
+                    keeper_two,
                     derive_agent_record_pda(cfg.program_id, *agent),
                     *agent,
                     *new_tier,
@@ -501,7 +616,8 @@ fn submit_agent_actions<F>(
                 wire::ix_demote_agent(
                     cfg.program_id,
                     derived.protocol_state,
-                    keeper,
+                    keeper_one,
+                    keeper_two,
                     derive_agent_record_pda(cfg.program_id, *agent),
                     *agent,
                     *new_tier,
@@ -556,7 +672,8 @@ mod wiring_tests {
     #[test]
     fn tc_alw_01_aig_tx_path_submits_score_and_promotion() {
         let (cfg, derived) = test_cfg_and_derived();
-        let keeper = Pubkey::new_unique();
+        let keeper_one = Pubkey::new_unique();
+        let keeper_two = Pubkey::new_unique();
         let agent = Pubkey::new_unique();
 
         let actions = aig_actions_for_outcome(agent, 1, 2, aig::TIER2_PROMOTION_THRESHOLD + 1);
@@ -568,7 +685,7 @@ mod wiring_tests {
             Ok(Signature::default())
         };
 
-        submit_agent_actions(&cfg, &derived, keeper, &actions, &mut sender);
+        submit_agent_actions(&cfg, &derived, keeper_one, keeper_two, &actions, &mut sender);
 
         assert_eq!(captured.len(), 2);
 
@@ -576,7 +693,8 @@ mod wiring_tests {
         let expected_update = wire::ix_update_agent_score(
             cfg.program_id,
             derived.protocol_state,
-            keeper,
+            keeper_one,
+            keeper_two,
             agent_record,
             agent,
             aig::TIER2_PROMOTION_THRESHOLD + 1,
@@ -585,7 +703,8 @@ mod wiring_tests {
         let expected_promote = wire::ix_promote_agent(
             cfg.program_id,
             derived.protocol_state,
-            keeper,
+            keeper_one,
+            keeper_two,
             agent_record,
             agent,
             2,
@@ -599,7 +718,8 @@ mod wiring_tests {
     #[test]
     fn tc_alw_02_tournament_tx_path_submits_score_updates_for_rankings() {
         let (cfg, derived) = test_cfg_and_derived();
-        let keeper = Pubkey::new_unique();
+        let keeper_one = Pubkey::new_unique();
+        let keeper_two = Pubkey::new_unique();
 
         let best = Pubkey::new_unique();
         let middle = Pubkey::new_unique();
@@ -651,13 +771,14 @@ mod wiring_tests {
             Ok(Signature::default())
         };
 
-        submit_agent_actions(&cfg, &derived, keeper, &actions, &mut sender);
+        submit_agent_actions(&cfg, &derived, keeper_one, keeper_two, &actions, &mut sender);
         assert_eq!(captured.len(), 3);
 
         let expected_discriminator = wire::ix_update_agent_score(
             cfg.program_id,
             derived.protocol_state,
-            keeper,
+            keeper_one,
+            keeper_two,
             derive_agent_record_pda(cfg.program_id, best),
             best,
             550_000,
@@ -669,5 +790,61 @@ mod wiring_tests {
         for ix in captured {
             assert_eq!(&ix.data[..8], expected_discriminator.as_slice());
         }
+    }
+
+    #[test]
+    fn tc_alw_03_aig_candidate_selection_varies_with_slot_seed() {
+        let agents = vec![
+            RegisteredAgent {
+                agent: Pubkey::new_unique(),
+                stake: 100,
+            },
+            RegisteredAgent {
+                agent: Pubkey::new_unique(),
+                stake: 100,
+            },
+            RegisteredAgent {
+                agent: Pubkey::new_unique(),
+                stake: 100,
+            },
+        ];
+
+        let first = select_candidate_agent(&agents, 0).expect("candidate should exist");
+        let mut observed_alternative = false;
+        for slot in 1..256 {
+            if select_candidate_agent(&agents, slot).expect("candidate should exist") != first {
+                observed_alternative = true;
+                break;
+            }
+        }
+
+        assert!(
+            observed_alternative,
+            "weighted selection should vary across slot seeds"
+        );
+    }
+
+    #[test]
+    fn tc_alw_04_tournament_sampling_returns_unique_participants() {
+        let agents = vec![
+            RegisteredAgent {
+                agent: Pubkey::new_unique(),
+                stake: 500,
+            },
+            RegisteredAgent {
+                agent: Pubkey::new_unique(),
+                stake: 250,
+            },
+            RegisteredAgent {
+                agent: Pubkey::new_unique(),
+                stake: 100,
+            },
+        ];
+
+        let sampled = select_tournament_participants(&agents, 42, 2);
+        assert_eq!(sampled.len(), 2);
+        assert_ne!(sampled[0], sampled[1]);
+        assert!(agents.iter().any(|candidate| candidate.agent == sampled[0]));
+        assert!(agents.iter().any(|candidate| candidate.agent == sampled[1]));
     }
 }

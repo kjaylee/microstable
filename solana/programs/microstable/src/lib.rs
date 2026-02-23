@@ -69,7 +69,7 @@ const COMMIT_REVEAL_MAX_VALIDITY: u64 = 1_000;
 const KEEPER_ROTATION_DELAY_SLOTS: u64 = 100;
 
 // OAE / AIG constants.
-const AGENT_MIN_STAKE_LAMPORTS: u64 = 1;
+const AGENT_MIN_STAKE_LAMPORTS: u64 = 100_000_000;
 const AGENT_STAKE_COOLDOWN_SECONDS: i64 = 86_400;
 const AIG_MIN_COMMIT_TIER: u8 = 2;
 const AIG_TIER1_THRESHOLD: u64 = 600_000;
@@ -402,7 +402,11 @@ pub mod microstable {
         _agent: Pubkey,
         new_score: u64,
     ) -> Result<()> {
-        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
         validate_agent_score(new_score)?;
 
         let record = &mut ctx.accounts.agent_record;
@@ -412,7 +416,11 @@ pub mod microstable {
     }
 
     pub fn promote_agent(ctx: Context<PromoteAgent>, _agent: Pubkey, new_tier: u8) -> Result<()> {
-        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
 
         let now = Clock::get()?.unix_timestamp;
         let record = &mut ctx.accounts.agent_record;
@@ -423,7 +431,11 @@ pub mod microstable {
     }
 
     pub fn demote_agent(ctx: Context<DemoteAgent>, _agent: Pubkey, new_tier: u8) -> Result<()> {
-        require_keeper_member(&ctx.accounts.protocol_state, ctx.accounts.keeper.key())?;
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
 
         let now = Clock::get()?.unix_timestamp;
         let record = &mut ctx.accounts.agent_record;
@@ -2068,7 +2080,8 @@ pub struct UpdateAgentScore<'info> {
     #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    pub keeper: Signer<'info>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
 
     #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
     pub agent_record: Account<'info, AgentRecord>,
@@ -2080,7 +2093,8 @@ pub struct PromoteAgent<'info> {
     #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    pub keeper: Signer<'info>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
 
     #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
     pub agent_record: Account<'info, AgentRecord>,
@@ -2092,7 +2106,8 @@ pub struct DemoteAgent<'info> {
     #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    pub keeper: Signer<'info>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
 
     #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
     pub agent_record: Account<'info, AgentRecord>,
@@ -3472,6 +3487,15 @@ mod tests {
     }
 
     #[test]
+    fn registration_below_minimum_stake_rejected() {
+        assert_err_contains(
+            validate_registration_stake(AGENT_MIN_STAKE_LAMPORTS - 1),
+            "InvalidAgentStake",
+        );
+        validate_registration_stake(AGENT_MIN_STAKE_LAMPORTS).unwrap();
+    }
+
+    #[test]
     fn registration_pda_is_deterministic_preventing_double_register() {
         let agent = Pubkey::new_unique();
         let (pda_a, _) = Pubkey::find_program_address(&[b"agent", agent.as_ref()], &crate::id());
@@ -3502,10 +3526,14 @@ mod tests {
         let k3 = Pubkey::new_unique();
         let protocol = sample_protocol([k1, k2, k3]);
 
-        require_keeper_member(&protocol, k1).unwrap();
+        require_keeper_quorum(&protocol, k1, k2).unwrap();
         assert_err_contains(
-            require_keeper_member(&protocol, Pubkey::new_unique()),
-            "Unauthorized",
+            require_keeper_quorum(&protocol, k1, k1),
+            "DuplicateKeeperSigner",
+        );
+        assert_err_contains(
+            require_keeper_quorum(&protocol, k1, Pubkey::new_unique()),
+            "KeeperQuorumNotMet",
         );
     }
 

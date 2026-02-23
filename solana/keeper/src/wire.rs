@@ -5,6 +5,7 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
 };
+use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]
 pub struct ProtocolState {
@@ -20,6 +21,8 @@ pub struct ProtocolState {
     pub pending_rebalance_commit: [u8; 32],
     pub pending_rebalance_slot: u64,
     pub pending_rebalance_expiry: u64,
+    pub pending_keeper_set: [[u8; 32]; 3],
+    pub pending_keeper_activation_slot: u64,
     pub bump: u8,
 }
 
@@ -148,7 +151,17 @@ pub fn decode_account<T: BorshDeserialize>(data: &[u8], account_name: &str) -> R
     }
 
     let mut payload = &data[8..];
-    T::deserialize(&mut payload).map_err(|e| anyhow!("borsh decode failed: {e}"))
+    let decoded = T::deserialize(&mut payload).map_err(|e| anyhow!("borsh decode failed: {e}"))?;
+
+    if !payload.is_empty() {
+        warn!(
+            account = account_name,
+            trailing_bytes = payload.len(),
+            "decoded account contains unexpected trailing bytes"
+        );
+    }
+
+    Ok(decoded)
 }
 
 pub fn ix_update_oracle_pyth(
@@ -287,7 +300,8 @@ pub fn ix_update_protocol_params(
 pub fn ix_update_agent_score(
     program_id: Pubkey,
     protocol_state: Pubkey,
-    keeper: Pubkey,
+    keeper_one: Pubkey,
+    keeper_two: Pubkey,
     agent_record: Pubkey,
     agent: Pubkey,
     new_score: u64,
@@ -296,7 +310,8 @@ pub fn ix_update_agent_score(
         program_id,
         accounts: vec![
             AccountMeta::new_readonly(protocol_state, false),
-            AccountMeta::new_readonly(keeper, true),
+            AccountMeta::new_readonly(keeper_one, true),
+            AccountMeta::new_readonly(keeper_two, true),
             AccountMeta::new(agent_record, false),
         ],
         data: instruction_data(
@@ -309,7 +324,8 @@ pub fn ix_update_agent_score(
 pub fn ix_promote_agent(
     program_id: Pubkey,
     protocol_state: Pubkey,
-    keeper: Pubkey,
+    keeper_one: Pubkey,
+    keeper_two: Pubkey,
     agent_record: Pubkey,
     agent: Pubkey,
     new_tier: u8,
@@ -318,7 +334,8 @@ pub fn ix_promote_agent(
         program_id,
         accounts: vec![
             AccountMeta::new_readonly(protocol_state, false),
-            AccountMeta::new_readonly(keeper, true),
+            AccountMeta::new_readonly(keeper_one, true),
+            AccountMeta::new_readonly(keeper_two, true),
             AccountMeta::new(agent_record, false),
         ],
         data: instruction_data("promote_agent", &PromoteAgentArgs { agent, new_tier })?,
@@ -328,7 +345,8 @@ pub fn ix_promote_agent(
 pub fn ix_demote_agent(
     program_id: Pubkey,
     protocol_state: Pubkey,
-    keeper: Pubkey,
+    keeper_one: Pubkey,
+    keeper_two: Pubkey,
     agent_record: Pubkey,
     agent: Pubkey,
     new_tier: u8,
@@ -337,7 +355,8 @@ pub fn ix_demote_agent(
         program_id,
         accounts: vec![
             AccountMeta::new_readonly(protocol_state, false),
-            AccountMeta::new_readonly(keeper, true),
+            AccountMeta::new_readonly(keeper_one, true),
+            AccountMeta::new_readonly(keeper_two, true),
             AccountMeta::new(agent_record, false),
         ],
         data: instruction_data("demote_agent", &DemoteAgentArgs { agent, new_tier })?,
