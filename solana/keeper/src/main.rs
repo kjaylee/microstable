@@ -38,7 +38,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     pubkey::Pubkey,
-    signature::{Keypair, Signer},
+    signature::{Keypair, Signature, Signer},
 };
 use std::{
     env, fs,
@@ -159,6 +159,8 @@ async fn main() -> Result<()> {
     let mut risk_manager_memory = risk_manager::RiskManagerMemory::default();
     let mut watchdog_memory = WatchdogMemory::default();
     let mut agent_loop_state = AgentLoopState::default();
+
+    load_optimizer_checkpoint_into_memory(&mut rebalance_memory);
 
     if cli.once {
         let secondary_runtime = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
@@ -294,6 +296,39 @@ async fn main() -> Result<()> {
 
     info!("keeper stopped gracefully");
     Ok(())
+}
+
+fn load_optimizer_checkpoint_into_memory(rebalance_memory: &mut RebalanceMemory) {
+    let checkpoint_path = optimizer::checkpoint_path();
+
+    if !checkpoint_path.exists() {
+        info!(
+            path = %checkpoint_path.display(),
+            "optimizer checkpoint not found, starting fresh"
+        );
+        return;
+    }
+
+    match optimizer::OptimizerCheckpoint::load_from_path(&checkpoint_path) {
+        Ok(checkpoint) => {
+            let tick = checkpoint.tick;
+            let loss = checkpoint.loss;
+            rebalance_memory.restore_optimizer_checkpoint(checkpoint);
+            info!(
+                path = %checkpoint_path.display(),
+                tick,
+                loss,
+                "restored optimizer checkpoint"
+            );
+        }
+        Err(err) => {
+            warn!(
+                path = %checkpoint_path.display(),
+                error = %err,
+                "failed to load optimizer checkpoint, starting fresh"
+            );
+        }
+    }
 }
 
 fn run_startup_preflight(
@@ -578,6 +613,112 @@ fn resolve_secondary_rpc_runtime<'a>(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DynamicFeeUpdate {
+    base_mint_fee: u64,
+    base_redeem_fee: u64,
+    next_mint_fee: u64,
+    next_redeem_fee: u64,
+}
+
+fn dynamic_fee_update_for_risk_level(
+    risk_level: risk_manager::RiskLevel,
+    base_mint_fee: u64,
+    base_redeem_fee: u64,
+    current_mint_fee: u64,
+    current_redeem_fee: u64,
+) -> Option<DynamicFeeUpdate> {
+    let base_mint_u32 = u32::try_from(base_mint_fee).unwrap_or(u32::MAX);
+    let base_redeem_u32 = u32::try_from(base_redeem_fee).unwrap_or(u32::MAX);
+    let (next_mint_fee, next_redeem_fee) =
+        risk_manager::compute_dynamic_fees(risk_level, base_mint_u32, base_redeem_u32);
+
+    if u64::from(next_mint_fee) == current_mint_fee
+        && u64::from(next_redeem_fee) == current_redeem_fee
+    {
+        return None;
+    }
+
+    Some(DynamicFeeUpdate {
+        base_mint_fee,
+        base_redeem_fee,
+        next_mint_fee: u64::from(next_mint_fee),
+        next_redeem_fee: u64::from(next_redeem_fee),
+    })
+}
+
+fn maybe_apply_dynamic_fees(
+    rpc: &RpcClient,
+    secondary_rpc: Option<&RpcClient>,
+    secondary_mode: utils::SecondaryRpcMode,
+    cfg: &KeeperConfig,
+    keepers: &[Keypair],
+    derived: &utils::DerivedAccounts,
+    risk_level: risk_manager::RiskLevel,
+    risk_manager_memory: &mut risk_manager::RiskManagerMemory,
+) -> Result<Option<Signature>> {
+    if keepers.len() < 2 {
+        return Err(anyhow!(
+            "dynamic fee update requires at least 2 keeper signers, got {}",
+            keepers.len()
+        ));
+    }
+
+    let protocol: wire::ProtocolState =
+        utils::fetch_account(rpc, &derived.protocol_state, "ProtocolState")?;
+    let (base_mint_fee, base_redeem_fee) = risk_manager_memory.dynamic_fee_bases(&protocol);
+
+    let Some(update) = dynamic_fee_update_for_risk_level(
+        risk_level,
+        base_mint_fee,
+        base_redeem_fee,
+        protocol.mint_fee_rate,
+        protocol.redeem_fee_rate,
+    ) else {
+        return Ok(None);
+    };
+
+    let keeper_one = &keepers[0];
+    let keeper_two = &keepers[1];
+
+    let ix = wire::ix_update_protocol_params(
+        cfg.program_id,
+        derived.protocol_state,
+        keeper_one.pubkey(),
+        keeper_two.pubkey(),
+        wire::UpdateProtocolParamsArgs {
+            new_cr_target: protocol.cr_target,
+            new_mint_fee: update.next_mint_fee,
+            new_redeem_fee: update.next_redeem_fee,
+        },
+    )
+    .context("failed to build dynamic fee update_protocol_params instruction")?;
+
+    let signature = utils::send_instructions(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        keeper_one,
+        &[keeper_one, keeper_two],
+        vec![ix],
+    )
+    .context("failed to submit dynamic fee update_protocol_params transaction")?;
+
+    info!(
+        risk_level = ?risk_level,
+        base_mint_fee = update.base_mint_fee,
+        base_redeem_fee = update.base_redeem_fee,
+        current_mint_fee = protocol.mint_fee_rate,
+        current_redeem_fee = protocol.redeem_fee_rate,
+        next_mint_fee = update.next_mint_fee,
+        next_redeem_fee = update.next_redeem_fee,
+        signature = %signature,
+        "applied dynamic fee adjustment from risk manager"
+    );
+
+    Ok(Some(signature))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_cycle(
     rpc: &RpcClient,
@@ -646,6 +787,20 @@ fn run_cycle(
                 throttle = outcome.throttle_redemptions,
                 "risk manager step complete"
             );
+
+            if let Err(err) = maybe_apply_dynamic_fees(
+                rpc,
+                secondary_rpc,
+                secondary_mode,
+                cfg,
+                keepers,
+                derived,
+                outcome.risk_level,
+                risk_manager_memory,
+            ) {
+                failed_steps.push("risk_manager");
+                warn!(error = %err, "risk manager dynamic fee update failed");
+            }
         }
         Err(err) => {
             failed_steps.push("risk_manager");

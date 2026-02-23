@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 use crate::optimizer::{
-    optimize_step, project_to_safety_set, validate_safety_set, AdamOptimizer, LossFunction,
-    ParamVector, ProtocolSnapshot, SafetyBounds,
+    optimize_step, project_to_safety_set, validate_safety_set, AdamOptimizer, AdamState,
+    LossFunction, OptimizerCheckpoint, ParamVector, ProtocolSnapshot, SafetyBounds,
 };
 
 fn baseline_snapshot() -> ProtocolSnapshot {
@@ -459,4 +459,51 @@ fn integration_multiple_steps_reduce_loss_simple_case() {
         params =
             optimize_step(&snapshot, &params, &mut optimizer, &bounds, &mut checkpoint).unwrap();
     }
+}
+
+#[test]
+fn checkpoint_round_trip_preserves_adam_state_and_tick() {
+    let checkpoint = OptimizerCheckpoint {
+        params: ParamVector {
+            weights: [0.4, 0.3, 0.2, 0.1],
+            target_cr: 1.27,
+            mint_fee: 0.003,
+            redeem_fee: 0.004,
+        },
+        adam_state: AdamState {
+            m: ParamVector {
+                weights: [0.01, -0.02, 0.03, -0.04],
+                target_cr: 0.05,
+                mint_fee: -0.06,
+                redeem_fee: 0.07,
+            },
+            v: ParamVector {
+                weights: [0.11, 0.12, 0.13, 0.14],
+                target_cr: 0.15,
+                mint_fee: 0.16,
+                redeem_fee: 0.17,
+            },
+            t: 42,
+        },
+        tick: 42,
+        loss: 0.987654321,
+    };
+
+    let unique = format!(
+        "microstable_optimizer_checkpoint_roundtrip_{}_{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should be monotonic")
+            .as_nanos()
+    );
+    let path = std::env::temp_dir().join(unique);
+
+    checkpoint
+        .save_to_path(&path)
+        .expect("checkpoint should save");
+    let loaded = OptimizerCheckpoint::load_from_path(&path).expect("checkpoint should load");
+
+    std::fs::remove_file(&path).ok();
+    assert_eq!(loaded, checkpoint);
 }

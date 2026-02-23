@@ -35,6 +35,20 @@ pub enum RecoveryAction {
 pub struct RiskManagerMemory {
     pub current_level: RiskLevel,
     pub recovery_epoch: u64,
+    pub base_mint_fee_rate: Option<u64>,
+    pub base_redeem_fee_rate: Option<u64>,
+}
+
+impl RiskManagerMemory {
+    pub fn dynamic_fee_bases(&mut self, protocol: &wire::ProtocolState) -> (u64, u64) {
+        let base_mint = *self
+            .base_mint_fee_rate
+            .get_or_insert(protocol.mint_fee_rate);
+        let base_redeem = *self
+            .base_redeem_fee_rate
+            .get_or_insert(protocol.redeem_fee_rate);
+        (base_mint, base_redeem)
+    }
 }
 
 impl Default for RiskManagerMemory {
@@ -42,6 +56,8 @@ impl Default for RiskManagerMemory {
         Self {
             current_level: RiskLevel::Normal,
             recovery_epoch: 0,
+            base_mint_fee_rate: None,
+            base_redeem_fee_rate: None,
         }
     }
 }

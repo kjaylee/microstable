@@ -47,6 +47,15 @@ pub struct RebalanceMemory {
     safety_bounds: Option<SafetyBounds>,
 }
 
+impl RebalanceMemory {
+    pub fn restore_optimizer_checkpoint(&mut self, checkpoint: OptimizerCheckpoint) {
+        let mut optimizer = self.adam_optimizer.take().unwrap_or_default();
+        optimizer.state = checkpoint.adam_state.clone();
+        self.adam_optimizer = Some(optimizer);
+        self.optimizer_checkpoint = Some(checkpoint);
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PendingReveal {
     commit_hash: [u8; 32],

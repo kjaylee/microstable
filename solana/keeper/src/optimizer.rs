@@ -817,7 +817,7 @@ pub struct OptimizerCheckpoint {
 
 impl OptimizerCheckpoint {
     pub fn save_default(&self) -> Result<(), OptimizerError> {
-        self.save_to_path(default_checkpoint_path())
+        self.save_to_path(checkpoint_path())
     }
 
     pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> Result<(), OptimizerError> {
@@ -974,6 +974,10 @@ fn rollback_or_error(
     }
 
     Err(err)
+}
+
+pub fn checkpoint_path() -> PathBuf {
+    default_checkpoint_path()
 }
 
 fn default_checkpoint_path() -> PathBuf {
