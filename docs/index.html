@@ -383,6 +383,231 @@
       line-height: 1.35;
     }
 
+    .wallet-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      background: rgba(0, 240, 255, 0.06);
+      border-radius: 999px;
+      padding: 4px;
+    }
+
+    .wallet-btn {
+      border: 1px solid rgba(0, 240, 255, 0.45);
+      background: rgba(0, 240, 255, 0.12);
+      color: var(--cyan);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.18s ease;
+    }
+
+    .wallet-btn:hover {
+      border-color: rgba(0, 240, 255, 0.75);
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.24);
+      transform: translateY(-1px);
+    }
+
+    .wallet-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .wallet-btn.disconnect {
+      border-color: rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--txt);
+      padding-inline: 10px;
+    }
+
+    .phantom-icon {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      background: linear-gradient(135deg, #8b5cf6, #00f0ff);
+      box-shadow: 0 0 10px rgba(139, 92, 246, 0.6);
+      flex: 0 0 auto;
+    }
+
+    .wallet-install {
+      color: var(--amber);
+      text-decoration: none;
+      font-size: 12px;
+      padding: 0 8px;
+    }
+
+    .wallet-install:hover { text-decoration: underline; }
+
+    .mint-panel {
+      margin-top: 14px;
+      border-color: var(--line);
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0.04), rgba(8, 12, 20, 0.82));
+    }
+
+    .mint-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.2fr) 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .mint-controls label {
+      display: block;
+      margin: 10px 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .mint-controls select,
+    .mint-controls input {
+      width: 100%;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: rgba(0, 0, 0, 0.35);
+      color: var(--txt);
+      font-family: inherit;
+      padding: 10px 11px;
+      outline: none;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .mint-controls select:focus,
+    .mint-controls input:focus {
+      border-color: rgba(0, 240, 255, 0.65);
+      box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.15);
+    }
+
+    .mint-amount-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .mint-max {
+      border: 1px solid rgba(0, 255, 136, 0.35);
+      background: rgba(0, 255, 136, 0.1);
+      color: var(--green);
+      border-radius: 9px;
+      font-family: inherit;
+      cursor: pointer;
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    .mint-max:hover { box-shadow: 0 0 14px rgba(0, 255, 136, 0.24); }
+
+    .mint-estimate {
+      margin-top: 12px;
+      padding: 9px 11px;
+      border-radius: 9px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .mint-estimate strong {
+      color: var(--cyan);
+      font-size: 14px;
+      display: inline-block;
+      margin-left: 5px;
+    }
+
+    .mint-submit {
+      margin-top: 12px;
+      width: 100%;
+      border: 1px solid rgba(0, 240, 255, 0.5);
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0.24), rgba(0, 240, 255, 0.11));
+      color: var(--txt);
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .mint-submit:hover:not(:disabled) {
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.25);
+      transform: translateY(-1px);
+    }
+
+    .mint-submit:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .mint-status {
+      margin-top: 10px;
+      min-height: 19px;
+      font-size: 12px;
+    }
+
+    .mint-status a {
+      color: var(--cyan);
+      text-decoration: none;
+    }
+
+    .mint-status a:hover { text-decoration: underline; }
+
+    .balance-board {
+      border: 1px solid var(--line-soft);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 11px;
+    }
+
+    .balance-title {
+      color: var(--cyan);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .balance-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .balance-row .sym { color: var(--muted); }
+    .balance-row .val { text-align: right; }
+
+    .wallet-line {
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .mint-meta {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
     .footer {
       margin-top: 18px;
       padding-top: 14px;
@@ -414,6 +639,8 @@
       .container { width: min(1200px, 96vw); }
       th:nth-child(4), td:nth-child(4) { display: none; }
       .optimizer-grid { grid-template-columns: 1fr; }
+      .mint-grid { grid-template-columns: 1fr; }
+      .wallet-box { width: 100%; justify-content: flex-start; }
     }
   </style>
 </head>
@@ -429,6 +656,11 @@
           <span class="badge"><span id="liveDot" class="live-dot"></span><strong id="liveText">OFFLINE</strong></span>
           <span class="badge devnet">DEVNET</span>
           <span class="badge" id="rpcHealth">RPC: BOOTING</span>
+          <div class="wallet-box" id="walletBox">
+            <button id="walletConnectBtn" class="wallet-btn" type="button"><span class="phantom-icon"></span><span id="walletConnectLabel">Connect Wallet</span></button>
+            <button id="walletDisconnectBtn" class="wallet-btn disconnect" type="button" hidden>Disconnect</button>
+            <a id="walletInstallLink" class="wallet-install" href="https://phantom.app/" target="_blank" rel="noreferrer" hidden>Install Phantom</a>
+          </div>
         </div>
       </div>
       <div class="statusline">
@@ -483,6 +715,44 @@
       </article>
     </section>
 
+    <section class="full-panel mint-panel">
+      <h2>Mint Console</h2>
+      <div class="mint-grid">
+        <div class="mint-controls">
+          <label for="mintCollateral">Collateral</label>
+          <select id="mintCollateral">
+            <option value="0">USDC</option>
+            <option value="1">USDT</option>
+            <option value="2">DAI</option>
+          </select>
+
+          <label for="mintAmount">Amount</label>
+          <div class="mint-amount-row">
+            <input id="mintAmount" type="text" inputmode="decimal" placeholder="0.00" autocomplete="off" />
+            <button id="mintMaxBtn" class="mint-max" type="button">MAX</button>
+          </div>
+
+          <div class="mint-estimate">
+            Estimated MSTB: <strong id="mintEstimate">--</strong>
+            <div class="mint-meta" id="mintFeeMeta">Fee: --</div>
+            <div class="mint-meta" id="mintPriceMeta">Oracle price: --</div>
+          </div>
+
+          <button id="mintSubmitBtn" class="mint-submit" type="button" disabled>MINT</button>
+          <div id="mintTxStatus" class="mint-status muted">Connect wallet to mint.</div>
+        </div>
+
+        <aside class="balance-board">
+          <div class="balance-title">Wallet Balances</div>
+          <div class="wallet-line">Address: <span id="walletAddressView">--</span></div>
+          <div class="balance-row"><span class="sym">USDC</span><span class="val" id="balUSDC">--</span></div>
+          <div class="balance-row"><span class="sym">USDT</span><span class="val" id="balUSDT">--</span></div>
+          <div class="balance-row"><span class="sym">DAI</span><span class="val" id="balDAI">--</span></div>
+          <div class="balance-row"><span class="sym">MSTB</span><span class="val" id="balMSTB">--</span></div>
+        </aside>
+      </div>
+    </section>
+
     <section class="full-panel">
       <h2>Agent Arena</h2>
       <table>
@@ -535,6 +805,12 @@
     </footer>
   </main>
 
+  <script src="https://unpkg.com/@solana/web3.js@1.95.3/lib/index.iife.min.js" crossorigin="anonymous"></script>
+  <script type="module">
+    import * as splToken from "https://esm.sh/@solana/spl-token@0.4.8?bundle";
+    window.splToken = splToken;
+  </script>
+
   <script>
     const CFG = {
       RPC_URL: "https://api.devnet.solana.com",
@@ -542,6 +818,8 @@
       MSTB_MINT: "EZUwC88f1s3k9prgv5DGY6wML8giBqdpRxoA2rLtGA6R",
       PROTOCOL_STATE: "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
       CIRCUIT_BREAKER: "7xy7xc4nqhywYa72Bb5A2u7g3t6kz96HN2e2z4Yn9WXe",
+      TOKEN_PROGRAM: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      ASSOCIATED_TOKEN_PROGRAM: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
       FEEDS: {
         USDC: "Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX",
         USDT: "HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM",
@@ -554,6 +832,12 @@
 
     const ROLE_MAP = ["Optimizer", "Monitor", "Auditor", "Liquidator"];
     const AGENT_STATUS = ["Active", "Cooldown", "Slashed", "Deregistered"];
+    const COLLATERAL_META = {
+      0: { symbol: "USDC" },
+      1: { symbol: "USDT" },
+      2: { symbol: "DAI" },
+      3: { symbol: "USDS" }
+    };
 
     const state = {
       lastSuccessAt: 0,
@@ -571,7 +855,20 @@
       oracleCardsReady: false,
       weightRowsReady: false,
       lastProtocol: null,
-      lastError: ""
+      lastVaults: [],
+      collateralMints: {},
+      lastError: "",
+      connection: null,
+      pubkeys: null,
+      wallet: {
+        provider: null,
+        installed: false,
+        publicKey: null,
+        balances: { USDC: 0, USDT: 0, DAI: 0, MSTB: 0 },
+        balanceBusy: false
+      },
+      mintBusy: false,
+      mintDiscriminator: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -791,13 +1088,30 @@
       const pending_keeper_set = [];
       for (let i = 0; i < 3; i++) { pending_keeper_set.push(readPubkey(bytes, o)); o += 32; }
       const pending_keeper_activation_slot = readU64LE(dv, o); o += 8;
-      const bump = bytes[o];
+      const bump = bytes[o]; o += 1;
+
+      const EMPTY_PUBKEY = "11111111111111111111111111111111";
+      let usdc_mint = null;
+      let usdt_mint = null;
+      let dai_mint = null;
+      let usds_mint = null;
+      if (bytes.length >= o + 128) {
+        usdc_mint = readPubkey(bytes, o); o += 32;
+        usdt_mint = readPubkey(bytes, o); o += 32;
+        dai_mint = readPubkey(bytes, o); o += 32;
+        usds_mint = readPubkey(bytes, o); o += 32;
+
+        if (usdc_mint === EMPTY_PUBKEY) usdc_mint = null;
+        if (usdt_mint === EMPTY_PUBKEY) usdt_mint = null;
+        if (dai_mint === EMPTY_PUBKEY) dai_mint = null;
+        if (usds_mint === EMPTY_PUBKEY) usds_mint = null;
+      }
 
       return {
         weights, fee_rate, mint_fee_rate, redeem_fee_rate, cr_target, total_supply,
         last_update_slot, keeper_set, emergency_shutdown, pending_rebalance_commit,
         pending_rebalance_slot, pending_rebalance_expiry, pending_keeper_set,
-        pending_keeper_activation_slot, bump
+        pending_keeper_activation_slot, bump, usdc_mint, usdt_mint, dai_mint, usds_mint
       };
     }
 
@@ -1472,6 +1786,474 @@
       });
     }
 
+    function parseUiAmountToRaw(value, decimals = 6) {
+      const text = String(value ?? "").trim();
+      if (!text) return 0n;
+      if (!/^\d+(\.\d+)?$/.test(text)) return null;
+      const [ints, frac = ""] = text.split(".");
+      const fracPadded = (frac + "0".repeat(decimals)).slice(0, decimals);
+      return BigInt(ints || "0") * pow10n(decimals) + BigInt(fracPadded || "0");
+    }
+
+    function uiNumberToTrimmedText(n, maxFrac = 6) {
+      const fixed = Number(n || 0).toFixed(maxFrac);
+      return fixed.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+    }
+
+    function resolveCollateralMints(protocol, vaults) {
+      const next = {
+        0: protocol?.usdc_mint || null,
+        1: protocol?.usdt_mint || null,
+        2: protocol?.dai_mint || null,
+        3: protocol?.usds_mint || null
+      };
+      for (const v of vaults || []) {
+        if (next[v.index]) continue;
+        if (v.index >= 0 && v.index <= 3) next[v.index] = v.mint;
+      }
+      return next;
+    }
+
+    function initSolanaContext() {
+      if (!window.solanaWeb3) throw new Error("solanaWeb3 CDN failed to load");
+      const w3 = window.solanaWeb3;
+      if (!state.connection) {
+        state.connection = new w3.Connection(CFG.RPC_URL, "confirmed");
+      }
+      if (!state.pubkeys) {
+        const te = new TextEncoder();
+        const programId = new w3.PublicKey(CFG.PROGRAM_ID);
+        const protocolState = new w3.PublicKey(CFG.PROTOCOL_STATE);
+        const circuitBreaker = new w3.PublicKey(CFG.CIRCUIT_BREAKER);
+        const mstbMint = new w3.PublicKey(CFG.MSTB_MINT);
+        const tokenProgram = new w3.PublicKey(CFG.TOKEN_PROGRAM);
+        const associatedTokenProgram = new w3.PublicKey(CFG.ASSOCIATED_TOKEN_PROGRAM);
+
+        const [derivedProtocolState] = w3.PublicKey.findProgramAddressSync([te.encode("protocol_state")], programId);
+        const [derivedCircuitBreaker] = w3.PublicKey.findProgramAddressSync([te.encode("circuit_breaker")], programId);
+
+        const vaultPdas = [0, 1, 2, 3].map((i) =>
+          w3.PublicKey.findProgramAddressSync([te.encode("collateral_vault"), Uint8Array.from([i])], programId)[0]
+        );
+
+        if (!derivedProtocolState.equals(protocolState)) {
+          console.warn("Protocol state PDA mismatch", derivedProtocolState.toBase58(), protocolState.toBase58());
+        }
+        if (!derivedCircuitBreaker.equals(circuitBreaker)) {
+          console.warn("Circuit breaker PDA mismatch", derivedCircuitBreaker.toBase58(), circuitBreaker.toBase58());
+        }
+
+        state.pubkeys = {
+          programId,
+          protocolState,
+          circuitBreaker,
+          mstbMint,
+          tokenProgram,
+          associatedTokenProgram,
+          systemProgram: w3.SystemProgram.programId,
+          rent: w3.SYSVAR_RENT_PUBKEY,
+          vaultPdas
+        };
+      }
+    }
+
+    function deriveAtaAddress(owner, mint) {
+      const w3 = window.solanaWeb3;
+      return w3.PublicKey.findProgramAddressSync(
+        [owner.toBytes(), state.pubkeys.tokenProgram.toBytes(), mint.toBytes()],
+        state.pubkeys.associatedTokenProgram
+      )[0];
+    }
+
+    function createAtaIdempotentIx(payer, ata, owner, mint) {
+      const w3 = window.solanaWeb3;
+      return new w3.TransactionInstruction({
+        programId: state.pubkeys.associatedTokenProgram,
+        keys: [
+          { pubkey: payer, isSigner: true, isWritable: true },
+          { pubkey: ata, isSigner: false, isWritable: true },
+          { pubkey: owner, isSigner: false, isWritable: false },
+          { pubkey: mint, isSigner: false, isWritable: false },
+          { pubkey: state.pubkeys.systemProgram, isSigner: false, isWritable: false },
+          { pubkey: state.pubkeys.tokenProgram, isSigner: false, isWritable: false }
+        ],
+        data: new Uint8Array([1])
+      });
+    }
+
+    async function getMintDiscriminator() {
+      if (state.mintDiscriminator) return state.mintDiscriminator;
+      const fallback = new Uint8Array([51, 57, 225, 47, 182, 146, 137, 166]);
+      if (!window.crypto?.subtle) {
+        state.mintDiscriminator = fallback;
+        return state.mintDiscriminator;
+      }
+      const bytes = new TextEncoder().encode("global:mint");
+      const hash = await window.crypto.subtle.digest("SHA-256", bytes);
+      state.mintDiscriminator = new Uint8Array(hash).slice(0, 8);
+      return state.mintDiscriminator;
+    }
+
+    function encodeMintInstructionData(collateralIndex, collateralAmountRaw, discriminator) {
+      const out = new Uint8Array(17);
+      out.set(discriminator, 0);
+      out[8] = collateralIndex & 0xff;
+      let x = collateralAmountRaw;
+      for (let i = 0; i < 8; i++) {
+        out[9 + i] = Number(x & 0xffn);
+        x >>= 8n;
+      }
+      return out;
+    }
+
+    function walletProvider() {
+      const provider = window.solana;
+      if (provider?.isPhantom) return provider;
+      return null;
+    }
+
+    function renderWalletControls() {
+      const connectBtn = $("walletConnectBtn");
+      const connectLabel = $("walletConnectLabel");
+      const disconnectBtn = $("walletDisconnectBtn");
+      const installLink = $("walletInstallLink");
+
+      const installed = !!state.wallet.provider;
+      const connected = !!state.wallet.publicKey;
+
+      connectBtn.hidden = !installed;
+      installLink.hidden = installed;
+
+      if (!installed) {
+        disconnectBtn.hidden = true;
+        connectLabel.textContent = "Connect Wallet";
+        connectBtn.disabled = true;
+        return;
+      }
+
+      if (!connected) {
+        connectLabel.textContent = "Connect Wallet";
+        connectBtn.disabled = false;
+        disconnectBtn.hidden = true;
+      } else {
+        connectLabel.textContent = shortKey(state.wallet.publicKey.toBase58());
+        connectBtn.disabled = true;
+        disconnectBtn.hidden = false;
+      }
+    }
+
+    function renderWalletBalances() {
+      const connected = !!state.wallet.publicKey;
+      const b = state.wallet.balances;
+
+      $("walletAddressView").textContent = connected ? state.wallet.publicKey.toBase58() : "--";
+      $("balUSDC").textContent = connected ? uiNumberToTrimmedText(b.USDC) : "--";
+      $("balUSDT").textContent = connected ? uiNumberToTrimmedText(b.USDT) : "--";
+      $("balDAI").textContent = connected ? uiNumberToTrimmedText(b.DAI) : "--";
+      $("balMSTB").textContent = connected ? uiNumberToTrimmedText(b.MSTB) : "--";
+    }
+
+    function setWalletPublicKey(pubkeyLike) {
+      if (!pubkeyLike) {
+        state.wallet.publicKey = null;
+        state.wallet.balances = { USDC: 0, USDT: 0, DAI: 0, MSTB: 0 };
+      } else {
+        state.wallet.publicKey = new window.solanaWeb3.PublicKey(pubkeyLike.toString());
+      }
+      renderWalletControls();
+      renderWalletBalances();
+      updateMintEstimate();
+      updateMintButton();
+    }
+
+    async function refreshWalletBalances(opts = {}) {
+      const silent = !!opts.silent;
+      if (!state.wallet.publicKey || state.wallet.balanceBusy) {
+        return;
+      }
+      state.wallet.balanceBusy = true;
+      try {
+        const owner = state.wallet.publicKey.toBase58();
+        const tokenAccounts = await rpc(
+          "getTokenAccountsByOwner",
+          [owner, { programId: CFG.TOKEN_PROGRAM }, { encoding: "jsonParsed" }],
+          12000
+        );
+
+        const mintToAmount = new Map();
+        const values = tokenAccounts?.value || [];
+        for (const item of values) {
+          const info = item?.account?.data?.parsed?.info;
+          const mint = info?.mint;
+          const amount = Number(info?.tokenAmount?.uiAmountString ?? info?.tokenAmount?.uiAmount ?? 0);
+          if (mint) mintToAmount.set(mint, amount);
+        }
+
+        const mintUSDC = state.collateralMints[0];
+        const mintUSDT = state.collateralMints[1];
+        const mintDAI = state.collateralMints[2];
+
+        state.wallet.balances = {
+          USDC: Number(mintToAmount.get(mintUSDC) || 0),
+          USDT: Number(mintToAmount.get(mintUSDT) || 0),
+          DAI: Number(mintToAmount.get(mintDAI) || 0),
+          MSTB: Number(mintToAmount.get(CFG.MSTB_MINT) || 0)
+        };
+
+        renderWalletBalances();
+        updateMintEstimate();
+      } catch (e) {
+        if (!silent) setMintTxStatus("error", `Balance refresh failed: ${shortKey(e.message || String(e))}`);
+      } finally {
+        state.wallet.balanceBusy = false;
+      }
+    }
+
+    async function connectWallet() {
+      if (!state.wallet.provider) {
+        window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
+        return;
+      }
+      try {
+        setMintTxStatus("muted", "Connecting Phantom wallet...");
+        const resp = await state.wallet.provider.connect();
+        setWalletPublicKey(resp?.publicKey || state.wallet.provider.publicKey);
+        await refreshWalletBalances({ silent: true });
+        setMintTxStatus("ok", "Wallet connected.");
+      } catch (e) {
+        setMintTxStatus("error", `Wallet connect failed: ${shortKey(e.message || String(e))}`);
+      }
+    }
+
+    async function disconnectWallet() {
+      if (!state.wallet.provider) return;
+      try {
+        await state.wallet.provider.disconnect();
+      } catch {}
+      setWalletPublicKey(null);
+      setMintTxStatus("muted", "Wallet disconnected.");
+    }
+
+    function selectedCollateralIndex() {
+      return Number($("mintCollateral")?.value || "0");
+    }
+
+    function selectedCollateralSymbol() {
+      return COLLATERAL_META[selectedCollateralIndex()]?.symbol || "USDC";
+    }
+
+    function selectedCollateralBalance() {
+      const symbol = selectedCollateralSymbol();
+      return Number(state.wallet.balances?.[symbol] || 0);
+    }
+
+    function setMintTxStatus(kind, text, signature = "") {
+      const el = $("mintTxStatus");
+      const cls = kind === "ok" ? "ok" : kind === "warn" ? "warn" : kind === "error" ? "bad" : "muted";
+      if (signature) {
+        const link = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+        el.className = `mint-status ${cls}`;
+        el.innerHTML = `${text} <a href="${link}" target="_blank" rel="noreferrer">${shortKey(signature)}</a>`;
+        return;
+      }
+      el.className = `mint-status ${cls}`;
+      el.textContent = text;
+    }
+
+    function updateMintEstimate() {
+      const idx = selectedCollateralIndex();
+      const amountRaw = parseUiAmountToRaw($("mintAmount").value, 6);
+      const vault = (state.lastVaults || []).find((v) => Number(v.index) === idx);
+      const feeRate = Number(state.lastProtocol?.mint_fee_rate || 0);
+
+      $("mintFeeMeta").textContent = `Fee: ${ppmToPct(feeRate).toFixed(4)}%`;
+      if (vault?.price) {
+        $("mintPriceMeta").textContent = `Oracle price: $${(Number(vault.price) / 1e6).toFixed(6)}`;
+      } else {
+        $("mintPriceMeta").textContent = "Oracle price: --";
+      }
+
+      if (amountRaw === null || amountRaw <= 0n || !vault?.price) {
+        $("mintEstimate").textContent = "--";
+        updateMintButton();
+        return;
+      }
+
+      const gross = (amountRaw * vault.price) / 1000000n;
+      const feeScaler = BigInt(Math.max(0, 1_000_000 - feeRate));
+      const net = (gross * feeScaler) / 1000000n;
+      $("mintEstimate").textContent = fmtToken(net, 6, 6);
+      updateMintButton();
+    }
+
+    function updateMintButton() {
+      const btn = $("mintSubmitBtn");
+      const amountRaw = parseUiAmountToRaw($("mintAmount").value, 6);
+      const mintKnown = !!state.collateralMints[selectedCollateralIndex()];
+      const ready = !!state.wallet.publicKey && amountRaw !== null && amountRaw > 0n && mintKnown && !state.mintBusy;
+      btn.disabled = !ready;
+      btn.textContent = state.mintBusy ? "MINTING..." : "MINT";
+    }
+
+    async function submitMint() {
+      initSolanaContext();
+      if (!state.wallet.publicKey) {
+        setMintTxStatus("warn", "Connect wallet first.");
+        return;
+      }
+
+      const collateralIndex = selectedCollateralIndex();
+      const collateralMintStr = state.collateralMints[collateralIndex];
+      if (!collateralMintStr) {
+        setMintTxStatus("error", "Collateral mint not resolved yet. Wait for next refresh.");
+        return;
+      }
+
+      const collateralAmountRaw = parseUiAmountToRaw($("mintAmount").value, 6);
+      if (collateralAmountRaw === null || collateralAmountRaw <= 0n) {
+        setMintTxStatus("warn", "Enter a valid mint amount.");
+        return;
+      }
+
+      state.mintBusy = true;
+      updateMintButton();
+      try {
+        const w3 = window.solanaWeb3;
+        const user = state.wallet.publicKey;
+        const collateralMint = new w3.PublicKey(collateralMintStr);
+
+        const [userPosition] = w3.PublicKey.findProgramAddressSync(
+          [new TextEncoder().encode("user_position"), user.toBytes()],
+          state.pubkeys.programId
+        );
+
+        const userCollateralAta = deriveAtaAddress(user, collateralMint);
+        const vaultCollateralAta = deriveAtaAddress(state.pubkeys.protocolState, collateralMint);
+        const userMstbAta = deriveAtaAddress(user, state.pubkeys.mstbMint);
+
+        const [userCollateralInfo, vaultCollateralInfo, userMstbInfo] = await state.connection.getMultipleAccountsInfo([
+          userCollateralAta,
+          vaultCollateralAta,
+          userMstbAta
+        ]);
+
+        const tx = new w3.Transaction();
+        if (!userCollateralInfo) tx.add(createAtaIdempotentIx(user, userCollateralAta, user, collateralMint));
+        if (!vaultCollateralInfo) tx.add(createAtaIdempotentIx(user, vaultCollateralAta, state.pubkeys.protocolState, collateralMint));
+        if (!userMstbInfo) tx.add(createAtaIdempotentIx(user, userMstbAta, user, state.pubkeys.mstbMint));
+
+        const discriminator = await getMintDiscriminator();
+        const ixData = encodeMintInstructionData(collateralIndex, collateralAmountRaw, discriminator);
+
+        tx.add(new w3.TransactionInstruction({
+          programId: state.pubkeys.programId,
+          keys: [
+            { pubkey: state.pubkeys.protocolState, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.circuitBreaker, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[0], isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[1], isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[2], isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[3], isSigner: false, isWritable: true },
+            { pubkey: user, isSigner: true, isWritable: true },
+            { pubkey: userPosition, isSigner: false, isWritable: true },
+            { pubkey: userCollateralAta, isSigner: false, isWritable: true },
+            { pubkey: vaultCollateralAta, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.mstbMint, isSigner: false, isWritable: true },
+            { pubkey: userMstbAta, isSigner: false, isWritable: true },
+            { pubkey: collateralMint, isSigner: false, isWritable: false },
+            { pubkey: state.pubkeys.tokenProgram, isSigner: false, isWritable: false },
+            { pubkey: state.pubkeys.associatedTokenProgram, isSigner: false, isWritable: false },
+            { pubkey: state.pubkeys.systemProgram, isSigner: false, isWritable: false },
+            { pubkey: state.pubkeys.rent, isSigner: false, isWritable: false }
+          ],
+          data: ixData
+        }));
+
+        const latest = await state.connection.getLatestBlockhash("finalized");
+        tx.recentBlockhash = latest.blockhash;
+        tx.feePayer = user;
+
+        setMintTxStatus("warn", "Transaction submitted... awaiting signature.");
+        const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
+          preflightCommitment: "confirmed"
+        });
+        const signature = typeof sendResult === "string" ? sendResult : sendResult?.signature;
+        if (!signature) throw new Error("No signature returned by wallet");
+
+        setMintTxStatus("warn", "Mint pending:", signature);
+        const confirm = await state.connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight
+          },
+          "confirmed"
+        );
+
+        if (confirm?.value?.err) {
+          throw new Error(JSON.stringify(confirm.value.err));
+        }
+
+        setMintTxStatus("ok", "Mint confirmed:", signature);
+        $("mintAmount").value = "";
+        updateMintEstimate();
+        await refreshWalletBalances({ silent: true });
+        await poll();
+      } catch (e) {
+        setMintTxStatus("error", `Mint failed: ${shortKey(e.message || String(e))}`);
+      } finally {
+        state.mintBusy = false;
+        updateMintButton();
+      }
+    }
+
+    function bindWalletAndMintUi() {
+      initSolanaContext();
+
+      const provider = walletProvider();
+      state.wallet.provider = provider;
+      renderWalletControls();
+      renderWalletBalances();
+      updateMintEstimate();
+      updateMintButton();
+
+      $("walletConnectBtn").addEventListener("click", connectWallet);
+      $("walletDisconnectBtn").addEventListener("click", disconnectWallet);
+      $("mintMaxBtn").addEventListener("click", () => {
+        const bal = selectedCollateralBalance();
+        $("mintAmount").value = uiNumberToTrimmedText(bal);
+        updateMintEstimate();
+      });
+      $("mintAmount").addEventListener("input", updateMintEstimate);
+      $("mintCollateral").addEventListener("change", updateMintEstimate);
+      $("mintSubmitBtn").addEventListener("click", submitMint);
+
+      if (provider) {
+        provider.on("connect", (pubkey) => {
+          setWalletPublicKey(pubkey || provider.publicKey);
+          refreshWalletBalances({ silent: true });
+        });
+        provider.on("disconnect", () => {
+          setWalletPublicKey(null);
+        });
+        provider.on("accountChanged", (pubkey) => {
+          if (!pubkey) {
+            setWalletPublicKey(null);
+            return;
+          }
+          setWalletPublicKey(pubkey);
+          refreshWalletBalances({ silent: true });
+        });
+
+        provider.connect({ onlyIfTrusted: true }).then((res) => {
+          if (res?.publicKey || provider.publicKey) {
+            setWalletPublicKey(res?.publicKey || provider.publicKey);
+            refreshWalletBalances({ silent: true });
+          }
+        }).catch(() => {});
+      }
+    }
+
     async function fetchAll() {
       const [
         protocolRes,
@@ -1549,6 +2331,14 @@
         updateTxFeed(data.signatures, data.typeMap);
         updateOracles(data.oracles);
 
+        state.lastVaults = data.vaults;
+        state.collateralMints = resolveCollateralMints(data.protocol, data.vaults);
+        updateMintEstimate();
+
+        if (state.wallet.publicKey) {
+          refreshWalletBalances({ silent: true });
+        }
+
         const latestTx = data.signatures[0];
         if (latestTx?.blockTime) state.lastKeeperActivity = Number(latestTx.blockTime) * 1000;
 
@@ -1572,6 +2362,12 @@
       $("programShort").textContent = shortKey(CFG.PROGRAM_ID);
       updateHeaderTick();
       drawHistoryChart();
+
+      try {
+        bindWalletAndMintUi();
+      } catch (e) {
+        setMintTxStatus("error", `Wallet init failed: ${shortKey(e.message || String(e))}`);
+      }
 
       poll();
       setInterval(poll, CFG.TICK_MS);
