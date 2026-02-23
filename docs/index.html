@@ -927,6 +927,12 @@
       3: { symbol: "USDS" }
     };
 
+    const FAUCET_CONFIG = {
+      instructionAvailable: false,
+      requiredInstruction: "devnet_mint_collateral(collateral_index: u8, collateral_amount: u64)",
+      hint: "On-chain faucet instruction needed"
+    };
+
     const state = {
       lastSuccessAt: 0,
       lastKeeperActivity: 0,
@@ -956,7 +962,13 @@
         balanceBusy: false
       },
       mintBusy: false,
-      mintDiscriminator: null
+      mintDiscriminator: null,
+      faucet: {
+        mintAuthorities: {},
+        lastMintsKey: "",
+        checked: false,
+        checking: false
+      }
     };
 
     const $ = (id) => document.getElementById(id);
@@ -2039,6 +2051,106 @@
       $("balUSDT").textContent = connected ? uiNumberToTrimmedText(b.USDT) : "--";
       $("balDAI").textContent = connected ? uiNumberToTrimmedText(b.DAI) : "--";
       $("balMSTB").textContent = connected ? uiNumberToTrimmedText(b.MSTB) : "--";
+
+      $("faucetBalUSDC").textContent = connected ? uiNumberToTrimmedText(b.USDC) : "--";
+      $("faucetBalUSDT").textContent = connected ? uiNumberToTrimmedText(b.USDT) : "--";
+      $("faucetBalDAI").textContent = connected ? uiNumberToTrimmedText(b.DAI) : "--";
+      $("faucetBalMSTB").textContent = connected ? uiNumberToTrimmedText(b.MSTB) : "--";
+    }
+
+    function parseSplMintMeta(bytes) {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 82) return { mintAuthority: null, decimals: null };
+      const mintAuthorityOption = readU32LE(dv, 0);
+      const mintAuthority = mintAuthorityOption === 1 ? readPubkey(bytes, 4) : null;
+      const decimals = bytes[44];
+      return { mintAuthority, decimals };
+    }
+
+    function setFaucetButtonsDisabled(disabled, tooltip) {
+      ["faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
+        const btn = $(id);
+        btn.disabled = !!disabled;
+        if (tooltip) btn.title = tooltip;
+      });
+    }
+
+    function renderFaucetStatus() {
+      const statusEl = $("faucetStatus");
+      const mintsReady = !!state.collateralMints[0] && !!state.collateralMints[1] && !!state.collateralMints[2];
+      if (!mintsReady) {
+        statusEl.className = "faucet-status muted";
+        statusEl.textContent = "Waiting for collateral mint metadata...";
+        setFaucetButtonsDisabled(true, FAUCET_CONFIG.hint);
+        return;
+      }
+
+      const auth0 = state.faucet.mintAuthorities[0] || "--";
+      const auth1 = state.faucet.mintAuthorities[1] || "--";
+      const auth2 = state.faucet.mintAuthorities[2] || "--";
+      const allAuthKnown = auth0 !== "--" && auth1 !== "--" && auth2 !== "--";
+      const protocolAuthority = CFG.PROTOCOL_STATE;
+      const allProtocol = allAuthKnown && auth0 === protocolAuthority && auth1 === protocolAuthority && auth2 === protocolAuthority;
+
+      if (!FAUCET_CONFIG.instructionAvailable) {
+        statusEl.className = "faucet-status warn";
+        if (allProtocol) {
+          statusEl.textContent = `Coming Soon — ${FAUCET_CONFIG.hint} (${FAUCET_CONFIG.requiredInstruction}).`;
+        } else if (allAuthKnown) {
+          statusEl.textContent = `Coming Soon — ${FAUCET_CONFIG.hint}. Mint authority is ${shortKey(auth0)} / ${shortKey(auth1)} / ${shortKey(auth2)} (not protocol_state).`;
+        } else {
+          statusEl.textContent = `Coming Soon — ${FAUCET_CONFIG.hint}.`;
+        }
+        setFaucetButtonsDisabled(true, FAUCET_CONFIG.hint);
+        return;
+      }
+
+      statusEl.className = "faucet-status ok";
+      statusEl.textContent = "Faucet is ready.";
+      setFaucetButtonsDisabled(false, "Request test tokens");
+    }
+
+    async function refreshFaucetMintAuthorities(opts = {}) {
+      const silent = !!opts.silent;
+      const idxs = [0, 1, 2].filter((i) => !!state.collateralMints[i]);
+      if (idxs.length < 3 || state.faucet.checking) {
+        renderFaucetStatus();
+        return;
+      }
+
+      const mintsKey = idxs.map((i) => state.collateralMints[i]).join("|");
+      if (state.faucet.checked && state.faucet.lastMintsKey === mintsKey) {
+        renderFaucetStatus();
+        return;
+      }
+
+      state.faucet.checking = true;
+      try {
+        const mintPubkeys = idxs.map((i) => state.collateralMints[i]);
+        const result = await rpc("getMultipleAccounts", [mintPubkeys, { encoding: "base64" }], 12000);
+        const nextAuthorities = {};
+        idxs.forEach((idx, pos) => {
+          const b64 = result?.value?.[pos]?.data?.[0];
+          if (!b64) return;
+          try {
+            const bytes = base64ToBytes(b64);
+            nextAuthorities[idx] = parseSplMintMeta(bytes).mintAuthority;
+          } catch {}
+        });
+
+        state.faucet.mintAuthorities = nextAuthorities;
+        state.faucet.lastMintsKey = mintsKey;
+        state.faucet.checked = true;
+      } catch (e) {
+        if (!silent) {
+          const statusEl = $("faucetStatus");
+          statusEl.className = "faucet-status bad";
+          statusEl.textContent = `Faucet metadata check failed: ${shortKey(e.message || String(e))}`;
+        }
+      } finally {
+        state.faucet.checking = false;
+        renderFaucetStatus();
+      }
     }
 
     function setWalletPublicKey(pubkeyLike) {
@@ -2050,6 +2162,7 @@
       }
       renderWalletControls();
       renderWalletBalances();
+      renderFaucetStatus();
       updateMintEstimate();
       updateMintButton();
     }
@@ -2089,6 +2202,7 @@
         };
 
         renderWalletBalances();
+        renderFaucetStatus();
         updateMintEstimate();
       } catch (e) {
         if (!silent) setMintTxStatus("error", `Balance refresh failed: ${shortKey(e.message || String(e))}`);
@@ -2302,6 +2416,7 @@
       state.wallet.provider = provider;
       renderWalletControls();
       renderWalletBalances();
+      renderFaucetStatus();
       updateMintEstimate();
       updateMintButton();
 
@@ -2315,6 +2430,14 @@
       $("mintAmount").addEventListener("input", updateMintEstimate);
       $("mintCollateral").addEventListener("change", updateMintEstimate);
       $("mintSubmitBtn").addEventListener("click", submitMint);
+
+      ["faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
+        $(id).addEventListener("click", () => {
+          const el = $("faucetStatus");
+          el.className = "faucet-status warn";
+          el.textContent = `Coming Soon — ${FAUCET_CONFIG.hint} (${FAUCET_CONFIG.requiredInstruction}).`;
+        });
+      });
 
       if (provider) {
         provider.on("connect", (pubkey) => {
@@ -2349,7 +2472,8 @@
         supplyRes,
         sigRes,
         agentsRes,
-        vaultsRes,
+        vaultsResV1,
+        vaultsResV2,
         usdcPythRes,
         usdtPythRes,
         daiPythRes
@@ -2360,6 +2484,7 @@
         rpc("getSignaturesForAddress", [CFG.PROGRAM_ID, { limit: 10 }]),
         rpc("getProgramAccounts", [CFG.PROGRAM_ID, { encoding: "base64", filters: [{ dataSize: 168 }] }]),
         rpc("getProgramAccounts", [CFG.PROGRAM_ID, { encoding: "base64", filters: [{ dataSize: 200 }] }]),
+        rpc("getProgramAccounts", [CFG.PROGRAM_ID, { encoding: "base64", filters: [{ dataSize: 264 }] }]),
         rpc("getAccountInfo", [CFG.FEEDS.USDC, { encoding: "base64" }]),
         rpc("getAccountInfo", [CFG.FEEDS.USDT, { encoding: "base64" }]),
         rpc("getAccountInfo", [CFG.FEEDS.DAI, { encoding: "base64" }])
@@ -2379,11 +2504,17 @@
         try { return parseAgentRecord(base64ToBytes(b64)); } catch { return null; }
       }).filter(Boolean);
 
-      const vaults = (vaultsRes || []).map((x) => {
+      const vaultEntries = [...(vaultsResV1 || []), ...(vaultsResV2 || [])];
+      const vaultByIndex = new Map();
+      for (const x of vaultEntries) {
         const b64 = x?.account?.data?.[0];
-        if (!b64) return null;
-        try { return parseCollateralVault(base64ToBytes(b64)); } catch { return null; }
-      }).filter(Boolean).sort((a, b) => a.index - b.index);
+        if (!b64) continue;
+        try {
+          const parsed = parseCollateralVault(base64ToBytes(b64));
+          if (!vaultByIndex.has(parsed.index)) vaultByIndex.set(parsed.index, parsed);
+        } catch {}
+      }
+      const vaults = Array.from(vaultByIndex.values()).sort((a, b) => a.index - b.index);
 
       const signatures = sigRes || [];
       const typeMap = await enrichTxTypes(signatures);
@@ -2422,6 +2553,7 @@
         state.lastVaults = data.vaults;
         state.collateralMints = resolveCollateralMints(data.protocol, data.vaults);
         updateMintEstimate();
+        refreshFaucetMintAuthorities({ silent: true });
 
         if (state.wallet.publicKey) {
           refreshWalletBalances({ silent: true });
