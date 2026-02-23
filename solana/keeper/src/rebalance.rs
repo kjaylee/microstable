@@ -1024,4 +1024,28 @@ mod tests {
         assert_eq!(target, expected_static);
         assert!(pending_params.is_none());
     }
+
+    #[test]
+    fn tc_ow_07_weight_deviation_bps_reflects_large_rebalance_need() {
+        let current = [400_000, 300_000, 200_000, 100_000];
+        let target = [100_000, 400_000, 300_000, 200_000];
+
+        let deviation_bps = weight_deviation_bps(current, target);
+
+        assert!(deviation_bps > 300, "deviation should exceed default 300bps threshold");
+        assert_eq!(deviation_bps, 6_000);
+    }
+
+    #[test]
+    fn tc_ow_08_commit_hash_changes_with_salt_or_batch_slot() {
+        let protocol = Pubkey::new_unique();
+        let weights = [250_000, 250_000, 250_000, 250_000];
+
+        let h1 = compute_rebalance_commit(protocol, weights, 100, [1u8; 32]);
+        let h2 = compute_rebalance_commit(protocol, weights, 100, [2u8; 32]);
+        let h3 = compute_rebalance_commit(protocol, weights, 101, [1u8; 32]);
+
+        assert_ne!(h1, h2, "salt must change commit hash");
+        assert_ne!(h1, h3, "batch slot must change commit hash");
+    }
 }

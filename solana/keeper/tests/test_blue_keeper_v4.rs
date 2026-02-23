@@ -85,6 +85,15 @@ fn monitor_view(
     monitor::MonitorCrossRpcView::from_state(protocol, circuit, vaults, global_cr_bps)
 }
 
+fn observation(price: u64, confidence: u64, publish_time: i64, observed_slot: u64) -> oracle::OracleObservation {
+    oracle::OracleObservation {
+        price,
+        confidence,
+        publish_time,
+        observed_slot,
+    }
+}
+
 #[test]
 fn tc_pkv3_001_monitor_tolerance_allows_small_drift() {
     let protocol = base_protocol();
@@ -201,5 +210,54 @@ fn tc_pkv3_003_rejects_primary_only_confirmation_when_dual_required() {
     assert!(
         msg.contains("dual-RPC confirmation"),
         "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn tc_pkv3_004_oracle_observation_consistency_accepts_small_drift() {
+    let primary = observation(1_000_000, 500, 1_700_000_000, 123_456);
+    let secondary = observation(1_000_001, 501, 1_700_000_001, 123_457);
+
+    oracle::validate_oracle_observation_consistency(&primary, &secondary)
+        .expect("observation drift within tolerance should pass");
+}
+
+#[test]
+fn tc_pkv3_004_oracle_observation_consistency_rejects_large_price_gap() {
+    let primary = observation(1_000_000, 500, 1_700_000_000, 123_456);
+    let secondary = observation(1_000_010, 500, 1_700_000_000, 123_456);
+
+    let err = oracle::validate_oracle_observation_consistency(&primary, &secondary)
+        .expect_err("large price gap must fail consistency check");
+
+    assert!(
+        format!("{err:#}").contains("price mismatch beyond tolerance"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn tc_pkv3_005_watchdog_cross_rpc_rejects_cr_spike_mismatch() {
+    let protocol = base_protocol();
+    let primary_vaults = [
+        vault(0, 100, 1_000_000),
+        vault(1, 100, 1_000_000),
+        vault(2, 100, 1_000_000),
+        vault(3, 100, 1_000_000),
+    ];
+
+    let err = watchdog::validate_watchdog_cross_rpc(
+        &protocol,
+        &protocol,
+        &primary_vaults,
+        &primary_vaults,
+        12_000,
+        12_100,
+    )
+    .expect_err("large global CR mismatch must fail watchdog cross-RPC check");
+
+    assert!(
+        format!("{err:#}").contains("global collateral ratio mismatch"),
+        "unexpected error: {err:#}"
     );
 }

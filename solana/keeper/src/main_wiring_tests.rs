@@ -21,3 +21,15 @@ fn tc_mw_01_run_cycle_wires_risk_manager_between_rebalance_and_aig() {
         "risk manager should run after rebalance and before aig"
     );
 }
+
+#[test]
+fn tc_mw_02_main_loop_has_consecutive_failure_guardrail() {
+    let source = include_str!("main.rs");
+
+    assert!(
+        source.contains("consecutive_failed_cycles")
+            && source.contains("max_consecutive_failed_cycles")
+            && source.contains("too many consecutive failed cycles"),
+        "main loop must enforce automatic protective exit on repeated cycle failures"
+    );
+}

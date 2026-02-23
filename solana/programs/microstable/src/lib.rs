@@ -3427,6 +3427,24 @@ mod tests {
         }
     }
 
+    fn sample_circuit() -> CircuitBreakerState {
+        CircuitBreakerState {
+            status: [BreakerStatus::Inactive as u8; 4],
+            activation_tick: [0; 4],
+            trigger_count: [0; 4],
+            cooldown_until: [0; 4],
+            last_trigger_tick: [0; 4],
+            recent_trigger_count: [0; 4],
+            recovery_tick: [0; 4],
+            cb1_collateral_index: 0,
+            mint_rate_limit: SCALE,
+            optimizer_enabled: true,
+            learning_rate_scale: SCALE,
+            max_activation_duration: MAX_ACTIVATION_DURATION,
+            bump: 0,
+        }
+    }
+
     #[test]
     fn registration_valid_stake_and_all_roles() {
         let agent = Pubkey::new_unique();
@@ -3675,5 +3693,110 @@ mod tests {
         assert_eq!(protocol.mint_fee_rate, 900);
         assert_eq!(protocol.redeem_fee_rate, 700);
         assert_eq!(protocol.last_update_slot, 999);
+    }
+
+    #[test]
+    fn tc_update_protocol_params_9_duplicate_signers_rejected() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        assert_err_contains(
+            apply_protocol_param_update(&mut protocol, k1, k1, 1_200_000, 1_000, 1_000, 777),
+            "DuplicateKeeperSigner",
+        );
+    }
+
+    #[test]
+    fn protocol_state_pda_is_deterministic() {
+        let (a, bump_a) = Pubkey::find_program_address(&[b"protocol_state"], &crate::id());
+        let (b, bump_b) = Pubkey::find_program_address(&[b"protocol_state"], &crate::id());
+        assert_eq!(a, b);
+        assert_eq!(bump_a, bump_b);
+        assert_ne!(a, Pubkey::default());
+    }
+
+    #[test]
+    fn keeper_set_validation_rejects_duplicates_and_default() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+
+        validate_keeper_set(&[a, b, Pubkey::default()]).expect_err("default key must fail");
+        validate_keeper_set(&[a, b, a]).expect_err("duplicate key must fail");
+        validate_keeper_set(&[a, b, Pubkey::new_unique()]).expect("valid unique keeper set");
+    }
+
+    #[test]
+    fn keeper_quorum_requires_two_distinct_members_and_supports_rotation() {
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        let k3 = Pubkey::new_unique();
+        let mut protocol = sample_protocol([k1, k2, k3]);
+
+        require_keeper_quorum(&protocol, k1, k2).expect("2-of-3 quorum should pass");
+        assert_err_contains(
+            require_keeper_quorum(&protocol, k1, k1),
+            "DuplicateKeeperSigner",
+        );
+        assert_err_contains(
+            require_keeper_quorum(&protocol, k1, Pubkey::new_unique()),
+            "KeeperQuorumNotMet",
+        );
+
+        let n1 = Pubkey::new_unique();
+        let n2 = Pubkey::new_unique();
+        let n3 = Pubkey::new_unique();
+        protocol.keeper_set = [n1, n2, n3];
+
+        assert_err_contains(require_keeper_quorum(&protocol, k1, k2), "KeeperQuorumNotMet");
+        require_keeper_quorum(&protocol, n1, n2).expect("rotated quorum should pass");
+    }
+
+    #[test]
+    fn expected_pyth_feed_mappings_cover_all_four_vaults() {
+        assert_eq!(expected_pyth_feed_account(0).unwrap(), PYTH_USDC_USD);
+        assert_eq!(expected_pyth_feed_account(1).unwrap(), PYTH_USDT_USD);
+        assert_eq!(expected_pyth_feed_account(2).unwrap(), PYTH_DAI_USD);
+        assert_eq!(expected_pyth_feed_account(3).unwrap(), PYTH_USDS_USD);
+        assert_err_contains(expected_pyth_feed_account(4), "InvalidCollateralIndex");
+
+        assert_eq!(expected_pyth_feed_id(0).unwrap(), PYTH_FEED_ID_USDC);
+        assert_eq!(expected_pyth_feed_id(1).unwrap(), PYTH_FEED_ID_USDT);
+        assert_eq!(expected_pyth_feed_id(2).unwrap(), PYTH_FEED_ID_DAI);
+        assert_eq!(expected_pyth_feed_id(3).unwrap(), PYTH_FEED_ID_USDS);
+        assert_err_contains(expected_pyth_feed_id(4), "InvalidCollateralIndex");
+    }
+
+    #[test]
+    fn circuit_breaker_recovery_and_resume_path_restores_inactive_state() {
+        let mut circuit = sample_circuit();
+        circuit.status[0] = BreakerStatus::Holding as u8;
+        circuit.activation_tick[0] = 10;
+
+        refresh_circuit_breakers(&mut circuit, 15);
+        assert_eq!(circuit.status[0], BreakerStatus::Active as u8);
+
+        circuit.max_activation_duration = 4;
+        refresh_circuit_breakers(&mut circuit, 20);
+        assert_eq!(circuit.status[0], BreakerStatus::Recovery as u8);
+
+        let cooldown_end = circuit.cooldown_until[0];
+        refresh_circuit_breakers(&mut circuit, cooldown_end);
+        assert_eq!(circuit.status[0], BreakerStatus::Inactive as u8);
+    }
+
+    #[test]
+    fn cb4_recovery_restores_learning_rate_before_inactive_transition() {
+        let mut circuit = sample_circuit();
+        circuit.status[3] = BreakerStatus::Recovery as u8;
+        circuit.recovery_tick[3] = 0;
+        circuit.cooldown_until[3] = 8;
+        circuit.learning_rate_scale = 500_000;
+
+        refresh_circuit_breakers(&mut circuit, 10);
+
+        assert_eq!(circuit.learning_rate_scale, SCALE);
+        assert_eq!(circuit.status[3], BreakerStatus::Inactive as u8);
     }
 }

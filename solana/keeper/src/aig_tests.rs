@@ -2,8 +2,9 @@
 
 use crate::{
     aig::{
-        aggregate_scores, evaluate_challenge_result, generate_challenges, run_sandbox_trial,
-        tier_promotion_threshold, ChallengeKind, ChallengeResult,
+        aggregate_scores, evaluate_challenge_result, evaluate_challenge_result_for_tier,
+        generate_challenges, run_sandbox_trial, tier_promotion_threshold, ChallengeKind,
+        ChallengeResult,
     },
     optimizer::{ParamVector, ProtocolSnapshot},
 };
@@ -173,4 +174,23 @@ fn tc_aig_10_stress_oracle_failure_non_panic_valid_result() {
 
     let loss = run_sandbox_trial(&params, &scenario, 12);
     assert!(loss.is_finite(), "loss must be finite, got {loss}");
+}
+
+#[test]
+fn tc_aig_11_tier0_to1_promotion_passes_at_threshold() {
+    let result = evaluate_challenge_result_for_tier(4.0, 10.0, 1);
+
+    assert_eq!(result.score, 600_000);
+    assert!(result.passed, "tier 1 challenge should pass at threshold");
+}
+
+#[test]
+fn tc_aig_12_failed_challenge_below_target_threshold_does_not_pass() {
+    let result = evaluate_challenge_result_for_tier(3.0, 10.0, 2);
+
+    assert_eq!(result.score, 700_000);
+    assert!(
+        !result.passed,
+        "tier 2 challenge should fail when score < 750,000"
+    );
 }
