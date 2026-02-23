@@ -33,7 +33,7 @@
 
     const FAUCET_CONFIG = {
       instructionAvailable: false,
-      requiredInstruction: "devnet_mint_collateral(collateral_index: u8, collateral_amount: u64)",
+      requiredInstruction: "devnet_mint_collateral(collateral_index: u8, collateral_amount: u64, max_price: u64)",
       hint: "On-chain faucet instruction needed"
     };
 
@@ -392,6 +392,17 @@
       const manual_oracle_mode_expiry_slot = readU64LE(dv, o); o += 8;
       const bump = bytes[o]; o += 1;
 
+      let manual_oracle_reenable_delay_slots = 0n;
+      let manual_oracle_last_activation_slot = 0n;
+      let manual_oracle_activation_epoch = 0n;
+      let manual_oracle_activation_count_epoch = 0n;
+      if (bytes.length >= o + 32) {
+        manual_oracle_reenable_delay_slots = readU64LE(dv, o); o += 8;
+        manual_oracle_last_activation_slot = readU64LE(dv, o); o += 8;
+        manual_oracle_activation_epoch = readU64LE(dv, o); o += 8;
+        manual_oracle_activation_count_epoch = readU64LE(dv, o); o += 8;
+      }
+
       const EMPTY_PUBKEY = "11111111111111111111111111111111";
       let usdc_mint = null;
       let usdt_mint = null;
@@ -415,7 +426,12 @@
         pending_rebalance_slot, pending_rebalance_expiry, pending_keeper_set,
         pending_keeper_activation_slot, flow_control_slot, minted_in_flow_slot,
         redeemed_in_flow_slot, max_mint_per_slot_ppm, max_redeem_per_slot_ppm,
-        manual_oracle_mode_expiry_slot, bump, usdc_mint, usdt_mint, dai_mint, usds_mint
+        manual_oracle_mode_expiry_slot, bump,
+        manual_oracle_reenable_delay_slots,
+        manual_oracle_last_activation_slot,
+        manual_oracle_activation_epoch,
+        manual_oracle_activation_count_epoch,
+        usdc_mint, usdt_mint, dai_mint, usds_mint
       };
     }
 
@@ -477,7 +493,7 @@
 
     function parseCollateralVault(bytes) {
       const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      if (bytes.length < 194) throw new Error("CollateralVault too short");
+      if (bytes.length < 202) throw new Error("CollateralVault too short");
       let o = 8;
       const index = bytes[o]; o += 1;
       const mint = readPubkey(bytes, o); o += 32;
@@ -491,10 +507,14 @@
       const last_oracle_slot = readU64LE(dv, o); o += 8;
       const total_deposits = readU64LE(dv, o); o += 8;
       const bump = bytes[o]; o += 1;
-      const pyth_price_feed = readPubkey(bytes, o);
+      const pyth_price_feed = readPubkey(bytes, o); o += 32;
+      let twap_price = null;
+      if (bytes.length >= o + 8) {
+        twap_price = readU64LE(dv, o); o += 8;
+      }
       return {
         index, mint, vault, oracle, risk_score, weight_cap, base_weight_cap,
-        price, confidence, last_oracle_slot, total_deposits, bump, pyth_price_feed
+        price, confidence, last_oracle_slot, total_deposits, bump, pyth_price_feed, twap_price
       };
     }
 
@@ -1282,14 +1302,19 @@
       return state.mintDiscriminator;
     }
 
-    function encodeMintInstructionData(collateralIndex, collateralAmountRaw, discriminator) {
-      const out = new Uint8Array(17);
+    function encodeMintInstructionData(collateralIndex, collateralAmountRaw, maxPriceRaw, discriminator) {
+      const out = new Uint8Array(25);
       out.set(discriminator, 0);
       out[8] = collateralIndex & 0xff;
       let x = collateralAmountRaw;
       for (let i = 0; i < 8; i++) {
         out[9 + i] = Number(x & 0xffn);
         x >>= 8n;
+      }
+      let y = maxPriceRaw;
+      for (let i = 0; i < 8; i++) {
+        out[17 + i] = Number(y & 0xffn);
+        y >>= 8n;
       }
       return out;
     }
@@ -1638,7 +1663,9 @@
         if (!userMstbInfo) tx.add(createAtaIdempotentIx(user, userMstbAta, user, state.pubkeys.mstbMint));
 
         const discriminator = await getMintDiscriminator();
-        const ixData = encodeMintInstructionData(collateralIndex, collateralAmountRaw, discriminator);
+        const price = vault?.price ?? 1000000n;
+        const maxPriceRaw = (price * 101n) / 100n;
+        const ixData = encodeMintInstructionData(collateralIndex, collateralAmountRaw, maxPriceRaw, discriminator);
 
         tx.add(new w3.TransactionInstruction({
           programId: state.pubkeys.programId,

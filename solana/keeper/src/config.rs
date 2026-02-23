@@ -25,6 +25,10 @@ const DEFAULT_AIG_ENABLED: bool = false;
 const DEFAULT_TOURNAMENT_ENABLED: bool = false;
 const DEFAULT_AIG_INTERVAL_SECS: u64 = 3_600;
 const DEFAULT_TOURNAMENT_INTERVAL_SECS: u64 = 86_400;
+const DEFAULT_KEY_SIGNATURES_MAX_PER_EPOCH: u64 = 2_000;
+const DEFAULT_KEY_ROTATION_GRACE_EPOCHS: u64 = 2;
+const DEFAULT_KEY_ANOMALY_WINDOW_SECS: u64 = 60;
+const DEFAULT_KEY_ANOMALY_BURST_THRESHOLD: u64 = 40;
 
 const MAX_WATCHDOG_HISTORY_LIMIT: usize = 4_096;
 const MIN_TICK_INTERVAL_SECS: u64 = 5;
@@ -37,6 +41,10 @@ const MIN_EMERGENCY_CR_BPS: u64 = 10_000;
 const MAX_EMERGENCY_CR_BPS: u64 = 20_000;
 const MAX_COMMIT_VALID_FOR_SLOTS: u64 = 1_000;
 const MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 100;
+const MAX_KEY_SIGNATURES_PER_EPOCH: u64 = 100_000;
+const MAX_KEY_ROTATION_GRACE_EPOCHS: u64 = 64;
+const MAX_KEY_ANOMALY_WINDOW_SECS: u64 = 3_600;
+const MAX_KEY_ANOMALY_BURST_THRESHOLD: u64 = 10_000;
 const EXPECTED_VAULT_COUNT: usize = 4;
 const CONFIG_HMAC_ENV_KEY: &str = "MICROSTABLE_CONFIG_HMAC_KEY";
 const CONFIG_HMAC_ALLOW_UNSIGNED_ENV: &str = "MICROSTABLE_ALLOW_UNSIGNED_CONFIG";
@@ -80,6 +88,13 @@ pub struct KeeperConfig {
     pub watchdog_weight_shift_bps: u64,
     pub watchdog_history_limit: usize,
     pub max_consecutive_failed_cycles: u64,
+    pub allowed_upgrade_authority_multisigs: Vec<Pubkey>,
+    pub key_signatures_max_per_epoch: u64,
+    pub key_rotation_cutover_epoch: Option<u64>,
+    pub key_rotation_grace_epochs: u64,
+    pub key_rotation_next_pubkeys: Vec<Pubkey>,
+    pub key_anomaly_window_secs: u64,
+    pub key_anomaly_burst_threshold: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +137,13 @@ struct KeeperConfigFile {
     watchdog_weight_shift_bps: Option<u64>,
     watchdog_history_limit: Option<usize>,
     max_consecutive_failed_cycles: Option<u64>,
+    allowed_upgrade_authority_multisigs: Option<Vec<String>>,
+    key_signatures_max_per_epoch: Option<u64>,
+    key_rotation_cutover_epoch: Option<u64>,
+    key_rotation_grace_epochs: Option<u64>,
+    key_rotation_next_pubkeys: Option<Vec<String>>,
+    key_anomaly_window_secs: Option<u64>,
+    key_anomaly_burst_threshold: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,13 +157,31 @@ struct PythFeedFile {
 impl KeeperConfig {
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let config_path = path.unwrap_or_else(|| Path::new(DEFAULT_CONFIG_PATH));
+        if !config_path.exists() {
+            return Err(anyhow!(
+                "keeper config missing: {} (fail-closed). Run with --init-config to bootstrap an explicit default file.",
+                config_path.display()
+            ));
+        }
+
+        let content = fs::read_to_string(config_path)
+            .with_context(|| format!("failed to read config: {}", config_path.display()))?;
+        verify_config_integrity(config_path, &content)?;
+        let file: KeeperConfigFile = serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse config: {}", config_path.display()))?;
+        Self::from_file(file)
+    }
+
+    pub fn init_default(path: Option<&Path>) -> Result<PathBuf> {
+        let config_path = path
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH));
+
         if config_path.exists() {
-            let content = fs::read_to_string(config_path)
-                .with_context(|| format!("failed to read config: {}", config_path.display()))?;
-            verify_config_integrity(config_path, &content)?;
-            let file: KeeperConfigFile = serde_json::from_str(&content)
-                .with_context(|| format!("failed to parse config: {}", config_path.display()))?;
-            return Self::from_file(file);
+            return Err(anyhow!(
+                "refusing to overwrite existing config in --init-config mode: {}",
+                config_path.display()
+            ));
         }
 
         let default = Self::default_devnet();
@@ -149,10 +189,11 @@ impl KeeperConfig {
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(config_path, serialized).with_context(|| {
+        fs::write(&config_path, serialized).with_context(|| {
             format!("failed to write default config: {}", config_path.display())
         })?;
-        Ok(default)
+
+        Ok(config_path)
     }
 
     pub fn default_devnet() -> Self {
@@ -216,6 +257,13 @@ impl KeeperConfig {
             watchdog_weight_shift_bps: DEFAULT_WATCHDOG_WEIGHT_SHIFT_BPS,
             watchdog_history_limit: DEFAULT_WATCHDOG_HISTORY_LIMIT,
             max_consecutive_failed_cycles: DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES,
+            allowed_upgrade_authority_multisigs: Vec::new(),
+            key_signatures_max_per_epoch: DEFAULT_KEY_SIGNATURES_MAX_PER_EPOCH,
+            key_rotation_cutover_epoch: None,
+            key_rotation_grace_epochs: DEFAULT_KEY_ROTATION_GRACE_EPOCHS,
+            key_rotation_next_pubkeys: Vec::new(),
+            key_anomaly_window_secs: DEFAULT_KEY_ANOMALY_WINDOW_SECS,
+            key_anomaly_burst_threshold: DEFAULT_KEY_ANOMALY_BURST_THRESHOLD,
         }
     }
 
@@ -234,6 +282,15 @@ impl KeeperConfig {
                 max_age_secs: feed.max_age_secs.unwrap_or(file.oracle_max_age_secs),
             });
         }
+
+        let allowed_upgrade_authority_multisigs = parse_pubkey_list(
+            file.allowed_upgrade_authority_multisigs.as_deref(),
+            "allowed_upgrade_authority_multisigs",
+        )?;
+        let key_rotation_next_pubkeys = parse_pubkey_list(
+            file.key_rotation_next_pubkeys.as_deref(),
+            "key_rotation_next_pubkeys",
+        )?;
 
         let cfg = Self {
             rpc_url: file.rpc_url,
@@ -292,6 +349,21 @@ impl KeeperConfig {
             max_consecutive_failed_cycles: file
                 .max_consecutive_failed_cycles
                 .unwrap_or(DEFAULT_MAX_CONSECUTIVE_FAILED_CYCLES),
+            allowed_upgrade_authority_multisigs,
+            key_signatures_max_per_epoch: file
+                .key_signatures_max_per_epoch
+                .unwrap_or(DEFAULT_KEY_SIGNATURES_MAX_PER_EPOCH),
+            key_rotation_cutover_epoch: file.key_rotation_cutover_epoch,
+            key_rotation_grace_epochs: file
+                .key_rotation_grace_epochs
+                .unwrap_or(DEFAULT_KEY_ROTATION_GRACE_EPOCHS),
+            key_rotation_next_pubkeys,
+            key_anomaly_window_secs: file
+                .key_anomaly_window_secs
+                .unwrap_or(DEFAULT_KEY_ANOMALY_WINDOW_SECS),
+            key_anomaly_burst_threshold: file
+                .key_anomaly_burst_threshold
+                .unwrap_or(DEFAULT_KEY_ANOMALY_BURST_THRESHOLD),
         };
 
         cfg.validate()?;
@@ -507,6 +579,70 @@ impl KeeperConfig {
             ));
         }
 
+        if self.key_signatures_max_per_epoch == 0 {
+            return Err(anyhow!("key_signatures_max_per_epoch must be > 0"));
+        }
+        if self.key_signatures_max_per_epoch > MAX_KEY_SIGNATURES_PER_EPOCH {
+            return Err(anyhow!(
+                "key_signatures_max_per_epoch too large: {} (max {})",
+                self.key_signatures_max_per_epoch,
+                MAX_KEY_SIGNATURES_PER_EPOCH
+            ));
+        }
+
+        if self.key_rotation_grace_epochs > MAX_KEY_ROTATION_GRACE_EPOCHS {
+            return Err(anyhow!(
+                "key_rotation_grace_epochs too large: {} (max {})",
+                self.key_rotation_grace_epochs,
+                MAX_KEY_ROTATION_GRACE_EPOCHS
+            ));
+        }
+
+        if !(1..=MAX_KEY_ANOMALY_WINDOW_SECS).contains(&self.key_anomaly_window_secs) {
+            return Err(anyhow!(
+                "key_anomaly_window_secs must be within 1..={} (got {})",
+                MAX_KEY_ANOMALY_WINDOW_SECS,
+                self.key_anomaly_window_secs
+            ));
+        }
+
+        if self.key_anomaly_burst_threshold == 0 {
+            return Err(anyhow!("key_anomaly_burst_threshold must be > 0"));
+        }
+        if self.key_anomaly_burst_threshold > MAX_KEY_ANOMALY_BURST_THRESHOLD {
+            return Err(anyhow!(
+                "key_anomaly_burst_threshold too large: {} (max {})",
+                self.key_anomaly_burst_threshold,
+                MAX_KEY_ANOMALY_BURST_THRESHOLD
+            ));
+        }
+
+        if self.key_rotation_cutover_epoch.is_some() && self.key_rotation_next_pubkeys.len() != 3 {
+            return Err(anyhow!(
+                "key_rotation_next_pubkeys must contain exactly 3 entries when key_rotation_cutover_epoch is set"
+            ));
+        }
+
+        if !self.key_rotation_next_pubkeys.is_empty() {
+            let unique: HashSet<Pubkey> = self.key_rotation_next_pubkeys.iter().copied().collect();
+            if unique.len() != self.key_rotation_next_pubkeys.len() {
+                return Err(anyhow!("key_rotation_next_pubkeys contains duplicates"));
+            }
+        }
+
+        if !self.allowed_upgrade_authority_multisigs.is_empty() {
+            let unique: HashSet<Pubkey> = self
+                .allowed_upgrade_authority_multisigs
+                .iter()
+                .copied()
+                .collect();
+            if unique.len() != self.allowed_upgrade_authority_multisigs.len() {
+                return Err(anyhow!(
+                    "allowed_upgrade_authority_multisigs contains duplicates"
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -555,6 +691,23 @@ impl KeeperConfig {
             watchdog_weight_shift_bps: Some(self.watchdog_weight_shift_bps),
             watchdog_history_limit: Some(self.watchdog_history_limit),
             max_consecutive_failed_cycles: Some(self.max_consecutive_failed_cycles),
+            allowed_upgrade_authority_multisigs: Some(
+                self.allowed_upgrade_authority_multisigs
+                    .iter()
+                    .map(|pk| pk.to_string())
+                    .collect(),
+            ),
+            key_signatures_max_per_epoch: Some(self.key_signatures_max_per_epoch),
+            key_rotation_cutover_epoch: self.key_rotation_cutover_epoch,
+            key_rotation_grace_epochs: Some(self.key_rotation_grace_epochs),
+            key_rotation_next_pubkeys: Some(
+                self.key_rotation_next_pubkeys
+                    .iter()
+                    .map(|pk| pk.to_string())
+                    .collect(),
+            ),
+            key_anomaly_window_secs: Some(self.key_anomaly_window_secs),
+            key_anomaly_burst_threshold: Some(self.key_anomaly_burst_threshold),
         }
     }
 }
@@ -592,6 +745,21 @@ fn extract_https_host(raw_url: &str) -> Result<&str> {
     }
 
     Ok(host.split(':').next().unwrap_or(host))
+}
+
+fn parse_pubkey_list(values: Option<&[String]>, field: &str) -> Result<Vec<Pubkey>> {
+    let Some(values) = values else {
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::with_capacity(values.len());
+    for value in values {
+        let parsed = Pubkey::from_str(value)
+            .with_context(|| format!("invalid pubkey in {}: {}", field, value))?;
+        out.push(parsed);
+    }
+
+    Ok(out)
 }
 
 fn validate_keypair_path_policy(paths: &[PathBuf]) -> Result<()> {

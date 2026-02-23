@@ -30,6 +30,10 @@ pub struct ProtocolState {
     pub max_redeem_per_slot_ppm: u64,
     pub manual_oracle_mode_expiry_slot: u64,
     pub bump: u8,
+    pub manual_oracle_reenable_delay_slots: u64,
+    pub manual_oracle_last_activation_slot: u64,
+    pub manual_oracle_activation_epoch: u64,
+    pub manual_oracle_activation_count_epoch: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]
@@ -47,6 +51,7 @@ pub struct CollateralVault {
     pub total_deposits: u64,
     pub bump: u8,
     pub pyth_price_feed: Pubkey,
+    pub twap_price: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, BorshDeserialize)]

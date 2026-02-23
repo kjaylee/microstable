@@ -87,6 +87,10 @@ fn sample_protocol_state() -> wire::ProtocolState {
         max_redeem_per_slot_ppm: 80_000,
         manual_oracle_mode_expiry_slot: 0,
         bump: 1,
+        manual_oracle_reenable_delay_slots: 600,
+        manual_oracle_last_activation_slot: 0,
+        manual_oracle_activation_epoch: 0,
+        manual_oracle_activation_count_epoch: 0,
     }
 }
 
@@ -105,6 +109,7 @@ fn sample_vault(index: u8) -> wire::CollateralVault {
         total_deposits: 1_000_000,
         bump: 1,
         pyth_price_feed: Pubkey::new_unique(),
+        twap_price: 1_000_000,
     }
 }
 
@@ -140,7 +145,7 @@ fn minimal_valid_config_json() -> String {
   "rpc_url": "https://api.devnet.solana.com",
   "secondary_rpc_url": "https://rpc.ankr.com/solana_devnet",
   "program_id": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
-  "keeper_keypairs": ["keeper/k1.json", "keeper/k2.json"],
+  "keeper_keypairs": ["keeper/keys-1/k1.json", "keeper/keys-2/k2.json", "keeper/keys-3/k3.json"],
   "pyth_feeds": [
     {
       "symbol": "USDC/USD",

@@ -7,6 +7,10 @@ build = "build.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
 anchor-client = "0.31.1"
 borsh = "1.5"
 bincode = "1"

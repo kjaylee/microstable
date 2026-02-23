@@ -20,8 +20,11 @@ const WEIGHT_STEP_LIMIT: u64 = 20_000; // 2%
 const TURNOVER_LIMIT: u64 = 150_000; // 15%
 const ORACLE_STALENESS_MAX: u64 = 120;
 // FIX HIGH-02/21/22: apply stricter freshness bounds to user mint/redeem paths.
-const MINT_ORACLE_STALENESS_MAX: u64 = 30;
-const REDEEM_ORACLE_STALENESS_MAX: u64 = 60;
+const MINT_ORACLE_STALENESS_MAX: u64 = 20;
+const REDEEM_ORACLE_STALENESS_MAX: u64 = 45;
+const HIGH_VOL_MINT_ORACLE_STALENESS_MAX: u64 = 8;
+const HIGH_VOL_REDEEM_ORACLE_STALENESS_MAX: u64 = 16;
+const HIGH_VOL_ORACLE_STALENESS_MAX: u64 = 30;
 const MINT_ORACLE_CONFIDENCE_MAX: u64 = 20_000; // 2%
 // FIX CRITICAL-22: stale oracle data receives progressive valuation haircut.
 const STALE_ORACLE_PENALTY_PER_SLOT: u64 = 1_500; // 0.15%/slot
@@ -35,12 +38,21 @@ const DEFAULT_MAX_MINT_PER_SLOT_PPM: u64 = 60_000; // 6%
 const DEFAULT_MAX_REDEEM_PER_SLOT_PPM: u64 = 30_000; // 3%
 const MAX_MINT_PER_TX_PPM: u64 = 20_000; // 2%
 const MAX_REDEEM_PER_TX_PPM: u64 = 15_000; // 1.5%
+const MAX_ABSOLUTE_REDEEM_PER_SLOT: u64 = 2_500_000_000; // 2,500 MSTB @ 6 decimals
+const REDEEM_VELOCITY_FEE_START_PPM: u64 = 400_000; // start surcharge above 40% slot utilization
+const MAX_PROGRESSIVE_REDEEM_FEE_RATE: u64 = 10_000; // capped to global protocol fee max (1%)
                                              // FIX MEDIUM-23/10: governance update pacing limits.
 const AGENT_GOVERNANCE_COOLDOWN_SECS: i64 = 60;
 const AGENT_SCORE_DELTA_LIMIT: u64 = 100_000; // 10%
                                               // FIX HIGH-03: manual oracle write path is disabled unless explicitly time-boxed.
 const MANUAL_ORACLE_MODE_MAX_SLOTS: u64 = 120;
 const MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS: u64 = 600;
+const MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_MAX_SLOTS: u64 = 38_400;
+const MANUAL_ORACLE_BACKOFF_WINDOW_SLOTS: u64 = 216_000;
+const MANUAL_ORACLE_MAX_ACTIVATIONS_PER_EPOCH: u64 = 3;
+const TWAP_ALPHA_PPM: u64 = 250_000; // 25% fresh observation, 75% history.
+const TWAP_MAX_DEVIATION_PPM: u64 = 25_000; // 2.5%
+const HIGH_VOLATILITY_DEVIATION_PPM: u64 = 12_500; // 1.25%
 // FIX PTV2-002: enforce publish_time freshness for Pyth price updates.
 const PYTH_PUBLISH_TIME_MAX_AGE: i64 = 60;
 const ORACLE_CONFIDENCE_MAX: u64 = 50_000; // 5%
@@ -156,6 +168,10 @@ pub mod microstable {
         protocol.max_redeem_per_slot_ppm = DEFAULT_MAX_REDEEM_PER_SLOT_PPM;
         protocol.manual_oracle_mode_expiry_slot = 0;
         protocol.bump = ctx.bumps.protocol_state;
+        protocol.manual_oracle_reenable_delay_slots = MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS;
+        protocol.manual_oracle_last_activation_slot = 0;
+        protocol.manual_oracle_activation_epoch = 0;
+        protocol.manual_oracle_activation_count_epoch = 0;
 
         init_vault(
             &mut ctx.accounts.vault_usdc,
@@ -302,6 +318,10 @@ pub mod microstable {
             max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
             manual_oracle_mode_expiry_slot: 0,
             bump: protocol_bump,
+            manual_oracle_reenable_delay_slots: MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS,
+            manual_oracle_last_activation_slot: 0,
+            manual_oracle_activation_epoch: 0,
+            manual_oracle_activation_count_epoch: 0,
         };
         write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
 
@@ -823,7 +843,12 @@ pub mod microstable {
         Ok(())
     }
 
-    pub fn mint(ctx: Context<Mint>, collateral_index: u8, collateral_amount: u64) -> Result<()> {
+    pub fn mint(
+        ctx: Context<Mint>,
+        collateral_index: u8,
+        collateral_amount: u64,
+        max_price: u64,
+    ) -> Result<()> {
         // FIX PTV2-012: execute real SPL collateral transfer + MSTB mint CPI path.
         require!(collateral_index < 4, ErrorCode::InvalidCollateralIndex);
         require!(collateral_amount > 0, ErrorCode::InvalidAmount);
@@ -831,6 +856,7 @@ pub mod microstable {
             collateral_amount <= MAX_COLLATERAL_AMOUNT,
             ErrorCode::AmountTooLarge
         );
+        require!(max_price > 0, ErrorCode::InvalidSlippageBound);
         require!(
             !ctx.accounts.protocol_state.emergency_shutdown,
             ErrorCode::EmergencyShutdownActive
@@ -860,31 +886,43 @@ pub mod microstable {
             ErrorCode::OracleDegraded
         );
 
-        let (price, confidence, oracle_slot) = match collateral_index {
+        let (price, confidence, oracle_slot, raw_twap_price) = match collateral_index {
             0 => (
                 ctx.accounts.vault_usdc.price,
                 ctx.accounts.vault_usdc.confidence,
                 ctx.accounts.vault_usdc.last_oracle_slot,
+                ctx.accounts.vault_usdc.twap_price,
             ),
             1 => (
                 ctx.accounts.vault_usdt.price,
                 ctx.accounts.vault_usdt.confidence,
                 ctx.accounts.vault_usdt.last_oracle_slot,
+                ctx.accounts.vault_usdt.twap_price,
             ),
             2 => (
                 ctx.accounts.vault_dai.price,
                 ctx.accounts.vault_dai.confidence,
                 ctx.accounts.vault_dai.last_oracle_slot,
+                ctx.accounts.vault_dai.twap_price,
             ),
             3 => (
                 ctx.accounts.vault_usds.price,
                 ctx.accounts.vault_usds.confidence,
                 ctx.accounts.vault_usds.last_oracle_slot,
+                ctx.accounts.vault_usds.twap_price,
             ),
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         };
+        let twap_price = canonical_twap_price(price, raw_twap_price);
+        validate_spot_vs_twap(price, twap_price)?;
+        let mint_staleness_limit = dynamic_oracle_staleness_limit(
+            price,
+            twap_price,
+            MINT_ORACLE_STALENESS_MAX,
+            HIGH_VOL_MINT_ORACLE_STALENESS_MAX,
+        );
         require!(
-            slot.saturating_sub(oracle_slot) <= MINT_ORACLE_STALENESS_MAX,
+            slot.saturating_sub(oracle_slot) <= mint_staleness_limit,
             ErrorCode::OracleStale
         );
         require!(
@@ -899,6 +937,7 @@ pub mod microstable {
         let mint_haircut_ppm = mint_haircut_ppm(price, confidence, oracle_slot, slot)?;
         let effective_price = mul_div_floor(price, mint_haircut_ppm, SCALE)?;
         require!(effective_price > 0, ErrorCode::InvalidPrice);
+        require!(effective_price <= max_price, ErrorCode::MintPriceAboveUserLimit);
 
         let gross_musd = mul_div_floor(collateral_amount, effective_price, SCALE)?;
         let max_mintable_by_cr =
@@ -1083,7 +1122,7 @@ pub mod microstable {
         Ok(())
     }
 
-    pub fn redeem(ctx: Context<Redeem>, musd_amount: u64) -> Result<()> {
+    pub fn redeem(ctx: Context<Redeem>, musd_amount: u64, min_out_amount: u64) -> Result<()> {
         // FIX PTV2-012: execute real MSTB burn + collateral transfer CPI path.
         require!(musd_amount > 0, ErrorCode::InvalidAmount);
         require!(
@@ -1237,8 +1276,8 @@ pub mod microstable {
             musd_amount,
         )?;
 
-        let redeem_fee =
-            protocol_fee_amount(musd_amount, ctx.accounts.protocol_state.redeem_fee_rate)?;
+        let effective_redeem_fee_rate = progressive_redeem_fee_rate(&ctx.accounts.protocol_state)?;
+        let redeem_fee = protocol_fee_amount(musd_amount, effective_redeem_fee_rate)?;
         let net_redeem_musd = musd_amount
             .checked_sub(redeem_fee)
             .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
@@ -1268,6 +1307,16 @@ pub mod microstable {
             supply_before,
             payout_discount,
         )?;
+
+        let total_payout = payout_usdc
+            .checked_add(payout_usdt)
+            .and_then(|v| v.checked_add(payout_dai))
+            .and_then(|v| v.checked_add(payout_usds))
+            .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        require!(
+            total_payout >= min_out_amount,
+            ErrorCode::RedeemOutputBelowUserLimit
+        );
 
         // FIX CR-01: transfer out before decrementing vault accounting.
         transfer_vault_to_user(
@@ -1800,21 +1849,36 @@ pub mod microstable {
             ErrorCode::InvalidManualOracleWindow
         );
 
-        let slot = Clock::get()?.slot;
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+        let epoch = clock.epoch;
         let protocol = &mut ctx.accounts.protocol_state;
         require!(
             slot > protocol.manual_oracle_mode_expiry_slot,
             ErrorCode::ManualOracleModeAlreadyActive
         );
+
+        if protocol.manual_oracle_activation_epoch != epoch {
+            protocol.manual_oracle_activation_epoch = epoch;
+            protocol.manual_oracle_activation_count_epoch = 0;
+        }
+        require!(
+            protocol.manual_oracle_activation_count_epoch < MANUAL_ORACLE_MAX_ACTIVATIONS_PER_EPOCH,
+            ErrorCode::ManualOracleActivationLimitExceeded
+        );
+
+        let mut cooldown = protocol.manual_oracle_reenable_delay_slots;
+        if cooldown == 0 {
+            cooldown = MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS;
+        }
         if protocol.manual_oracle_mode_expiry_slot > 0 {
-            let reenable_slot = protocol
-                .manual_oracle_mode_expiry_slot
-                .saturating_add(MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS);
+            let reenable_slot = protocol.manual_oracle_mode_expiry_slot.saturating_add(cooldown);
             require!(
                 slot >= reenable_slot,
                 ErrorCode::ManualOracleModeCooldownActive
             );
         }
+
         require!(
             ctx.accounts
                 .circuit_breaker
@@ -1824,7 +1888,23 @@ pub mod microstable {
             ErrorCode::ManualOracleModeRequiresCircuitBreaker
         );
 
+        if protocol.manual_oracle_last_activation_slot > 0
+            && slot.saturating_sub(protocol.manual_oracle_last_activation_slot)
+                <= MANUAL_ORACLE_BACKOFF_WINDOW_SLOTS
+        {
+            cooldown = cooldown
+                .saturating_mul(2)
+                .min(MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_MAX_SLOTS);
+        } else {
+            cooldown = MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS;
+        }
+
         protocol.manual_oracle_mode_expiry_slot = slot.saturating_add(valid_for_slots);
+        protocol.manual_oracle_last_activation_slot = slot;
+        protocol.manual_oracle_reenable_delay_slots = cooldown;
+        protocol.manual_oracle_activation_count_epoch = protocol
+            .manual_oracle_activation_count_epoch
+            .saturating_add(1);
         protocol.last_update_slot = slot;
         Ok(())
     }
@@ -1879,6 +1959,10 @@ pub mod microstable {
             max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
             manual_oracle_mode_expiry_slot: 0,
             bump: protocol_bump,
+            manual_oracle_reenable_delay_slots: MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS,
+            manual_oracle_last_activation_slot: 0,
+            manual_oracle_activation_epoch: 0,
+            manual_oracle_activation_count_epoch: 0,
         };
         write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
 
@@ -2471,6 +2555,11 @@ pub struct ProtocolState {
     /// FIX HIGH-03: manual keeper oracle writes are time-boxed.
     pub manual_oracle_mode_expiry_slot: u64,
     pub bump: u8,
+    /// Exponential cooldown state for manual oracle mode reactivation.
+    pub manual_oracle_reenable_delay_slots: u64,
+    pub manual_oracle_last_activation_slot: u64,
+    pub manual_oracle_activation_epoch: u64,
+    pub manual_oracle_activation_count_epoch: u64,
 }
 
 impl ProtocolState {
@@ -2543,10 +2632,12 @@ pub struct CollateralVault {
     pub bump: u8,
     /// Optional Pyth feed account (receiver-owned price feed account).
     pub pyth_price_feed: Pubkey,
+    /// EWMA TWAP price used for spot-vs-twap validation under volatility.
+    pub twap_price: u64,
 }
 
 impl CollateralVault {
-    pub const SPACE: usize = 8 + 192;
+    pub const SPACE: usize = 8 + 208;
 }
 
 #[account]
@@ -2657,6 +2748,8 @@ pub enum ErrorCode {
     ManualOracleModeCooldownActive,
     #[msg("Manual oracle mode requires at least one active circuit breaker")]
     ManualOracleModeRequiresCircuitBreaker,
+    #[msg("Manual oracle mode activations exceeded per-epoch cap")]
+    ManualOracleActivationLimitExceeded,
     #[msg("Oracle update must be monotonic")]
     OracleSlotRegression,
     #[msg("Invalid oracle price")]
@@ -2667,6 +2760,8 @@ pub enum ErrorCode {
     MintPausedByCircuitBreaker,
     #[msg("Mint amount exceeds active rate limit")]
     MintRateLimited,
+    #[msg("Mint execution price exceeds user max bound")]
+    MintPriceAboveUserLimit,
     #[msg("Mint volume exceeds per-transaction flow control limit")]
     MintTxFlowLimitExceeded,
     #[msg("Mint volume exceeds per-slot flow control limit")]
@@ -2675,6 +2770,8 @@ pub enum ErrorCode {
     RedeemTxFlowLimitExceeded,
     #[msg("Redeem volume exceeds per-slot flow control limit")]
     RedeemSlotFlowLimitExceeded,
+    #[msg("Redeem output is below user minimum bound")]
+    RedeemOutputBelowUserLimit,
     #[msg("Mint paused for collateral under deep depeg stress")]
     DepegMintPaused,
     #[msg("Insufficient balance")]
@@ -2699,6 +2796,8 @@ pub enum ErrorCode {
     HysteresisNotMet,
     #[msg("Oracle is degraded")]
     OracleDegraded,
+    #[msg("Spot oracle price deviates too far from TWAP")]
+    OracleTwapDeviationTooHigh,
     #[msg("Keeper quorum not met")]
     KeeperQuorumNotMet,
     #[msg("Keeper signer duplicated")]
@@ -2858,6 +2957,7 @@ fn build_vault_struct(
         total_deposits: 0,
         bump,
         pyth_price_feed: Pubkey::default(),
+        twap_price: SCALE,
     }
 }
 
@@ -2907,6 +3007,7 @@ fn init_vault(
     vault.total_deposits = 0;
     vault.bump = bump;
     vault.pyth_price_feed = Pubkey::default();
+    vault.twap_price = SCALE;
 }
 
 fn update_vault_oracle(
@@ -2919,9 +3020,16 @@ fn update_vault_oracle(
         observed_slot >= vault.last_oracle_slot,
         ErrorCode::OracleSlotRegression
     );
+
+    let previous_twap = canonical_twap_price(vault.price, vault.twap_price);
+    let next_twap = mul_div_floor(previous_twap, SCALE.saturating_sub(TWAP_ALPHA_PPM), SCALE)?
+        .checked_add(mul_div_floor(price, TWAP_ALPHA_PPM, SCALE)?)
+        .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+
     vault.price = price;
     vault.confidence = confidence;
     vault.last_oracle_slot = observed_slot;
+    vault.twap_price = next_twap.max(1);
     Ok(())
 }
 
@@ -2966,8 +3074,12 @@ fn update_vault_oracle_from_pyth(
         observed_slot <= current_slot,
         ErrorCode::InvalidObservedSlot
     );
+
+    let twap_price = canonical_twap_price(price, vault.twap_price);
+    let staleness_limit =
+        dynamic_oracle_staleness_limit(price, twap_price, ORACLE_STALENESS_MAX, HIGH_VOL_ORACLE_STALENESS_MAX);
     require!(
-        current_slot.saturating_sub(observed_slot) <= ORACLE_STALENESS_MAX,
+        current_slot.saturating_sub(observed_slot) <= staleness_limit,
         ErrorCode::OracleStale
     );
 
@@ -3308,19 +3420,74 @@ fn total_collateral_value<'info>(vaults: [&Account<'info, CollateralVault>; 4]) 
     u64::try_from(total).map_err(|_| error!(ErrorCode::MathOverflow))
 }
 
+fn canonical_twap_price(spot_price: u64, twap_price: u64) -> u64 {
+    if twap_price == 0 {
+        spot_price.max(1)
+    } else {
+        twap_price.max(1)
+    }
+}
+
+fn price_deviation_ppm(spot_price: u64, twap_price: u64) -> u64 {
+    let twap = canonical_twap_price(spot_price, twap_price);
+    let diff = abs_diff(spot_price, twap) as u128;
+    diff.saturating_mul(SCALE as u128)
+        .checked_div(twap as u128)
+        .unwrap_or(u128::MAX)
+        .min(SCALE as u128) as u64
+}
+
+fn validate_spot_vs_twap(spot_price: u64, twap_price: u64) -> Result<()> {
+    let deviation = price_deviation_ppm(spot_price, twap_price);
+    require!(
+        deviation <= TWAP_MAX_DEVIATION_PPM,
+        ErrorCode::OracleTwapDeviationTooHigh
+    );
+    Ok(())
+}
+
+fn dynamic_oracle_staleness_limit(
+    spot_price: u64,
+    twap_price: u64,
+    normal_limit: u64,
+    high_vol_limit: u64,
+) -> u64 {
+    if price_deviation_ppm(spot_price, twap_price) >= HIGH_VOLATILITY_DEVIATION_PPM {
+        high_vol_limit
+    } else {
+        normal_limit
+    }
+}
+
 fn oracle_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u64) -> bool {
     vaults.iter().any(|v| {
+        let twap = canonical_twap_price(v.price, v.twap_price);
+        let staleness_limit =
+            dynamic_oracle_staleness_limit(v.price, twap, ORACLE_STALENESS_MAX, HIGH_VOL_ORACLE_STALENESS_MAX);
+        let deviation = price_deviation_ppm(v.price, twap);
+
         v.price == 0
             || v.confidence > ORACLE_CONFIDENCE_MAX
-            || slot.saturating_sub(v.last_oracle_slot) > ORACLE_STALENESS_MAX
+            || deviation > TWAP_MAX_DEVIATION_PPM
+            || slot.saturating_sub(v.last_oracle_slot) > staleness_limit
     })
 }
 
 fn oracle_redeem_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u64) -> bool {
     vaults.iter().any(|v| {
+        let twap = canonical_twap_price(v.price, v.twap_price);
+        let staleness_limit = dynamic_oracle_staleness_limit(
+            v.price,
+            twap,
+            REDEEM_ORACLE_STALENESS_MAX,
+            HIGH_VOL_REDEEM_ORACLE_STALENESS_MAX,
+        );
+        let deviation = price_deviation_ppm(v.price, twap);
+
         v.price == 0
             || v.confidence > ORACLE_CONFIDENCE_MAX
-            || slot.saturating_sub(v.last_oracle_slot) > REDEEM_ORACLE_STALENESS_MAX
+            || deviation > TWAP_MAX_DEVIATION_PPM
+            || slot.saturating_sub(v.last_oracle_slot) > staleness_limit
     })
 }
 
@@ -3344,10 +3511,18 @@ fn refresh_slot_flow_window(protocol: &mut ProtocolState, slot: u64) {
     }
 }
 
-fn slot_flow_limit(total_supply: u64, limit_ppm: u64) -> Result<u64> {
+fn slot_flow_limit(total_supply: u64, limit_ppm: u64, flow_kind: SlotFlowKind) -> Result<u64> {
     let base = total_supply.max(SLOT_FLOW_LIMIT_MIN_UNITS);
-    let by_ppm = mul_div_floor(base, limit_ppm, SCALE)?;
-    Ok(by_ppm.max(SLOT_FLOW_LIMIT_MIN_UNITS))
+    let by_ppm = mul_div_floor(base, limit_ppm, SCALE)?.max(SLOT_FLOW_LIMIT_MIN_UNITS);
+
+    let capped = match flow_kind {
+        SlotFlowKind::Mint => by_ppm,
+        SlotFlowKind::Redeem => by_ppm
+            .min(MAX_ABSOLUTE_REDEEM_PER_SLOT)
+            .max(SLOT_FLOW_LIMIT_MIN_UNITS),
+    };
+
+    Ok(capped)
 }
 
 fn enforce_single_tx_flow_limit(
@@ -3393,7 +3568,7 @@ fn enforce_slot_flow_limit(
         ),
     };
 
-    let cap = slot_flow_limit(protocol.total_supply, limit_ppm)?;
+    let cap = slot_flow_limit(protocol.total_supply, limit_ppm, flow_kind)?;
     let next = counter
         .checked_add(amount)
         .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
@@ -3473,6 +3648,37 @@ fn redeem_discount_ppm<'info>(
     }
 
     Ok(SCALE.saturating_sub(total_penalty))
+}
+
+fn progressive_redeem_fee_rate(protocol: &ProtocolState) -> Result<u64> {
+    let redeem_cap = slot_flow_limit(
+        protocol.total_supply,
+        protocol.max_redeem_per_slot_ppm,
+        SlotFlowKind::Redeem,
+    )?;
+    if redeem_cap == 0 {
+        return Ok(protocol.redeem_fee_rate.min(MAX_PROGRESSIVE_REDEEM_FEE_RATE));
+    }
+
+    let velocity_ppm = mul_div_floor(
+        protocol.redeemed_in_flow_slot.min(redeem_cap),
+        SCALE,
+        redeem_cap,
+    )?;
+
+    let surcharge = if velocity_ppm <= REDEEM_VELOCITY_FEE_START_PPM {
+        0
+    } else {
+        let numerator = velocity_ppm.saturating_sub(REDEEM_VELOCITY_FEE_START_PPM);
+        let denominator = SCALE.saturating_sub(REDEEM_VELOCITY_FEE_START_PPM).max(1);
+        mul_div_floor(numerator, MAX_PROGRESSIVE_REDEEM_FEE_RATE, denominator)?
+    };
+
+    Ok(protocol
+        .redeem_fee_rate
+        .saturating_add(surcharge)
+        .min(MAX_PROGRESSIVE_REDEEM_FEE_RATE)
+        .min(FEE_RATE_MAX))
 }
 
 fn mint_mstb_to_user<'info>(
@@ -3878,6 +4084,10 @@ mod tests {
             max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
             manual_oracle_mode_expiry_slot: 0,
             bump: 0,
+            manual_oracle_reenable_delay_slots: MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS,
+            manual_oracle_last_activation_slot: 0,
+            manual_oracle_activation_epoch: 0,
+            manual_oracle_activation_count_epoch: 0,
         }
     }
 

@@ -3,6 +3,7 @@ use borsh::BorshDeserialize;
 use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 #[allow(deprecated)]
 use solana_sdk::bpf_loader_upgradeable::{self, UpgradeableLoaderState};
+use serde::Deserialize;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     hash::hash,
@@ -11,17 +12,21 @@ use solana_sdk::{
     signature::{read_keypair, Keypair, Signature, Signer},
     transaction::Transaction,
 };
+use base64::Engine;
+use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+use pbkdf2::pbkdf2_hmac;
+use sha2::Sha256;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     env, fs,
-    io::BufReader,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
-use tracing::{info, warn, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 
 pub const CROSS_RPC_NUMERIC_TOLERANCE: u64 = 1;
@@ -37,6 +42,11 @@ pub const SECONDARY_RPC_RECOVERY_PROBE_INTERVAL_SECS: u64 = 30;
 
 const EXPECTED_UPGRADE_AUTHORITY_ENV: &str = "MICROSTABLE_EXPECTED_UPGRADE_AUTHORITY";
 const ALLOW_UNPINNED_UPGRADE_AUTHORITY_ENV: &str = "MICROSTABLE_ALLOW_UNPINNED_UPGRADE_AUTHORITY";
+const KEY_PASSPHRASE_ENV: &str = "MICROSTABLE_KEY_PASSPHRASE";
+const KEY_PASSPHRASE_FILE_ENV: &str = "MICROSTABLE_KEY_PASSPHRASE_FILE";
+const KEYFILE_AAD: &str = "microstable:keeper-keypair:v1";
+const KEYFILE_KDF_LABEL: &str = "pbkdf2-sha256";
+const KEYFILE_MIN_KDF_ITERS: u32 = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecondaryRpcMode {
@@ -61,6 +71,17 @@ pub enum TxConfirmationDisposition {
 pub struct SecondaryRpcHealthSnapshot {
     pub degraded: bool,
     pub consecutive_failures: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct EncryptedKeyFile {
+    v: u8,
+    kdf: String,
+    iterations: u32,
+    salt: String,
+    nonce: String,
+    ciphertext: String,
+    aad: Option<String>,
 }
 
 #[derive(Debug)]
@@ -319,9 +340,16 @@ pub fn load_keypairs(paths: &[PathBuf]) -> Result<Vec<Keypair>> {
 
 fn load_keypair_secure(path: &Path) -> Result<Keypair> {
     validate_keypair_path_policy(path)?;
-    let file = open_keypair_file(path)?;
+    let mut file = open_keypair_file(path)?;
     validate_keypair_file_security(&file, path)?;
-    read_keypair_from_fd(file, path)
+
+    let bytes = read_keypair_file_bytes(&mut file, path)?;
+    if let Some(encrypted) = parse_encrypted_keyfile(&bytes, path)? {
+        let decrypted = decrypt_keypair_payload(&encrypted)?;
+        return read_keypair_from_bytes(&decrypted, path);
+    }
+
+    read_keypair_from_bytes(&bytes, path)
 }
 
 fn validate_keypair_path_policy(path: &Path) -> Result<()> {
@@ -401,8 +429,8 @@ fn validate_keypair_file_security(file: &fs::File, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_keypair_from_fd(file: fs::File, path: &Path) -> Result<Keypair> {
-    let mut reader = BufReader::new(file);
+fn read_keypair_from_bytes(bytes: &[u8], path: &Path) -> Result<Keypair> {
+    let mut reader = BufReader::new(bytes);
     read_keypair(&mut reader).map_err(|e| {
         anyhow!(
             "failed to read keypair {} from opened fd: {e}",
@@ -411,9 +439,250 @@ fn read_keypair_from_fd(file: fs::File, path: &Path) -> Result<Keypair> {
     })
 }
 
+fn read_keypair_file_bytes(file: &mut fs::File, path: &Path) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)
+        .with_context(|| format!("failed to read keypair file bytes: {}", path.display()))?;
+    Ok(buf)
+}
+
+fn parse_encrypted_keyfile(bytes: &[u8], path: &Path) -> Result<Option<EncryptedKeyFile>> {
+    let trimmed = bytes
+        .iter()
+        .skip_while(|b| b.is_ascii_whitespace())
+        .next()
+        .copied();
+    if trimmed != Some(b'{') {
+        return Ok(None);
+    }
+
+    let encrypted: EncryptedKeyFile = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+
+    if encrypted.ciphertext.trim().is_empty() {
+        return Err(anyhow!(
+            "encrypted keypair {} is missing ciphertext",
+            path.display()
+        ));
+    }
+
+    Ok(Some(encrypted))
+}
+
+fn decrypt_keypair_payload(encrypted: &EncryptedKeyFile) -> Result<Vec<u8>> {
+    if encrypted.v != 1 {
+        return Err(anyhow!("unsupported keyfile version: {}", encrypted.v));
+    }
+    if encrypted.kdf != KEYFILE_KDF_LABEL {
+        return Err(anyhow!("unsupported keyfile kdf: {}", encrypted.kdf));
+    }
+    if encrypted.iterations < KEYFILE_MIN_KDF_ITERS {
+        return Err(anyhow!(
+            "keyfile KDF iterations too low: {}",
+            encrypted.iterations
+        ));
+    }
+
+    let passphrase = load_key_passphrase()?;
+    let salt = base64::engine::general_purpose::STANDARD
+        .decode(encrypted.salt.as_bytes())
+        .context("failed to base64 decode keyfile salt")?;
+    let nonce_bytes = base64::engine::general_purpose::STANDARD
+        .decode(encrypted.nonce.as_bytes())
+        .context("failed to base64 decode keyfile nonce")?;
+    if nonce_bytes.len() != 12 {
+        return Err(anyhow!(
+            "keyfile nonce must be 12 bytes for chacha20poly1305"
+        ));
+    }
+    let ciphertext = base64::engine::general_purpose::STANDARD
+        .decode(encrypted.ciphertext.as_bytes())
+        .context("failed to base64 decode keyfile ciphertext")?;
+
+    if let Some(aad) = encrypted.aad.as_deref() {
+        if aad != KEYFILE_AAD {
+            return Err(anyhow!(
+                "keyfile AAD mismatch (expected {}, got {})",
+                KEYFILE_AAD,
+                aad
+            ));
+        }
+    }
+
+    let mut key = [0u8; 32];
+    pbkdf2_hmac::<Sha256>(passphrase.as_bytes(), &salt, encrypted.iterations, &mut key);
+    let cipher = ChaCha20Poly1305::new((&key).into());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let aad = encrypted.aad.as_deref().unwrap_or(KEYFILE_AAD);
+    let plaintext = cipher
+        .decrypt(nonce, chacha20poly1305::aead::Payload {
+            msg: &ciphertext,
+            aad: aad.as_bytes(),
+        })
+        .map_err(|_| anyhow::anyhow!("failed to decrypt keyfile payload"))?;
+
+    Ok(plaintext)
+}
+
+fn load_key_passphrase() -> Result<String> {
+    if let Ok(raw) = env::var(KEY_PASSPHRASE_ENV) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    if let Ok(path) = env::var(KEY_PASSPHRASE_FILE_ENV) {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read passphrase file: {}", path))?;
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    Err(anyhow!(
+        "missing key passphrase (set {} or {})",
+        KEY_PASSPHRASE_ENV,
+        KEY_PASSPHRASE_FILE_ENV
+    ))
+}
+
 #[cfg(unix)]
 fn effective_uid() -> Result<u32> {
     Ok(unsafe { libc::geteuid() as u32 })
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KeyUsagePolicy {
+    pub max_per_epoch: u64,
+    pub anomaly_window_secs: u64,
+    pub anomaly_burst_threshold: u64,
+}
+
+#[derive(Debug, Default)]
+struct KeyUsageState {
+    epoch: u64,
+    usage: HashMap<Pubkey, u64>,
+    events: HashMap<Pubkey, VecDeque<Instant>>,
+}
+
+fn key_usage_state() -> &'static Mutex<KeyUsageState> {
+    static STATE: OnceLock<Mutex<KeyUsageState>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(KeyUsageState::default()))
+}
+
+fn key_integrity_state() -> &'static Mutex<HashMap<Pubkey, [u8; 32]>> {
+    static STATE: OnceLock<Mutex<HashMap<Pubkey, [u8; 32]>>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn key_usage_policy_state() -> &'static OnceLock<KeyUsagePolicy> {
+    static POLICY: OnceLock<KeyUsagePolicy> = OnceLock::new();
+    &POLICY
+}
+
+pub fn set_key_usage_policy(policy: KeyUsagePolicy) {
+    let _ = key_usage_policy_state().set(policy);
+}
+
+pub fn pin_keypair_integrity(keypairs: &[Keypair]) -> Result<()> {
+    let mut state = key_integrity_state()
+        .lock()
+        .expect("key integrity mutex poisoned");
+
+    state.clear();
+    for kp in keypairs {
+        let digest = hash(&kp.to_bytes()).to_bytes();
+        state.insert(kp.pubkey(), digest);
+    }
+
+    Ok(())
+}
+
+fn verify_keypair_integrity(signers: &[&Keypair]) -> Result<()> {
+    let state = key_integrity_state()
+        .lock()
+        .expect("key integrity mutex poisoned");
+
+    for kp in signers {
+        let expected = state.get(&kp.pubkey()).ok_or_else(|| {
+            anyhow!("key integrity pin missing for signer {}", kp.pubkey())
+        })?;
+        let observed = hash(&kp.to_bytes()).to_bytes();
+        if &observed != expected {
+            return Err(anyhow!(
+                "key integrity check failed for signer {}",
+                kp.pubkey()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn enforce_key_usage_limits(rpc: &RpcClient, signers: &[&Keypair]) -> Result<()> {
+    let Some(policy) = key_usage_policy_state().get().copied() else {
+        return Ok(());
+    };
+
+    if policy.max_per_epoch == 0 {
+        return Ok(());
+    }
+
+    let epoch_info = rpc.get_epoch_info().context("failed to fetch epoch info")?;
+    let epoch = epoch_info.epoch;
+    let now = Instant::now();
+
+    let mut state = key_usage_state()
+        .lock()
+        .expect("key usage mutex poisoned");
+
+    if state.epoch != epoch {
+        state.epoch = epoch;
+        state.usage.clear();
+        state.events.clear();
+    }
+
+    for kp in signers {
+        let entry = state.usage.entry(kp.pubkey()).or_insert(0);
+        if entry.saturating_add(1) > policy.max_per_epoch {
+            return Err(anyhow!(
+                "signer {} exceeded max signatures per epoch (limit={})",
+                kp.pubkey(),
+                policy.max_per_epoch
+            ));
+        }
+        *entry = entry.saturating_add(1);
+
+        let window = Duration::from_secs(policy.anomaly_window_secs.max(1));
+        let events = state
+            .events
+            .entry(kp.pubkey())
+            .or_insert_with(VecDeque::new);
+        events.push_back(now);
+        while let Some(front) = events.front() {
+            if now.duration_since(*front) > window {
+                events.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        if events.len() as u64 >= policy.anomaly_burst_threshold {
+            return Err(anyhow!(
+                "signing anomaly detected for signer {} ({} signatures within {}s)",
+                kp.pubkey(),
+                events.len(),
+                policy.anomaly_window_secs
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 pub fn keeper_quorum_for_protocol<'a>(
@@ -512,6 +781,109 @@ pub fn verify_program_deployed(rpc: &RpcClient, program_id: &Pubkey) -> Result<(
 
     enforce_upgrade_authority_pinning(program_id, upgrade_authority)?;
     Ok(())
+}
+
+pub fn verify_upgrade_authority_immutable(
+    rpc: &RpcClient,
+    program_id: &Pubkey,
+    allowed_multisigs: &[Pubkey],
+) -> Result<()> {
+    let observed = read_upgrade_authority(rpc, program_id)?;
+
+    if observed.is_none() {
+        info!(program_id = %program_id, "upgrade authority is immutable (None)");
+        return Ok(());
+    }
+
+    let authority = observed.expect("checked is_some");
+    if allowed_multisigs.iter().any(|allowed| *allowed == authority) {
+        warn!(
+            program_id = %program_id,
+            upgrade_authority = %authority,
+            "program remains upgradeable but authority matches configured multisig allowlist"
+        );
+        return Ok(());
+    }
+
+    error!(
+        program_id = %program_id,
+        observed_upgrade_authority = %authority,
+        "ALERT: mutable upgrade authority is not allowlisted; keeper startup refused"
+    );
+    Err(anyhow!(
+        "program {} upgrade authority is mutable and not allowlisted as multisig: {}",
+        program_id,
+        authority
+    ))
+}
+
+fn read_upgrade_authority(rpc: &RpcClient, program_id: &Pubkey) -> Result<Option<Pubkey>> {
+    let program_account = rpc
+        .get_account(program_id)
+        .with_context(|| format!("program account not found: {program_id}"))?;
+
+    if !program_account.executable {
+        return Err(anyhow!(
+            "program account exists but is not executable: {program_id}"
+        ));
+    }
+    if program_account.owner != bpf_loader_upgradeable::id() {
+        return Err(anyhow!(
+            "program account owner is not upgradeable loader: {}",
+            program_account.owner
+        ));
+    }
+
+    if program_account.data.len() < UpgradeableLoaderState::size_of_program() {
+        return Err(anyhow!(
+            "program account data too short for upgradeable Program state: {} bytes",
+            program_account.data.len()
+        ));
+    }
+
+    let program_state: UpgradeableLoaderState = bincode::deserialize(
+        &program_account.data[..UpgradeableLoaderState::size_of_program()],
+    )
+    .with_context(|| format!("failed to decode upgradeable program state: {program_id}"))?;
+    let programdata_address = match program_state {
+        UpgradeableLoaderState::Program { programdata_address } => programdata_address,
+        _ => {
+            return Err(anyhow!(
+                "program account is not in Program state for upgradeable loader: {program_id}"
+            ));
+        }
+    };
+
+    let programdata_account = rpc
+        .get_account(&programdata_address)
+        .with_context(|| format!("programdata account not found: {}", programdata_address))?;
+    if programdata_account.data.len() < UpgradeableLoaderState::size_of_programdata_metadata() {
+        return Err(anyhow!(
+            "programdata account too short for metadata: {} bytes",
+            programdata_account.data.len()
+        ));
+    }
+
+    let programdata_state: UpgradeableLoaderState = bincode::deserialize(
+        &programdata_account.data[..UpgradeableLoaderState::size_of_programdata_metadata()],
+    )
+    .with_context(|| {
+        format!(
+            "failed to decode programdata upgradeable state: {}",
+            programdata_address
+        )
+    })?;
+
+    match programdata_state {
+        UpgradeableLoaderState::ProgramData {
+            upgrade_authority_address,
+            ..
+        } => Ok(upgrade_authority_address),
+        _ => Err(anyhow!(
+            "programdata account is not in ProgramData state: {}",
+            programdata_address
+        )),
+    }
 }
 
 fn enforce_upgrade_authority_pinning(
@@ -812,6 +1184,58 @@ pub fn validate_protocol_state_with_tolerance(
         ));
     }
 
+    if !within_u64_tolerance(
+        primary.manual_oracle_reenable_delay_slots,
+        secondary.manual_oracle_reenable_delay_slots,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.manual_oracle_reenable_delay_slots mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.manual_oracle_reenable_delay_slots,
+            secondary.manual_oracle_reenable_delay_slots,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.manual_oracle_last_activation_slot,
+        secondary.manual_oracle_last_activation_slot,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.manual_oracle_last_activation_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.manual_oracle_last_activation_slot,
+            secondary.manual_oracle_last_activation_slot,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.manual_oracle_activation_epoch,
+        secondary.manual_oracle_activation_epoch,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.manual_oracle_activation_epoch mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.manual_oracle_activation_epoch,
+            secondary.manual_oracle_activation_epoch,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.manual_oracle_activation_count_epoch,
+        secondary.manual_oracle_activation_count_epoch,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.manual_oracle_activation_count_epoch mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.manual_oracle_activation_count_epoch,
+            secondary.manual_oracle_activation_count_epoch,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
     if primary.bump != secondary.bump {
         return Err(anyhow!(
             "protocol.bump mismatch (primary={}, secondary={})",
@@ -963,6 +1387,19 @@ pub fn validate_vault_with_tolerance(
         ));
     }
 
+    if !within_u64_tolerance(
+        primary.twap_price,
+        secondary.twap_price,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "vault[{index}].twap_price mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.twap_price,
+            secondary.twap_price,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
     Ok(())
 }
 
@@ -1062,6 +1499,16 @@ pub fn send_instructions(
     if let Some(secondary) = secondary_rpc {
         maybe_probe_secondary_rpc_recovery(secondary);
     }
+
+    let mut unique_signers: Vec<&Keypair> = Vec::new();
+    for signer in std::iter::once(payer).chain(signers.iter().copied()) {
+        if !unique_signers.iter().any(|existing| existing.pubkey() == signer.pubkey()) {
+            unique_signers.push(signer);
+        }
+    }
+
+    verify_keypair_integrity(&unique_signers)?;
+    enforce_key_usage_limits(rpc, &unique_signers)?;
 
     let secondary_configured = !matches!(secondary_mode, SecondaryRpcMode::NoSecondaryConfigured);
     let mut confirmation_mode = secondary_rpc_mode(secondary_configured);

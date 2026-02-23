@@ -48,6 +48,7 @@ use std::{
 use tokio::time::MissedTickBehavior;
 use tracing::{error, info, warn};
 use watchdog::WatchdogMemory;
+use utils::KeyUsagePolicy;
 
 const DEFAULT_KEEPER_ENV_PATH: &str = "/home/spritz/microstable-keeper/.env";
 const FAILURE_BACKOFF_SECS: u64 = 30;
@@ -74,6 +75,10 @@ struct Cli {
     /// Exit with status 1 when no locally loaded keeper key can submit rebalance commits.
     #[arg(long)]
     require_rebalance: bool,
+
+    /// Initialize a default config file and exit (explicit bootstrap mode only).
+    #[arg(long)]
+    init_config: bool,
 }
 
 #[tokio::main]
@@ -81,6 +86,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     utils::init_tracing(cli.json_logs);
     utils::enforce_supply_chain_controls()?;
+
+    if cli.init_config {
+        let path = KeeperConfig::init_default(cli.config.as_deref())?;
+        info!(path = %path.display(), "default keeper config initialized");
+        return Ok(());
+    }
 
     let cfg = KeeperConfig::load(cli.config.as_deref())?;
     info!(
@@ -128,16 +139,29 @@ async fn main() -> Result<()> {
     }
 
     utils::verify_program_deployed(&rpc, &cfg.program_id)?;
+    utils::verify_upgrade_authority_immutable(
+        &rpc,
+        &cfg.program_id,
+        &cfg.allowed_upgrade_authority_multisigs,
+    )?;
 
     let secondary_runtime_for_boot = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
     if let Some(secondary) = secondary_runtime_for_boot.active_secondary_rpc {
-        if let Err(err) = utils::verify_program_deployed(secondary, &cfg.program_id) {
+        if let Err(err) = utils::verify_program_deployed(secondary, &cfg.program_id)
+            .and_then(|_| {
+                utils::verify_upgrade_authority_immutable(
+                    secondary,
+                    &cfg.program_id,
+                    &cfg.allowed_upgrade_authority_multisigs,
+                )
+            })
+        {
             let entered_degraded = utils::register_secondary_rpc_failure();
             warn!(
                 error = %err,
                 degraded = utils::secondary_rpc_is_degraded(),
                 entered_degraded,
-                "secondary program deployment check failed; disabling secondary RPC"
+                "secondary program deployment/upgrade-authority check failed; disabling secondary RPC"
             );
         }
     }
@@ -151,6 +175,46 @@ async fn main() -> Result<()> {
 
     let keypairs = utils::load_keypairs(&cfg.keeper_keypairs)?;
     info!(keeper_count = keypairs.len(), "keeper keypairs loaded");
+    utils::pin_keypair_integrity(&keypairs)?;
+    utils::set_key_usage_policy(KeyUsagePolicy {
+        max_per_epoch: cfg.key_signatures_max_per_epoch,
+        anomaly_window_secs: cfg.key_anomaly_window_secs,
+        anomaly_burst_threshold: cfg.key_anomaly_burst_threshold,
+    });
+
+    if let Some(cutover_epoch) = cfg.key_rotation_cutover_epoch {
+        let next_keys = &cfg.key_rotation_next_pubkeys;
+        let grace_end = cutover_epoch.saturating_add(cfg.key_rotation_grace_epochs);
+        let loaded: Vec<Pubkey> = keypairs.iter().map(|kp| kp.pubkey()).collect();
+
+        if next_keys.len() != 3 {
+            return Err(anyhow!(
+                "key rotation configured for epoch {} but key_rotation_next_pubkeys does not contain exactly 3 pubkeys",
+                cutover_epoch
+            ));
+        }
+
+        if epoch_info.epoch >= cutover_epoch {
+            let matches_next = next_keys.iter().all(|pk| loaded.contains(pk));
+            if matches_next {
+                info!(cutover_epoch, "key rotation active: loaded keys match next rotation set");
+            } else if epoch_info.epoch <= grace_end {
+                warn!(
+                    cutover_epoch,
+                    grace_end,
+                    "key rotation grace period active: loaded keys do not match next set"
+                );
+            } else {
+                return Err(anyhow!(
+                    "key rotation overdue: epoch {} past grace end {} without loading next key set",
+                    epoch_info.epoch,
+                    grace_end
+                ));
+            }
+        } else {
+            info!(cutover_epoch, "key rotation scheduled for future epoch");
+        }
+    }
 
     run_startup_preflight(&rpc, &cfg, &keypairs, cli.require_rebalance)?;
 

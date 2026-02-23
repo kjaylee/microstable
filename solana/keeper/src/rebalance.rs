@@ -1304,6 +1304,10 @@ mod tests {
             max_redeem_per_slot_ppm: 80_000,
             manual_oracle_mode_expiry_slot: 0,
             bump: 255,
+            manual_oracle_reenable_delay_slots: 600,
+            manual_oracle_last_activation_slot: 0,
+            manual_oracle_activation_epoch: 0,
+            manual_oracle_activation_count_epoch: 0,
         }
     }
 
@@ -1340,6 +1344,7 @@ mod tests {
             total_deposits: deposits,
             bump: 255,
             pyth_price_feed: Pubkey::new_unique(),
+            twap_price: price,
         }
     }
 
