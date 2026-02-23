@@ -1017,15 +1017,20 @@
         collateralValue += (v.total_deposits * v.price) / 1000000n;
       }
 
-      const crPct = supply > 0n ? Number((collateralValue * 10000n) / supply) / 100 : 200;
-      animateNumber($("crValue"), crPct, { decimals: 2, suffix: "%" });
+      const hasSupply = supply > 0n;
+      const crPct = hasSupply ? Number((collateralValue * 10000n) / supply) / 100 : null;
+      if (crPct !== null) {
+        animateNumber($("crValue"), crPct, { decimals: 2, suffix: "%" });
+      } else {
+        $("crValue").textContent = "N/A";
+      }
 
-      const fillPct = Math.max(0, Math.min(100, (crPct / 200) * 100));
+      const fillPct = crPct !== null ? Math.max(0, Math.min(100, (crPct / 200) * 100)) : 0;
       const bar = $("crBar");
       bar.style.width = `${fillPct.toFixed(1)}%`;
-      bar.style.background = crPct > 150 ? "var(--green)" : crPct >= 120 ? "var(--amber)" : "var(--red)";
+      bar.style.background = !hasSupply ? "var(--muted)" : crPct > 150 ? "var(--green)" : crPct >= 120 ? "var(--amber)" : "var(--red)";
 
-      const [riskText, riskClass] = computeRisk(crPct, protocol, circuit);
+      const [riskText, riskClass] = computeRisk(crPct ?? 999, protocol, circuit);
       const rb = $("riskBadge");
       rb.className = `risk-badge ${riskClass}`;
       rb.textContent = `RISK: ${riskText}`;
