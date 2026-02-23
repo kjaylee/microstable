@@ -16,6 +16,8 @@ mod agent_loop_tests;
 #[cfg(test)]
 mod aig_tests;
 #[cfg(test)]
+mod main_wiring_tests;
+#[cfg(test)]
 mod optimizer_tests;
 #[cfg(test)]
 mod risk_manager_tests;
@@ -134,6 +136,7 @@ async fn main() -> Result<()> {
 
     let mut monitor_memory = MonitorMemory::default();
     let mut rebalance_memory = RebalanceMemory::default();
+    let mut risk_manager_memory = risk_manager::RiskManagerMemory::default();
     let mut watchdog_memory = WatchdogMemory::default();
     let mut agent_loop_state = AgentLoopState::default();
 
@@ -148,6 +151,7 @@ async fn main() -> Result<()> {
             &derived,
             &mut monitor_memory,
             &mut rebalance_memory,
+            &mut risk_manager_memory,
             &mut watchdog_memory,
             &mut agent_loop_state,
         )?;
@@ -179,6 +183,7 @@ async fn main() -> Result<()> {
                         &derived,
                         &mut monitor_memory,
                         &mut rebalance_memory,
+                        &mut risk_manager_memory,
                         &mut watchdog_memory,
                         &mut agent_loop_state,
                     ) {
@@ -232,6 +237,7 @@ async fn main() -> Result<()> {
                         &derived,
                         &mut monitor_memory,
                         &mut rebalance_memory,
+                        &mut risk_manager_memory,
                         &mut watchdog_memory,
                         &mut agent_loop_state,
                     ) {
@@ -305,6 +311,7 @@ fn run_cycle(
     derived: &utils::DerivedAccounts,
     monitor_memory: &mut MonitorMemory,
     rebalance_memory: &mut RebalanceMemory,
+    risk_manager_memory: &mut risk_manager::RiskManagerMemory,
     watchdog_memory: &mut WatchdogMemory,
     agent_loop_state: &mut AgentLoopState,
 ) -> Result<()> {
@@ -346,7 +353,38 @@ fn run_cycle(
         }
     }
 
-    match agent_loop::maybe_run_aig_cycle(cfg, agent_loop_state) {
+    match risk_manager::run_risk_manager_cycle(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        cfg,
+        keepers,
+        derived,
+        risk_manager_memory,
+    ) {
+        Ok(outcome) => {
+            info!(
+                risk_level = ?outcome.risk_level,
+                global_cr_bps = outcome.global_cr_bps,
+                throttle = outcome.throttle_redemptions,
+                "risk manager step complete"
+            );
+        }
+        Err(err) => {
+            failed_steps.push("risk_manager");
+            warn!(error = %err, "risk manager step failed");
+        }
+    }
+
+    match agent_loop::maybe_run_aig_cycle_with_tx(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        cfg,
+        keepers,
+        derived,
+        agent_loop_state,
+    ) {
         Ok(()) => {}
         Err(err) => {
             failed_steps.push("aig");
@@ -354,7 +392,15 @@ fn run_cycle(
         }
     }
 
-    match agent_loop::maybe_run_tournament_cycle(cfg, agent_loop_state) {
+    match agent_loop::maybe_run_tournament_cycle_with_tx(
+        rpc,
+        secondary_rpc,
+        secondary_mode,
+        cfg,
+        keepers,
+        derived,
+        agent_loop_state,
+    ) {
         Ok(()) => {}
         Err(err) => {
             failed_steps.push("tournament");
