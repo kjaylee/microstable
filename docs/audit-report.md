@@ -5,7 +5,7 @@
 **Repository:** `https://github.com/kjaylee/microstable`  
 **Audit date range:** 2026-02-22 to 2026-02-23 (KST)  
 **Final report date:** 2026-02-23  
-**Audited revision (main HEAD):** `4603f9bb608bda7831963444de9ac73c5ecc8f8b`
+**Audited revision (main HEAD):** `f327e7c6df0fae25171f0e00be316f8f7cf4a5c8`
 
 ---
 
@@ -40,7 +40,7 @@ At report finalization, **all tracked findings in the audited cycles are resolve
 - **Low:** 1  
 - **Total consolidated findings:** 25 (mapped to all cycle IDs in Appendix)
 
-**Overall risk posture:** **Low-to-Moderate residual operational risk**, with no unresolved Critical/High technical finding in the audited on-chain and keeper code paths as of `4603f9b`.
+**Overall risk posture:** **Low-to-Moderate residual operational risk**, with no unresolved Critical/High technical finding in the audited on-chain and keeper code paths as of `f327e7c`.
 
 ---
 
@@ -48,7 +48,7 @@ At report finalization, **all tracked findings in the audited cycles are resolve
 
 ### Repository and code scope
 
-- **Commit:** `4603f9bb608bda7831963444de9ac73c5ecc8f8b`
+- **Commit:** `f327e7c6df0fae25171f0e00be316f8f7cf4a5c8`
 - **Primary in-scope files (requested):**
   - `solana/programs/microstable/src/lib.rs`
   - `solana/keeper/src/*.rs`
