@@ -203,6 +203,8 @@ pub fn ix_emergency_shutdown(
 pub fn ix_commit_rebalance(
     program_id: Pubkey,
     protocol_state: Pubkey,
+    agent_record: Pubkey,
+    submitting_agent: Pubkey,
     keeper_one: Pubkey,
     keeper_two: Pubkey,
     commit_hash: [u8; 32],
@@ -212,6 +214,8 @@ pub fn ix_commit_rebalance(
         program_id,
         accounts: vec![
             AccountMeta::new(protocol_state, false),
+            AccountMeta::new(agent_record, false),
+            AccountMeta::new_readonly(submitting_agent, true),
             AccountMeta::new_readonly(keeper_one, true),
             AccountMeta::new_readonly(keeper_two, true),
         ],

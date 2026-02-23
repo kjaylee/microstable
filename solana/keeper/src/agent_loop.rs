@@ -9,11 +9,15 @@ use crate::{
 use anyhow::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
+    hash::hash,
     instruction::Instruction,
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 use tracing::{info, warn};
 
 const AIG_CURRENT_TIER: u8 = 1;
@@ -120,7 +124,18 @@ fn maybe_run_aig_cycle_inner(
     );
 
     if let Some((rpc, secondary_rpc, secondary_mode, keepers, derived)) = tx_runtime {
-        if let Some(agent) = select_candidate_agent(keepers) {
+        let registered_agents = match fetch_registered_agents(rpc, cfg.program_id, keepers) {
+            Ok(agents) => agents,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "aig tx submission skipped: failed to fetch registered agent registry"
+                );
+                Vec::new()
+            }
+        };
+
+        if let Some(agent) = select_candidate_agent(&registered_agents) {
             match resolve_keeper_signer(rpc, keepers, derived) {
                 Ok(keeper_signer) => {
                     let actions = aig_actions_for_outcome(
@@ -157,7 +172,7 @@ fn maybe_run_aig_cycle_inner(
                 }
             }
         } else {
-            warn!("aig tx submission skipped: no keeper candidate available");
+            warn!("aig tx submission skipped: no eligible registered agent available");
         }
     }
 
@@ -208,13 +223,19 @@ fn maybe_run_tournament_cycle_inner(
     let snapshot = ProtocolSnapshot::default();
     let mut tournament = tournament::create_tournament(snapshot, round, 1);
 
-    let mut participants: Vec<Pubkey> = if let Some((_, _, _, keepers, _)) = tx_runtime {
-        let mut from_keepers: Vec<Pubkey> = keepers.iter().map(|kp| kp.pubkey()).collect();
-        from_keepers.sort();
-        from_keepers.dedup();
-        from_keepers
+    let mut participants: Vec<Pubkey> = if let Some((rpc, _, _, keepers, _)) = tx_runtime {
+        match fetch_registered_agents(rpc, cfg.program_id, keepers) {
+            Ok(agents) => agents,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "tournament cycle skipped: failed to fetch registered agent registry"
+                );
+                Vec::new()
+            }
+        }
     } else {
-        vec![Pubkey::new_unique(), Pubkey::new_unique()]
+        Vec::new()
     };
 
     if participants.len() < 2 {
@@ -296,8 +317,49 @@ fn interval_elapsed(last_run: Option<Instant>, interval_secs: u64, now: Instant)
     }
 }
 
-fn select_candidate_agent(keepers: &[Keypair]) -> Option<Pubkey> {
-    keepers.first().map(Keypair::pubkey)
+fn select_candidate_agent(registered_agents: &[Pubkey]) -> Option<Pubkey> {
+    registered_agents.first().copied()
+}
+
+fn fetch_registered_agents(
+    rpc: &RpcClient,
+    program_id: Pubkey,
+    keepers: &[Keypair],
+) -> Result<Vec<Pubkey>> {
+    let keeper_pubkeys: HashSet<Pubkey> = keepers.iter().map(Keypair::pubkey).collect();
+    let discriminator = agent_record_discriminator();
+
+    let mut agents = Vec::new();
+    for (_, account) in rpc.get_program_accounts(&program_id)? {
+        let data = account.data;
+        if data.len() < 8 || data[..8] != discriminator {
+            continue;
+        }
+
+        let record = match wire::decode_account::<wire::AgentRecord>(&data, "AgentRecord") {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+
+        if record.status != wire::AgentStatus::Active {
+            continue;
+        }
+        if keeper_pubkeys.contains(&record.agent) {
+            continue;
+        }
+
+        agents.push(record.agent);
+    }
+
+    agents.sort();
+    agents.dedup();
+    Ok(agents)
+}
+
+fn agent_record_discriminator() -> [u8; 8] {
+    let mut discriminator = [0u8; 8];
+    discriminator.copy_from_slice(&hash(b"account:AgentRecord").to_bytes()[..8]);
+    discriminator
 }
 
 fn resolve_keeper_signer<'a>(

@@ -7,6 +7,15 @@ keypair.json
 *-keypair.json
 wallet-seed.txt
 wallets/*.json
+keeper/keeper*.json
+solana/keeper/keeper*.json
+keypairs/*.json
+solana/keypairs/*.json
+**/keypairs/*.json
+
+# Local agent/worktree artifacts
+.claude/
+**/.state/
 
 # Deployment configs with infra details
 deploy.sh

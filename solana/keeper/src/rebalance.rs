@@ -8,6 +8,7 @@ use anyhow::{anyhow, Result};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     hash::hashv,
+    pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
 use std::{thread, time::Duration};
@@ -276,9 +277,12 @@ pub fn run_rebalance_cycle(
         reveal_salt,
     );
 
+    let submitting_agent = k1.pubkey();
     let commit_ix = wire::ix_commit_rebalance(
         cfg.program_id,
         derived.protocol_state,
+        derive_agent_record_pda(cfg.program_id, submitting_agent),
+        submitting_agent,
         k1.pubkey(),
         k2.pubkey(),
         commit_hash,
@@ -824,6 +828,10 @@ fn build_reveal_salt() -> [u8; 32] {
     let mut reveal_salt = [0u8; 32];
     reveal_salt.copy_from_slice(&entropy[..32]);
     reveal_salt
+}
+
+fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"agent", agent.as_ref()], &program_id).0
 }
 
 fn compute_rebalance_commit(

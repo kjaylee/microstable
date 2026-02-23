@@ -1636,6 +1636,7 @@ pub mod microstable {
         Ok(())
     }
 
+    #[cfg(feature = "devnet-admin")]
     /// DEVNET ONLY: upgrade authority can force-reinitialize protocol state.
     /// Handles struct size migration + keeper_set reset in one shot.
     /// Bypasses quorum/timelock for devnet recovery.
@@ -2216,6 +2217,7 @@ pub struct EmergencyShutdown<'info> {
     pub keeper_two: Signer<'info>,
 }
 
+#[cfg(feature = "devnet-admin")]
 /// DEVNET ONLY: force-reinitialize protocol state (handles struct resize).
 #[derive(Accounts)]
 pub struct DevnetForceReinit<'info> {

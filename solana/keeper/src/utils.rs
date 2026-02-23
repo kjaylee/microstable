@@ -14,7 +14,6 @@ use std::{
     fs,
     io::BufReader,
     path::{Path, PathBuf},
-    process::Command,
     str::FromStr,
     sync::{Mutex, OnceLock},
     thread,
@@ -392,21 +391,7 @@ fn read_keypair_from_fd(file: fs::File, path: &Path) -> Result<Keypair> {
 
 #[cfg(unix)]
 fn effective_uid() -> Result<u32> {
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .context("failed to execute `id -u` for keypair owner validation")?;
-
-    if !output.status.success() {
-        return Err(anyhow!("`id -u` failed while validating keypair ownership"));
-    }
-
-    let raw = String::from_utf8(output.stdout).context("`id -u` returned non-utf8 output")?;
-    let uid = raw
-        .trim()
-        .parse::<u32>()
-        .context("failed to parse uid from `id -u` output")?;
-    Ok(uid)
+    Ok(unsafe { libc::geteuid() as u32 })
 }
 
 pub fn keeper_quorum_for_protocol<'a>(
