@@ -4,8 +4,8 @@
   "program_id": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
   "keeper_keypairs": [
     "~/.config/solana/devnet-keypair.json",
-    "keeper/keeper2.json",
-    "keeper/keeper3.json"
+    "keeper/keys-2/keeper2.json",
+    "keeper/keys-3/keeper3.json"
   ],
   "pyth_feeds": [
     {

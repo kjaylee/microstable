@@ -19,21 +19,28 @@ const FEE_RATE_MAX: u64 = 10_000; // 1%
 const WEIGHT_STEP_LIMIT: u64 = 20_000; // 2%
 const TURNOVER_LIMIT: u64 = 150_000; // 15%
 const ORACLE_STALENESS_MAX: u64 = 120;
+// FIX HIGH-02/21/22: apply stricter freshness bounds to user mint/redeem paths.
+const MINT_ORACLE_STALENESS_MAX: u64 = 30;
+const REDEEM_ORACLE_STALENESS_MAX: u64 = 60;
+const MINT_ORACLE_CONFIDENCE_MAX: u64 = 20_000; // 2%
 // FIX CRITICAL-22: stale oracle data receives progressive valuation haircut.
 const STALE_ORACLE_PENALTY_PER_SLOT: u64 = 1_500; // 0.15%/slot
                                                   // FIX CRITICAL-22: confidence spread receives progressive valuation haircut.
 const CONFIDENCE_PENALTY_MULTIPLIER: u64 = 4; // 4x confidence ratio penalty
-                                              // FIX CRITICAL-22: hard stop for deep depeg mint attempts.
-const MINT_DEPEG_PAUSE_THRESHOLD: u64 = 80_000; // 8%
+                                              // FIX HIGH-22: hard stop for depeg mint attempts.
+const MINT_DEPEG_PAUSE_THRESHOLD: u64 = 30_000; // 3%
                                                 // FIX CRITICAL-21/HI-02: on-chain per-slot flow controls.
 const SLOT_FLOW_LIMIT_MIN_UNITS: u64 = 50_000_000; // 50 MSTB @ 6 decimals
-const DEFAULT_MAX_MINT_PER_SLOT_PPM: u64 = 120_000; // 12%
-const DEFAULT_MAX_REDEEM_PER_SLOT_PPM: u64 = 80_000; // 8%
-                                                     // FIX MEDIUM-23/10: governance update pacing limits.
+const DEFAULT_MAX_MINT_PER_SLOT_PPM: u64 = 60_000; // 6%
+const DEFAULT_MAX_REDEEM_PER_SLOT_PPM: u64 = 30_000; // 3%
+const MAX_MINT_PER_TX_PPM: u64 = 20_000; // 2%
+const MAX_REDEEM_PER_TX_PPM: u64 = 15_000; // 1.5%
+                                             // FIX MEDIUM-23/10: governance update pacing limits.
 const AGENT_GOVERNANCE_COOLDOWN_SECS: i64 = 60;
 const AGENT_SCORE_DELTA_LIMIT: u64 = 100_000; // 10%
                                               // FIX HIGH-03: manual oracle write path is disabled unless explicitly time-boxed.
 const MANUAL_ORACLE_MODE_MAX_SLOTS: u64 = 120;
+const MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS: u64 = 600;
 // FIX PTV2-002: enforce publish_time freshness for Pyth price updates.
 const PYTH_PUBLISH_TIME_MAX_AGE: i64 = 60;
 const ORACLE_CONFIDENCE_MAX: u64 = 50_000; // 5%
@@ -877,8 +884,16 @@ pub mod microstable {
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         };
         require!(
-            slot.saturating_sub(oracle_slot) <= ORACLE_STALENESS_MAX,
+            slot.saturating_sub(oracle_slot) <= MINT_ORACLE_STALENESS_MAX,
             ErrorCode::OracleStale
+        );
+        require!(
+            confidence <= MINT_ORACLE_CONFIDENCE_MAX,
+            ErrorCode::ConfidenceTooHigh
+        );
+        require!(
+            basket_max_depeg(vaults_before) < MINT_DEPEG_PAUSE_THRESHOLD,
+            ErrorCode::DepegMintPaused
         );
 
         let mint_haircut_ppm = mint_haircut_ppm(price, confidence, oracle_slot, slot)?;
@@ -896,6 +911,14 @@ pub mod microstable {
             .checked_sub(fee)
             .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
         require!(minted_musd > 0, ErrorCode::InvalidAmount);
+
+        enforce_single_tx_flow_limit(
+            ctx.accounts.protocol_state.total_supply,
+            minted_musd,
+            MAX_MINT_PER_TX_PPM,
+            SLOT_FLOW_LIMIT_MIN_UNITS,
+            SlotFlowKind::Mint,
+        )?;
 
         let max_mint = mul_div_floor(
             gross_musd,
@@ -1100,6 +1123,19 @@ pub mod microstable {
 
         let supply_before = ctx.accounts.protocol_state.total_supply;
         require!(supply_before > 0, ErrorCode::InsufficientBalance);
+
+        require!(
+            !oracle_redeem_degraded(vaults_before, slot),
+            ErrorCode::OracleDegraded
+        );
+
+        enforce_single_tx_flow_limit(
+            ctx.accounts.protocol_state.total_supply,
+            musd_amount,
+            MAX_REDEEM_PER_TX_PPM,
+            SLOT_FLOW_LIMIT_MIN_UNITS,
+            SlotFlowKind::Redeem,
+        )?;
 
         enforce_slot_flow_limit(
             &mut ctx.accounts.protocol_state,
@@ -1766,6 +1802,28 @@ pub mod microstable {
 
         let slot = Clock::get()?.slot;
         let protocol = &mut ctx.accounts.protocol_state;
+        require!(
+            slot > protocol.manual_oracle_mode_expiry_slot,
+            ErrorCode::ManualOracleModeAlreadyActive
+        );
+        if protocol.manual_oracle_mode_expiry_slot > 0 {
+            let reenable_slot = protocol
+                .manual_oracle_mode_expiry_slot
+                .saturating_add(MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS);
+            require!(
+                slot >= reenable_slot,
+                ErrorCode::ManualOracleModeCooldownActive
+            );
+        }
+        require!(
+            ctx.accounts
+                .circuit_breaker
+                .status
+                .iter()
+                .any(|status| *status != BreakerStatus::Inactive as u8),
+            ErrorCode::ManualOracleModeRequiresCircuitBreaker
+        );
+
         protocol.manual_oracle_mode_expiry_slot = slot.saturating_add(valid_for_slots);
         protocol.last_update_slot = slot;
         Ok(())
@@ -2593,6 +2651,12 @@ pub enum ErrorCode {
     ManualOracleModeInactive,
     #[msg("Invalid manual oracle validity window")]
     InvalidManualOracleWindow,
+    #[msg("Manual oracle mode is already active")]
+    ManualOracleModeAlreadyActive,
+    #[msg("Manual oracle mode re-enable cooldown is still active")]
+    ManualOracleModeCooldownActive,
+    #[msg("Manual oracle mode requires at least one active circuit breaker")]
+    ManualOracleModeRequiresCircuitBreaker,
     #[msg("Oracle update must be monotonic")]
     OracleSlotRegression,
     #[msg("Invalid oracle price")]
@@ -2603,8 +2667,12 @@ pub enum ErrorCode {
     MintPausedByCircuitBreaker,
     #[msg("Mint amount exceeds active rate limit")]
     MintRateLimited,
+    #[msg("Mint volume exceeds per-transaction flow control limit")]
+    MintTxFlowLimitExceeded,
     #[msg("Mint volume exceeds per-slot flow control limit")]
     MintSlotFlowLimitExceeded,
+    #[msg("Redeem volume exceeds per-transaction flow control limit")]
+    RedeemTxFlowLimitExceeded,
     #[msg("Redeem volume exceeds per-slot flow control limit")]
     RedeemSlotFlowLimitExceeded,
     #[msg("Mint paused for collateral under deep depeg stress")]
@@ -3248,6 +3316,20 @@ fn oracle_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u
     })
 }
 
+fn oracle_redeem_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u64) -> bool {
+    vaults.iter().any(|v| {
+        v.price == 0
+            || v.confidence > ORACLE_CONFIDENCE_MAX
+            || slot.saturating_sub(v.last_oracle_slot) > REDEEM_ORACLE_STALENESS_MAX
+    })
+}
+
+fn basket_max_depeg<'info>(vaults: [&Account<'info, CollateralVault>; 4]) -> u64 {
+    vaults
+        .iter()
+        .fold(0u64, |acc, vault| acc.max(abs_diff(vault.price, SCALE)))
+}
+
 #[derive(Clone, Copy)]
 enum SlotFlowKind {
     Mint,
@@ -3266,6 +3348,26 @@ fn slot_flow_limit(total_supply: u64, limit_ppm: u64) -> Result<u64> {
     let base = total_supply.max(SLOT_FLOW_LIMIT_MIN_UNITS);
     let by_ppm = mul_div_floor(base, limit_ppm, SCALE)?;
     Ok(by_ppm.max(SLOT_FLOW_LIMIT_MIN_UNITS))
+}
+
+fn enforce_single_tx_flow_limit(
+    total_supply: u64,
+    amount: u64,
+    limit_ppm: u64,
+    minimum_units: u64,
+    flow_kind: SlotFlowKind,
+) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+
+    let base = total_supply.max(minimum_units);
+    let cap = mul_div_floor(base, limit_ppm, SCALE)?.max(minimum_units);
+    match flow_kind {
+        SlotFlowKind::Mint => require!(amount <= cap, ErrorCode::MintTxFlowLimitExceeded),
+        SlotFlowKind::Redeem => require!(amount <= cap, ErrorCode::RedeemTxFlowLimitExceeded),
+    }
+    Ok(())
 }
 
 fn enforce_slot_flow_limit(

@@ -803,7 +803,7 @@ impl OptimizerCheckpoint {
         let checkpoint_json = serde_json::to_vec_pretty(self)?;
         let envelope = OptimizerCheckpointEnvelope {
             version: OPTIMIZER_CHECKPOINT_VERSION,
-            integrity_tag: checkpoint_integrity_tag(&checkpoint_json),
+            integrity_tag: checkpoint_integrity_tag(&checkpoint_json)?,
             checkpoint: self.clone(),
         };
 
@@ -823,8 +823,9 @@ impl OptimizerCheckpoint {
         let path_ref = path.as_ref();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(path_ref)?.permissions().mode() & 0o777;
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let metadata = fs::metadata(path_ref)?;
+            let mode = metadata.permissions().mode() & 0o777;
             if mode & 0o077 != 0 {
                 return Err(OptimizerError::Io(format!(
                     "checkpoint file has insecure permissions {:o}: {}",
@@ -832,38 +833,42 @@ impl OptimizerCheckpoint {
                     path_ref.display()
                 )));
             }
+            let owner_uid = metadata.uid();
+            let effective_uid = unsafe { libc::geteuid() as u32 };
+            if owner_uid != effective_uid {
+                return Err(OptimizerError::Io(format!(
+                    "checkpoint file owner mismatch for {} (owner_uid={}, effective_uid={})",
+                    path_ref.display(),
+                    owner_uid,
+                    effective_uid
+                )));
+            }
         }
 
         let data = fs::read(path_ref)?;
 
-        if let Ok(envelope) = serde_json::from_slice::<OptimizerCheckpointEnvelope>(&data) {
-            if envelope.version != OPTIMIZER_CHECKPOINT_VERSION {
-                return Err(OptimizerError::Serialization(format!(
-                    "unsupported checkpoint envelope version: {}",
-                    envelope.version
-                )));
-            }
-
-            let checkpoint_json = serde_json::to_vec_pretty(&envelope.checkpoint)?;
-            let expected_tag = checkpoint_integrity_tag(&checkpoint_json);
-            if envelope.integrity_tag.trim().to_ascii_lowercase() != expected_tag {
-                return Err(OptimizerError::Serialization(
-                    "optimizer checkpoint integrity verification failed".to_string(),
-                ));
-            }
-
-            return Ok(envelope.checkpoint);
+        let envelope = serde_json::from_slice::<OptimizerCheckpointEnvelope>(&data)?;
+        if envelope.version != OPTIMIZER_CHECKPOINT_VERSION {
+            return Err(OptimizerError::Serialization(format!(
+                "unsupported checkpoint envelope version: {}",
+                envelope.version
+            )));
         }
 
-        // Backward compatibility for legacy unsigned checkpoint format.
-        let legacy: OptimizerCheckpoint = serde_json::from_slice(&data)?;
-        Ok(legacy)
+        let checkpoint_json = serde_json::to_vec_pretty(&envelope.checkpoint)?;
+        let expected_tag = checkpoint_integrity_tag(&checkpoint_json)?;
+        if envelope.integrity_tag.trim().to_ascii_lowercase() != expected_tag {
+            return Err(OptimizerError::Serialization(
+                "optimizer checkpoint integrity verification failed".to_string(),
+            ));
+        }
+
+        Ok(envelope.checkpoint)
     }
 }
 
-const OPTIMIZER_CHECKPOINT_VERSION: u8 = 1;
+const OPTIMIZER_CHECKPOINT_VERSION: u8 = 2;
 const STATE_HMAC_ENV_KEY: &str = "MICROSTABLE_STATE_HMAC_KEY";
-const STATE_HMAC_DEFAULT_KEY: &str = "microstable-local-state-default-key";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct OptimizerCheckpointEnvelope {
@@ -872,19 +877,29 @@ struct OptimizerCheckpointEnvelope {
     checkpoint: OptimizerCheckpoint,
 }
 
-fn checkpoint_integrity_tag(payload: &[u8]) -> String {
-    let key = env::var(STATE_HMAC_ENV_KEY)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| STATE_HMAC_DEFAULT_KEY.to_string());
+fn checkpoint_integrity_tag(payload: &[u8]) -> Result<String, OptimizerError> {
+    let key = state_hmac_key()?;
     let digest = hashv(&[
-        b"microstable:optimizer-checkpoint:v1",
+        b"microstable:optimizer-checkpoint:v2",
         key.as_bytes(),
         payload,
         key.as_bytes(),
     ])
     .to_bytes();
-    digest.iter().map(|b| format!("{:02x}", b)).collect()
+    Ok(digest.iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+fn state_hmac_key() -> Result<String, OptimizerError> {
+    let key = env::var(STATE_HMAC_ENV_KEY)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            OptimizerError::Io(format!(
+                "{} must be set to load/save optimizer checkpoint",
+                STATE_HMAC_ENV_KEY
+            ))
+        })?;
+    Ok(key)
 }
 
 /// Errors produced by the optimizer module.
@@ -1333,10 +1348,12 @@ mod tests {
             loss: 0.123,
         };
 
+        std::env::set_var(STATE_HMAC_ENV_KEY, "test-state-hmac-key");
         let tmp = std::env::temp_dir().join("optimizer_checkpoint_round_trip.json");
         checkpoint.save_to_path(&tmp).unwrap();
         let loaded = OptimizerCheckpoint::load_from_path(&tmp).unwrap();
         assert_eq!(checkpoint, loaded);
         let _ = std::fs::remove_file(tmp);
+        std::env::remove_var(STATE_HMAC_ENV_KEY);
     }
 }

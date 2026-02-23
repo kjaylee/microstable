@@ -17,7 +17,13 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
-use std::{collections::HashSet, fs, path::PathBuf, thread, time::Duration};
+use std::{
+    collections::HashSet,
+    env, fs,
+    path::{Path, PathBuf},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tracing::{info, warn};
 
 const WEIGHT_SCALE: u64 = 1_000_000;
@@ -29,7 +35,9 @@ const CR_TARGET_MAX_PPM: u64 = 2_000_000;
 const FEE_MAX_PPM: u64 = 10_000;
 const AGENT_RECORD_ACCOUNT_DATA_SIZE: u64 = 8 + 160;
 const PENDING_REVEAL_STATE_PATH: &str = ".state/microstable/pending_reveal.json";
-const PENDING_REVEAL_STATE_VERSION: u8 = 1;
+const PENDING_REVEAL_STATE_VERSION: u8 = 2;
+const STATE_HMAC_ENV_KEY: &str = "MICROSTABLE_STATE_HMAC_KEY";
+const PENDING_REVEAL_LOCK_STALE_SECS: u64 = 120;
 
 #[derive(Debug, Clone)]
 pub struct RebalanceOutcome {
@@ -1083,6 +1091,8 @@ fn compute_rebalance_commit(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingRevealCheckpoint {
     version: u8,
+    integrity_tag: String,
+    saved_at_unix_secs: u64,
     pending: PendingReveal,
 }
 
@@ -1090,30 +1100,110 @@ pub fn pending_reveal_checkpoint_path() -> PathBuf {
     PathBuf::from(PENDING_REVEAL_STATE_PATH)
 }
 
+fn pending_reveal_lock_path() -> PathBuf {
+    pending_reveal_checkpoint_path().with_extension("json.lock")
+}
+
+struct PendingRevealLockGuard {
+    path: PathBuf,
+}
+
+impl Drop for PendingRevealLockGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_pending_reveal_lock() -> Result<PendingRevealLockGuard> {
+    let lock_path = pending_reveal_lock_path();
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if let Ok(metadata) = fs::metadata(&lock_path) {
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(age) = SystemTime::now().duration_since(modified) {
+                if age.as_secs() > PENDING_REVEAL_LOCK_STALE_SECS {
+                    let _ = fs::remove_file(&lock_path);
+                }
+            }
+        }
+    }
+
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(mut lock_file) => {
+            use std::io::Write;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let _ = writeln!(lock_file, "pid={} ts={}", std::process::id(), now);
+            Ok(PendingRevealLockGuard { path: lock_path })
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Err(anyhow!(
+            "pending reveal checkpoint lock is held: {}",
+            lock_path.display()
+        )),
+        Err(err) => Err(anyhow!(
+            "failed to acquire pending reveal checkpoint lock {}: {}",
+            lock_path.display(),
+            err
+        )),
+    }
+}
+
 fn save_pending_reveal_checkpoint(pending: &PendingReveal) -> Result<()> {
+    let _lock = acquire_pending_reveal_lock()?;
     let path = pending_reveal_checkpoint_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
+    let pending_json = serde_json::to_vec_pretty(pending)?;
+    let integrity_tag = keyed_hash_hex(state_hmac_key()?.as_bytes(), &pending_json);
     let envelope = PendingRevealCheckpoint {
         version: PENDING_REVEAL_STATE_VERSION,
+        integrity_tag,
+        saved_at_unix_secs: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
         pending: pending.clone(),
     };
 
     let payload = serde_json::to_vec_pretty(&envelope)?;
     let tmp_path = path.with_extension("json.tmp");
     fs::write(&tmp_path, payload)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))?;
+    }
+
     fs::rename(&tmp_path, &path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+
     Ok(())
 }
 
 fn load_pending_reveal_checkpoint() -> Result<Option<PendingReveal>> {
+    let _lock = acquire_pending_reveal_lock()?;
     let path = pending_reveal_checkpoint_path();
     if !path.exists() {
         return Ok(None);
     }
 
+    verify_secure_state_file(&path)?;
     let payload = fs::read(&path)?;
     let envelope: PendingRevealCheckpoint = serde_json::from_slice(&payload)?;
     if envelope.version != PENDING_REVEAL_STATE_VERSION {
@@ -1123,14 +1213,62 @@ fn load_pending_reveal_checkpoint() -> Result<Option<PendingReveal>> {
         ));
     }
 
+    let pending_json = serde_json::to_vec_pretty(&envelope.pending)?;
+    let expected_tag = keyed_hash_hex(state_hmac_key()?.as_bytes(), &pending_json);
+    if envelope.integrity_tag.trim().to_ascii_lowercase() != expected_tag {
+        return Err(anyhow!("pending reveal checkpoint integrity verification failed"));
+    }
+
     Ok(Some(envelope.pending))
 }
 
 fn clear_pending_reveal_checkpoint() -> Result<()> {
+    let _lock = acquire_pending_reveal_lock()?;
     let path = pending_reveal_checkpoint_path();
     if path.exists() {
         fs::remove_file(path)?;
     }
+    Ok(())
+}
+
+fn state_hmac_key() -> Result<String> {
+    env::var(STATE_HMAC_ENV_KEY)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("{} must be set to persist pending reveal state", STATE_HMAC_ENV_KEY))
+}
+
+fn keyed_hash_hex(key: &[u8], payload: &[u8]) -> String {
+    let digest = hashv(&[b"microstable:pending-reveal:v2", key, payload, key]).to_bytes();
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn verify_secure_state_file(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata = fs::metadata(path)?;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(anyhow!(
+                "insecure pending reveal checkpoint permissions {:o}: {}",
+                mode,
+                path.display()
+            ));
+        }
+
+        let owner_uid = metadata.uid();
+        let effective_uid = unsafe { libc::geteuid() as u32 };
+        if owner_uid != effective_uid {
+            return Err(anyhow!(
+                "pending reveal checkpoint owner mismatch for {} (owner_uid={}, effective_uid={})",
+                path.display(),
+                owner_uid,
+                effective_uid
+            ));
+        }
+    }
+
     Ok(())
 }
 

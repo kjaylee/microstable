@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use borsh::BorshDeserialize;
 use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
+#[allow(deprecated)]
+use solana_sdk::bpf_loader_upgradeable::{self, UpgradeableLoaderState};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     hash::hash,
@@ -11,7 +13,7 @@ use solana_sdk::{
 };
 use std::{
     collections::HashSet,
-    fs,
+    env, fs,
     io::BufReader,
     path::{Path, PathBuf},
     str::FromStr,
@@ -32,6 +34,9 @@ pub const TX_CONFIRM_WINDOW_MAX_SECS: u64 = 60;
 pub const TX_CONFIRM_POLL_INTERVAL_MS: u64 = 500;
 pub const SECONDARY_RPC_DEGRADE_THRESHOLD: u64 = 3;
 pub const SECONDARY_RPC_RECOVERY_PROBE_INTERVAL_SECS: u64 = 30;
+
+const EXPECTED_UPGRADE_AUTHORITY_ENV: &str = "MICROSTABLE_EXPECTED_UPGRADE_AUTHORITY";
+const ALLOW_UNPINNED_UPGRADE_AUTHORITY_ENV: &str = "MICROSTABLE_ALLOW_UNPINNED_UPGRADE_AUTHORITY";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecondaryRpcMode {
@@ -437,15 +442,134 @@ pub fn keeper_quorum_for_protocol<'a>(
 }
 
 pub fn verify_program_deployed(rpc: &RpcClient, program_id: &Pubkey) -> Result<()> {
-    let account = rpc
+    let program_account = rpc
         .get_account(program_id)
         .with_context(|| format!("program account not found: {program_id}"))?;
-    if !account.executable {
+    if !program_account.executable {
         return Err(anyhow!(
             "program account exists but is not executable: {program_id}"
         ));
     }
+    if program_account.owner != bpf_loader_upgradeable::id() {
+        return Err(anyhow!(
+            "program account owner is not upgradeable loader: {}",
+            program_account.owner
+        ));
+    }
+
+    if program_account.data.len() < UpgradeableLoaderState::size_of_program() {
+        return Err(anyhow!(
+            "program account data too short for upgradeable Program state: {} bytes",
+            program_account.data.len()
+        ));
+    }
+
+    let program_state: UpgradeableLoaderState = bincode::deserialize(
+        &program_account.data[..UpgradeableLoaderState::size_of_program()],
+    )
+    .with_context(|| format!("failed to decode upgradeable program state: {program_id}"))?;
+    let programdata_address = match program_state {
+        UpgradeableLoaderState::Program { programdata_address } => programdata_address,
+        _ => {
+            return Err(anyhow!(
+                "program account is not in Program state for upgradeable loader: {program_id}"
+            ));
+        }
+    };
+
+    let programdata_account = rpc
+        .get_account(&programdata_address)
+        .with_context(|| format!("programdata account not found: {}", programdata_address))?;
+    if programdata_account.data.len() < UpgradeableLoaderState::size_of_programdata_metadata() {
+        return Err(anyhow!(
+            "programdata account too short for metadata: {} bytes",
+            programdata_account.data.len()
+        ));
+    }
+
+    let programdata_state: UpgradeableLoaderState = bincode::deserialize(
+        &programdata_account.data[..UpgradeableLoaderState::size_of_programdata_metadata()],
+    )
+    .with_context(|| {
+        format!(
+            "failed to decode programdata upgradeable state: {}",
+            programdata_address
+        )
+    })?;
+
+    let upgrade_authority = match programdata_state {
+        UpgradeableLoaderState::ProgramData {
+            upgrade_authority_address,
+            ..
+        } => upgrade_authority_address,
+        _ => {
+            return Err(anyhow!(
+                "programdata account is not in ProgramData state: {}",
+                programdata_address
+            ));
+        }
+    };
+
+    enforce_upgrade_authority_pinning(program_id, upgrade_authority)?;
     Ok(())
+}
+
+fn enforce_upgrade_authority_pinning(
+    program_id: &Pubkey,
+    observed: Option<Pubkey>,
+) -> Result<()> {
+    let allow_unpinned = env::var(ALLOW_UNPINNED_UPGRADE_AUTHORITY_ENV)
+        .map(|value| value == "1")
+        .unwrap_or(false);
+
+    let expected_raw = env::var(EXPECTED_UPGRADE_AUTHORITY_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(expected) = expected_raw {
+        if expected.eq_ignore_ascii_case("none") {
+            if observed.is_some() {
+                return Err(anyhow!(
+                    "program {} is still upgradeable (observed authority={:?}); expected immutable authority=none",
+                    program_id,
+                    observed
+                ));
+            }
+            return Ok(());
+        }
+
+        let expected_pubkey = Pubkey::from_str(&expected).with_context(|| {
+            format!(
+                "{} must be a valid pubkey or 'none'",
+                EXPECTED_UPGRADE_AUTHORITY_ENV
+            )
+        })?;
+        if observed != Some(expected_pubkey) {
+            return Err(anyhow!(
+                "program {} upgrade authority mismatch (expected={}, observed={:?})",
+                program_id,
+                expected_pubkey,
+                observed
+            ));
+        }
+        return Ok(());
+    }
+
+    if allow_unpinned {
+        warn!(
+            program_id = %program_id,
+            observed_upgrade_authority = ?observed,
+            "upgrade authority pinning bypassed by explicit insecure override"
+        );
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "{} must be set (or set {}=1 for explicit insecure override)",
+        EXPECTED_UPGRADE_AUTHORITY_ENV,
+        ALLOW_UNPINNED_UPGRADE_AUTHORITY_ENV
+    ))
 }
 
 pub fn fetch_account<T: BorshDeserialize>(

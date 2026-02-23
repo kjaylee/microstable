@@ -162,8 +162,8 @@ impl KeeperConfig {
             program_id: pubkey!("BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3"),
             keeper_keypairs: vec![
                 PathBuf::from("~/.config/solana/devnet-keypair.json"),
-                PathBuf::from("keeper/keeper2.json"),
-                PathBuf::from("keeper/keeper3.json"),
+                PathBuf::from("keeper/keys-2/keeper2.json"),
+                PathBuf::from("keeper/keys-3/keeper3.json"),
             ],
             pyth_feeds: vec![
                 PythFeedConfig {
@@ -317,11 +317,22 @@ impl KeeperConfig {
             ));
         }
 
+        let primary_host = extract_https_host(&self.rpc_url)?;
+        let secondary_host = extract_https_host(secondary)?;
+        if primary_host.eq_ignore_ascii_case(secondary_host) {
+            return Err(anyhow!(
+                "rpc_url and secondary_rpc_url must use distinct hosts (got {})",
+                primary_host
+            ));
+        }
+
         validate_rpc_allowlist(&self.rpc_url)?;
         validate_rpc_allowlist(secondary)?;
 
-        if self.keeper_keypairs.len() < 2 {
-            return Err(anyhow!("keeper_keypairs must contain at least 2 entries"));
+        if self.keeper_keypairs.len() != 3 {
+            return Err(anyhow!(
+                "keeper_keypairs must contain exactly 3 entries for 2-of-3 quorum hardening"
+            ));
         }
         validate_keypair_path_policy(&self.keeper_keypairs)?;
 
@@ -612,9 +623,9 @@ fn validate_keypair_path_policy(paths: &[PathBuf]) -> Result<()> {
         }
     }
 
-    if unique_parent_dirs.len() < 2 {
+    if unique_parent_dirs.len() < 3 {
         return Err(anyhow!(
-            "keeper_keypairs must span at least two distinct parent directories for blast-radius reduction"
+            "keeper_keypairs must span three distinct parent directories for blast-radius reduction"
         ));
     }
 
@@ -628,29 +639,31 @@ fn verify_config_integrity(config_path: &Path, content: &str) -> Result<()> {
     if maybe_key.is_none() {
         let allow_unsigned = env::var(CONFIG_HMAC_ALLOW_UNSIGNED_ENV)
             .map(|v| v == "1")
-            .unwrap_or(false)
-            || config_path
-                .file_name()
-                .and_then(|v| v.to_str())
-                .is_some_and(|name| name == "config.devnet.json");
+            .unwrap_or(false);
 
-        if allow_unsigned {
+        if allow_unsigned && cfg!(debug_assertions) {
             return Ok(());
         }
 
         return Err(anyhow!(
-            "{} is required (or set {}=1 for explicit insecure override)",
+            "{} is required (set {}=1 only in debug/test builds for explicit insecure override)",
             CONFIG_HMAC_ENV_KEY,
             CONFIG_HMAC_ALLOW_UNSIGNED_ENV
         ));
     }
 
     let key = maybe_key.expect("checked is_some");
-    let signature_path = format!("{}{}", config_path.display(), CONFIG_SIGNATURE_SUFFIX);
+    let signature_path = PathBuf::from(format!(
+        "{}{}",
+        config_path.display(),
+        CONFIG_SIGNATURE_SUFFIX
+    ));
+    verify_secure_signature_file(&signature_path)?;
+
     let signature = fs::read_to_string(&signature_path).with_context(|| {
         format!(
             "failed to read config signature sidecar: {}",
-            signature_path
+            signature_path.display()
         )
     })?;
 
@@ -661,6 +674,48 @@ fn verify_config_integrity(config_path: &Path, content: &str) -> Result<()> {
             "config signature mismatch for {}",
             config_path.display()
         ));
+    }
+
+    Ok(())
+}
+
+fn verify_secure_signature_file(signature_path: &Path) -> Result<()> {
+    let metadata = fs::metadata(signature_path).with_context(|| {
+        format!(
+            "failed to stat config signature sidecar: {}",
+            signature_path.display()
+        )
+    })?;
+
+    if !metadata.is_file() {
+        return Err(anyhow!(
+            "config signature sidecar is not a regular file: {}",
+            signature_path.display()
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(anyhow!(
+                "config signature sidecar has insecure permissions {:o}: {}",
+                mode,
+                signature_path.display()
+            ));
+        }
+
+        let owner_uid = metadata.uid();
+        let effective_uid = unsafe { libc::geteuid() as u32 };
+        if owner_uid != effective_uid {
+            return Err(anyhow!(
+                "config signature sidecar owner mismatch for {} (owner_uid={}, effective_uid={})",
+                signature_path.display(),
+                owner_uid,
+                effective_uid
+            ));
+        }
     }
 
     Ok(())

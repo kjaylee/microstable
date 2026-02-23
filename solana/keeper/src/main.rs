@@ -749,11 +749,17 @@ fn run_cycle(
     let allow_mutation_txs = !matches!(secondary_mode, utils::SecondaryRpcMode::Degraded);
     if !allow_mutation_txs {
         warn!("secondary RPC is degraded; running keeper in read-only safe mode");
+        info!(
+            auto_emergency_shutdown = cfg.auto_emergency_shutdown,
+            "degraded mode keeps emergency shutdown path enabled"
+        );
     }
 
     let mut safe_cfg = cfg.clone();
     if !allow_mutation_txs {
-        safe_cfg.auto_emergency_shutdown = false;
+        // NEW-03 remediation: degraded mode remains read-only for routine mutations,
+        // but auto emergency shutdown stays enabled for hard safety response.
+        safe_cfg.auto_emergency_shutdown = cfg.auto_emergency_shutdown;
         safe_cfg.send_watchdog_alert_tx = false;
         safe_cfg.execute_rebalance_immediately = false;
     }
