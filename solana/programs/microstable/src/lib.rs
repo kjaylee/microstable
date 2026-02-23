@@ -1635,6 +1635,85 @@ pub mod microstable {
         protocol.last_update_slot = slot;
         Ok(())
     }
+
+    /// DEVNET ONLY: upgrade authority can force-reinitialize protocol state.
+    /// Handles struct size migration + keeper_set reset in one shot.
+    /// Bypasses quorum/timelock for devnet recovery.
+    pub fn devnet_force_reinit(
+        ctx: Context<DevnetForceReinit>,
+        new_keeper_set: [Pubkey; 3],
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.authority.key(),
+            TRUSTED_INITIALIZER,
+            ErrorCode::UnauthorizedInitializer
+        );
+        validate_keeper_set(&new_keeper_set)?;
+
+        let program_id = ctx.program_id;
+        let slot = Clock::get()?.slot;
+
+        // Resize protocol_state if needed
+        ensure_account_space(
+            &ctx.accounts.protocol_state.to_account_info(),
+            &ctx.accounts.authority,
+            &ctx.accounts.system_program,
+            ProtocolState::SPACE,
+        )?;
+
+        let (_, protocol_bump) =
+            Pubkey::find_program_address(&[b"protocol_state"], program_id);
+
+        let protocol = ProtocolState {
+            weights: [400_000, 300_000, 200_000, 100_000],
+            fee_rate: 2_000,
+            mint_fee_rate: 2_000,
+            redeem_fee_rate: 2_000,
+            cr_target: 1_200_000,
+            total_supply: 0,
+            last_update_slot: slot,
+            keeper_set: new_keeper_set,
+            emergency_shutdown: false,
+            pending_rebalance_commit: [0u8; 32],
+            pending_rebalance_slot: 0,
+            pending_rebalance_expiry: 0,
+            pending_keeper_set: [Pubkey::default(); 3],
+            pending_keeper_activation_slot: 0,
+            bump: protocol_bump,
+        };
+        write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
+
+        // Resize circuit_breaker if needed
+        ensure_account_space(
+            &ctx.accounts.circuit_breaker.to_account_info(),
+            &ctx.accounts.authority,
+            &ctx.accounts.system_program,
+            CircuitBreakerState::SPACE,
+        )?;
+
+        let (_, circuit_bump) =
+            Pubkey::find_program_address(&[b"circuit_breaker"], program_id);
+
+        let circuit = CircuitBreakerState {
+            status: [0u8; 4], // Inactive
+            activation_tick: [0; 4],
+            trigger_count: [0; 4],
+            cooldown_until: [0; 4],
+            last_trigger_tick: [0; 4],
+            recent_trigger_count: [0; 4],
+            recovery_tick: [0; 4],
+            cb1_collateral_index: 0,
+            mint_rate_limit: SCALE,
+            optimizer_enabled: true,
+            learning_rate_scale: SCALE,
+            max_activation_duration: MAX_ACTIVATION_DURATION,
+            bump: circuit_bump,
+        };
+        write_anchor_account(&ctx.accounts.circuit_breaker.to_account_info(), &circuit)?;
+
+        msg!("devnet_force_reinit: protocol + circuit_breaker reset OK");
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -2135,6 +2214,20 @@ pub struct EmergencyShutdown<'info> {
     pub circuit_breaker: Account<'info, CircuitBreakerState>,
     pub keeper_one: Signer<'info>,
     pub keeper_two: Signer<'info>,
+}
+
+/// DEVNET ONLY: force-reinitialize protocol state (handles struct resize).
+#[derive(Accounts)]
+pub struct DevnetForceReinit<'info> {
+    /// CHECK: raw account — will be resized and rewritten in-instruction.
+    #[account(mut)]
+    pub protocol_state: UncheckedAccount<'info>,
+    /// CHECK: raw account — will be resized and rewritten in-instruction.
+    #[account(mut)]
+    pub circuit_breaker: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[account]
