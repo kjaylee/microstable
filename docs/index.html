@@ -300,8 +300,27 @@
       text-align: right;
     }
 
-    .score-up { background: rgba(0, 255, 136, 0.16); color: var(--green); }
-    .score-down { background: rgba(255, 51, 102, 0.16); color: var(--red); }
+    .score-up {
+      background: rgba(0, 255, 136, 0.16);
+      color: var(--green);
+      animation: scoreFlashUp 0.6s ease;
+    }
+
+    .score-down {
+      background: rgba(255, 51, 102, 0.16);
+      color: var(--red);
+      animation: scoreFlashDown 0.6s ease;
+    }
+
+    @keyframes scoreFlashUp {
+      from { background: rgba(0, 255, 136, 0.36); }
+      to { background: rgba(0, 255, 136, 0.16); }
+    }
+
+    @keyframes scoreFlashDown {
+      from { background: rgba(255, 51, 102, 0.36); }
+      to { background: rgba(255, 51, 102, 0.16); }
+    }
 
     .tier { letter-spacing: 0.08em; }
 
@@ -315,6 +334,15 @@
     .tx-new {
       animation: txDrop 0.5s ease;
       background: rgba(0, 240, 255, 0.06);
+    }
+
+    .flash {
+      animation: valueFlash 0.6s ease;
+    }
+
+    @keyframes valueFlash {
+      0% { background-color: rgba(0, 240, 255, 0.2); }
+      100% { background-color: transparent; }
     }
 
     @keyframes txDrop {
@@ -533,8 +561,15 @@
       polling: false,
       history: loadHistory(),
       prevScores: loadJson(CFG.SCORE_KEY, {}),
-      seenSigs: new Set(),
-      firstTxPaint: true,
+      prev: {},
+      prevWeights: [],
+      prevAgents: {},
+      prevTxSigs: new Set(),
+      prevOracles: {},
+      agentRows: new Map(),
+      txRows: new Map(),
+      oracleCardsReady: false,
+      weightRowsReady: false,
       lastProtocol: null,
       lastError: ""
     };
@@ -618,6 +653,52 @@
         if (p < 1) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
+    }
+
+    function flashOnce(el) {
+      if (!el) return;
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 600);
+    }
+
+    function setIfChanged(el, text) {
+      if (!el) return false;
+      if (el.textContent !== text) {
+        el.textContent = text;
+        flashOnce(el);
+        return true;
+      }
+      return false;
+    }
+
+    function setTextOnlyIfChanged(el, text) {
+      if (!el) return false;
+      if (el.textContent !== text) {
+        el.textContent = text;
+        return true;
+      }
+      return false;
+    }
+
+    function setHtmlIfChanged(el, html) {
+      if (!el) return false;
+      if (el.innerHTML !== html) {
+        el.innerHTML = html;
+        flashOnce(el);
+        return true;
+      }
+      return false;
+    }
+
+    function setHtmlOnlyIfChanged(el, html) {
+      if (!el) return false;
+      if (el.innerHTML !== html) {
+        el.innerHTML = html;
+        return true;
+      }
+      return false;
     }
 
     async function rpc(method, params, timeout = 14000) {
@@ -909,6 +990,24 @@
       return ["NORMAL", "risk-normal"];
     }
 
+    function ensureWeightRows() {
+      if (state.weightRowsReady) return;
+      const labels = ["USDC", "USDT", "DAI", "RESERVE"];
+      const box = $("weightsBox");
+      box.innerHTML = "";
+      labels.forEach((label, i) => {
+        const row = document.createElement("div");
+        row.className = "weight-row";
+        row.id = `weight-${i}`;
+        row.innerHTML = `
+          <div class="weight-head"><span>${label}</span><span class="weight-pct">--</span></div>
+          <div class="bar"><div class="bar-fill weight-fill" style="width:0%"></div></div>
+        `;
+        box.appendChild(row);
+      });
+      state.weightRowsReady = true;
+    }
+
     function updateHealth(protocol, circuit, supplyRawBigInt, vaults) {
       if (!protocol) return;
 
@@ -940,19 +1039,22 @@
       $("breakerFlag").textContent = `${activeCount} active`;
       $("breakerFlag").className = activeCount > 0 ? "warn" : "ok";
 
-      const labels = ["USDC", "USDT", "DAI", "RESERVE"];
-      const box = $("weightsBox");
-      box.innerHTML = "";
-      (protocol.weights || []).slice(0, 4).forEach((w, i) => {
-        const pct = ppmToPct(w);
-        const row = document.createElement("div");
-        row.className = "weight-row";
-        row.innerHTML = `
-          <div class="weight-head"><span>${labels[i]}</span><span>${pct.toFixed(2)}%</span></div>
-          <div class="bar"><div class="bar-fill weight-fill" style="width:${Math.max(0, Math.min(100, pct)).toFixed(2)}%"></div></div>
-        `;
-        box.appendChild(row);
-      });
+      ensureWeightRows();
+      const nextWeights = (protocol.weights || []).slice(0, 4).map((w) => ppmToPct(w || 0n));
+      for (let i = 0; i < 4; i++) {
+        const row = $(`weight-${i}`);
+        if (!row) continue;
+        const pct = Number(nextWeights[i] ?? 0);
+        const prevPct = Number(state.prevWeights[i] ?? NaN);
+        if (!Number.isFinite(prevPct) || prevPct !== pct) {
+          const pctEl = row.querySelector(".weight-pct");
+          const fillEl = row.querySelector(".bar-fill");
+          const width = `${Math.max(0, Math.min(100, pct)).toFixed(2)}%`;
+          if (fillEl.style.width !== width) fillEl.style.width = width;
+          setIfChanged(pctEl, `${pct.toFixed(2)}%`);
+        }
+      }
+      state.prevWeights = nextWeights;
     }
 
     function updateOptimizer(protocol) {
@@ -1074,47 +1176,125 @@
       Object.keys(series).forEach((key) => drawLine(series[key], colors[key]));
     }
 
+    function createPlaceholderRow(colspan, text) {
+      const tr = document.createElement("tr");
+      tr.dataset.placeholder = "1";
+      const td = document.createElement("td");
+      td.colSpan = colspan;
+      td.className = "muted";
+      td.textContent = text;
+      tr.appendChild(td);
+      return tr;
+    }
+
+    function clearPlaceholderRows(body) {
+      Array.from(body.querySelectorAll("tr")).forEach((row) => {
+        if (row.dataset.placeholder === "1") {
+          row.remove();
+          return;
+        }
+        const onlyCell = row.children.length === 1 ? row.children[0] : null;
+        if (onlyCell && Number(onlyCell.colSpan) > 1) row.remove();
+      });
+    }
+
+    function createAgentRow(row) {
+      const tr = document.createElement("tr");
+      tr.dataset.agent = row.agent;
+      tr.innerHTML = `
+        <td>#1</td>
+        <td><strong>${row.name}</strong><br/><span class="muted">${shortKey(row.agent)}</span></td>
+        <td class="tier">${tierLabel(row.tier)}</td>
+        <td>${row.role}</td>
+        <td><span class="score-cell">${row.score.toLocaleString()}</span></td>
+        <td>${row.status}</td>
+      `;
+      return tr;
+    }
+
     function updateAgents(records, protocol) {
       const body = $("agentRows");
       if (!records.length) {
-        body.innerHTML = '<tr><td colspan="6" class="muted">No agent records found on-chain.</td></tr>';
+        for (const row of state.agentRows.values()) row.remove();
+        state.agentRows.clear();
+        state.prevAgents = {};
+        clearPlaceholderRows(body);
+        if (body.children.length === 0) {
+          body.appendChild(createPlaceholderRow(6, "No agent records found on-chain."));
+        }
         return;
       }
+
+      clearPlaceholderRows(body);
 
       const keeperMap = new Map();
       (protocol?.keeper_set || []).forEach((k, i) => keeperMap.set(k, `keeper${i + 1}`));
 
-      const rows = records.map((r) => {
-        const score = Number(r.agent_score || r.reputation || 0n);
-        const prev = Number(state.prevScores[r.agent] || score);
-        let scoreClass = "";
-        if (score > prev) scoreClass = "score-up";
-        if (score < prev) scoreClass = "score-down";
-        state.prevScores[r.agent] = score;
+      const rows = records.map((r) => ({
+        agent: r.agent,
+        name: keeperMap.get(r.agent) || `${roleLabel(r.role)}-${shortKey(r.agent)}`,
+        tier: r.tier,
+        role: roleLabel(r.role),
+        status: statusLabel(r.status),
+        score: Number(r.agent_score || r.reputation || 0n)
+      })).sort((a, b) => b.score - a.score);
 
-        return {
-          agent: r.agent,
-          name: keeperMap.get(r.agent) || `${roleLabel(r.role)}-${shortKey(r.agent)}`,
+      const nextPrevAgents = {};
+      const activeAgents = new Set(rows.map((r) => r.agent));
+
+      for (let idx = 0; idx < rows.length; idx++) {
+        const r = rows[idx];
+        let tr = state.agentRows.get(r.agent);
+        if (!tr) {
+          tr = createAgentRow(r);
+          state.agentRows.set(r.agent, tr);
+          body.appendChild(tr);
+        }
+
+        if (body.children[idx] !== tr) {
+          body.insertBefore(tr, body.children[idx] || null);
+        }
+
+        const prevAgent = state.prevAgents[r.agent];
+        const cells = tr.children;
+
+        setTextOnlyIfChanged(cells[0], `#${idx + 1}`);
+        setHtmlOnlyIfChanged(cells[1], `<strong>${r.name}</strong><br/><span class="muted">${shortKey(r.agent)}</span>`);
+        setTextOnlyIfChanged(cells[2], tierLabel(r.tier));
+        setTextOnlyIfChanged(cells[3], r.role);
+
+        const scoreEl = cells[4].querySelector(".score-cell");
+        const nextScoreTxt = r.score.toLocaleString();
+        if (!prevAgent) {
+          scoreEl.textContent = nextScoreTxt;
+        } else if (prevAgent.score !== r.score) {
+          scoreEl.textContent = nextScoreTxt;
+          scoreEl.classList.remove("score-up", "score-down");
+          if (r.score > prevAgent.score) scoreEl.classList.add("score-up");
+          if (r.score < prevAgent.score) scoreEl.classList.add("score-down");
+          setTimeout(() => scoreEl.classList.remove("score-up", "score-down"), 700);
+        } else if (scoreEl.textContent !== nextScoreTxt) {
+          scoreEl.textContent = nextScoreTxt;
+        }
+
+        setTextOnlyIfChanged(cells[5], r.status);
+
+        nextPrevAgents[r.agent] = {
+          score: r.score,
           tier: r.tier,
-          role: roleLabel(r.role),
-          status: statusLabel(r.status),
-          score,
-          scoreClass
+          role: r.role,
+          status: r.status,
+          name: r.name
         };
-      }).sort((a, b) => b.score - a.score);
+      }
 
-      saveJson(CFG.SCORE_KEY, state.prevScores);
+      for (const [agent, rowEl] of state.agentRows.entries()) {
+        if (activeAgents.has(agent)) continue;
+        rowEl.remove();
+        state.agentRows.delete(agent);
+      }
 
-      body.innerHTML = rows.map((r, idx) => `
-        <tr>
-          <td>#${idx + 1}</td>
-          <td><strong>${r.name}</strong><br/><span class="muted">${shortKey(r.agent)}</span></td>
-          <td class="tier">${tierLabel(r.tier)}</td>
-          <td>${r.role}</td>
-          <td><span class="score-cell ${r.scoreClass}">${r.score.toLocaleString()}</span></td>
-          <td>${r.status}</td>
-        </tr>
-      `).join("");
+      state.prevAgents = nextPrevAgents;
     }
 
     async function enrichTxTypes(sigs) {
@@ -1133,66 +1313,158 @@
       return map;
     }
 
+    function createTxRow(tx) {
+      const tr = document.createElement("tr");
+      tr.dataset.sig = tx.sig;
+      tr.innerHTML = `
+        <td>${tx.blockTime ? fmtClock(tx.blockTime) : "--"}</td>
+        <td>${tx.type}</td>
+        <td><a class="tx-link" target="_blank" rel="noreferrer" href="https://explorer.solana.com/tx/${tx.sig}?cluster=devnet">${shortKey(tx.sig)}</a></td>
+        <td>${tx.status}</td>
+      `;
+      return tr;
+    }
+
     function updateTxFeed(signatures, typeMap) {
       const body = $("txRows");
-      if (!signatures.length) {
-        body.innerHTML = '<tr><td colspan="4" class="muted">No recent transactions.</td></tr>';
+      const top = (signatures || []).slice(0, 10);
+      if (!top.length) {
+        for (const row of state.txRows.values()) row.remove();
+        state.txRows.clear();
+        state.prevTxSigs = new Set();
+        clearPlaceholderRows(body);
+        if (body.children.length === 0) {
+          body.appendChild(createPlaceholderRow(4, "No recent transactions."));
+        }
         return;
       }
 
-      const rows = signatures.map((s) => {
+      clearPlaceholderRows(body);
+
+      const nextRows = top.map((s) => {
         const sig = s.signature;
-        const isNew = !state.seenSigs.has(sig) && !state.firstTxPaint;
-        state.seenSigs.add(sig);
         return {
           sig,
           blockTime: s.blockTime || 0,
           status: s.err ? "❌" : "✅",
-          type: typeMap.get(sig) || "oracle",
-          isNew
+          type: typeMap.get(sig) || "oracle"
         };
       });
 
-      state.firstTxPaint = false;
+      const nextSigSet = new Set(nextRows.map((r) => r.sig));
 
-      body.innerHTML = rows.map((r) => `
-        <tr class="${r.isNew ? "tx-new" : ""}">
-          <td>${r.blockTime ? fmtClock(r.blockTime) : "--"}</td>
-          <td>${r.type}</td>
-          <td><a class="tx-link" target="_blank" rel="noreferrer" href="https://explorer.solana.com/tx/${r.sig}?cluster=devnet">${shortKey(r.sig)}</a></td>
-          <td>${r.status}</td>
-        </tr>
-      `).join("");
+      for (const [sig, rowEl] of state.txRows.entries()) {
+        if (nextSigSet.has(sig)) continue;
+        rowEl.remove();
+        state.txRows.delete(sig);
+      }
+
+      for (let idx = 0; idx < nextRows.length; idx++) {
+        const rowData = nextRows[idx];
+        let tr = state.txRows.get(rowData.sig);
+        const isNew = !state.prevTxSigs.has(rowData.sig) && state.prevTxSigs.size > 0;
+
+        if (!tr) {
+          tr = createTxRow(rowData);
+          if (isNew) tr.classList.add("tx-new");
+          state.txRows.set(rowData.sig, tr);
+          body.appendChild(tr);
+        }
+
+        const cells = tr.children;
+        setIfChanged(cells[0], rowData.blockTime ? fmtClock(rowData.blockTime) : "--");
+        setIfChanged(cells[1], rowData.type);
+        const link = cells[2].querySelector("a");
+        const href = `https://explorer.solana.com/tx/${rowData.sig}?cluster=devnet`;
+        if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+        setIfChanged(link, shortKey(rowData.sig));
+        setIfChanged(cells[3], rowData.status);
+
+        if (body.children[idx] !== tr) {
+          body.insertBefore(tr, body.children[idx] || null);
+        }
+      }
+
+      while (body.children.length > 10) {
+        const last = body.lastElementChild;
+        const sig = last?.dataset?.sig;
+        last?.remove();
+        if (sig) state.txRows.delete(sig);
+      }
+
+      state.prevTxSigs = nextSigSet;
+    }
+
+    function ensureOracleCards() {
+      if (state.oracleCardsReady) return;
+      const strip = $("oracleStrip");
+      strip.innerHTML = "";
+      ["USDC", "USDT", "DAI"].forEach((sym) => {
+        const card = document.createElement("article");
+        card.className = "oracle-card";
+        card.id = `oracle-${sym.toLowerCase()}`;
+        card.innerHTML = `
+          <div class="sym">${sym}/USD</div>
+          <div class="price">--</div>
+          <div class="meta">
+            Confidence: <span class="oracle-conf muted">--</span><br/>
+            Updated: <span class="oracle-updated muted">--</span>
+          </div>
+        `;
+        strip.appendChild(card);
+      });
+      state.oracleCardsReady = true;
     }
 
     function updateOracles(oracleData) {
-      const strip = $("oracleStrip");
-      const cards = [];
-      for (const [sym, value] of Object.entries(oracleData)) {
+      ensureOracleCards();
+      ["USDC", "USDT", "DAI"].forEach((sym) => {
+        const card = $(`oracle-${sym.toLowerCase()}`);
+        if (!card) return;
+
+        const priceEl = card.querySelector(".price");
+        const confEl = card.querySelector(".oracle-conf");
+        const updatedEl = card.querySelector(".oracle-updated");
+        const value = oracleData?.[sym];
+
         if (!value || value.error) {
-          cards.push(`
-            <article class="oracle-card">
-              <div class="sym">${sym}/USD</div>
-              <div class="price bad">--</div>
-              <div class="meta">Price unavailable<br/>${value?.error || "RPC timeout"}</div>
-            </article>
-          `);
-          continue;
+          const errText = value?.error || "RPC timeout";
+          setIfChanged(priceEl, "--");
+          setIfChanged(confEl, "Price unavailable");
+          setIfChanged(updatedEl, errText);
+          priceEl.classList.add("bad");
+          confEl.className = "oracle-conf bad";
+          updatedEl.className = "oracle-updated muted";
+
+          state.prevOracles[sym] = {
+            price: "--",
+            conf: "Price unavailable",
+            updated: errText,
+            confClass: "bad"
+          };
+          return;
         }
 
         const confClass = value.conf <= 0.005 ? "ok" : value.conf <= 0.02 ? "warn" : "bad";
-        cards.push(`
-          <article class="oracle-card">
-            <div class="sym">${sym}/USD</div>
-            <div class="price">$${value.price.toFixed(6)}</div>
-            <div class="meta">
-              Confidence: <span class="${confClass}">±$${value.conf.toFixed(6)}</span><br/>
-              Updated: ${fmtClock(value.publish_time)} (${fmtAgoUnix(value.publish_time)})
-            </div>
-          </article>
-        `);
-      }
-      strip.innerHTML = cards.join("");
+        const priceTxt = `$${value.price.toFixed(6)}`;
+        const confTxt = `±$${value.conf.toFixed(6)}`;
+        const updatedTxt = `${fmtClock(value.publish_time)} (${fmtAgoUnix(value.publish_time)})`;
+
+        setIfChanged(priceEl, priceTxt);
+        setIfChanged(confEl, confTxt);
+        setIfChanged(updatedEl, updatedTxt);
+
+        priceEl.classList.remove("bad");
+        confEl.className = `oracle-conf ${confClass}`;
+        updatedEl.className = "oracle-updated muted";
+
+        state.prevOracles[sym] = {
+          price: priceTxt,
+          conf: confTxt,
+          updated: updatedTxt,
+          confClass
+        };
+      });
     }
 
     async function fetchAll() {
