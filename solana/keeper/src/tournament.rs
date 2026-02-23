@@ -4,6 +4,8 @@ use solana_sdk::pubkey::Pubkey;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+// On-chain layout — all fields must be present for correct deserialization
 pub struct Tournament {
     pub round: u64,
     pub snapshot: optimizer::ProtocolSnapshot,
@@ -22,6 +24,8 @@ pub struct AgentProposal {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+// On-chain layout — all fields must be present for correct deserialization
 pub struct TournamentResult {
     pub winner: Option<solana_sdk::pubkey::Pubkey>,
     pub winning_params: Option<optimizer::ParamVector>,

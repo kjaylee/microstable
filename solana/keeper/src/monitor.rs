@@ -19,6 +19,8 @@ pub struct MonitorMemory {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+// On-chain layout — all fields must be present for correct deserialization
 pub struct MonitorOutcome {
     pub collateral_ratio_warnings: Vec<String>,
     pub circuit_breaker_triggered: bool,

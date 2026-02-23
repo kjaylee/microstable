@@ -105,6 +105,7 @@ pub fn secondary_rpc_mode(has_secondary_rpc_configured: bool) -> SecondaryRpcMod
     }
 }
 
+#[cfg(test)]
 pub fn reset_secondary_rpc_health_for_tests() {
     let mut state = secondary_rpc_health_state()
         .lock()
@@ -799,6 +800,7 @@ where
     Err(last_err.unwrap_or_else(|| anyhow!("retry operation failed without explicit error")))
 }
 
+#[cfg(test)]
 pub fn assess_dual_rpc_confirmation(
     primary_confirmed: bool,
     secondary_confirmed: bool,
@@ -1162,6 +1164,7 @@ pub fn verify_cargo_lock_attestation_for_bytes(
 }
 
 // Legacy helper retained for previous-version test coverage.
+#[cfg(test)]
 pub fn resolve_expected_binary_sha256(
     embedded_expected: Option<&str>,
     env_expected: Option<&str>,
@@ -1276,6 +1279,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+#[cfg(test)]
 pub fn verify_binary_attestation_for_bytes(binary: &[u8], expected_sha256_hex: &str) -> Result<()> {
     let actual = sha256_hex(binary);
     if actual == expected_sha256_hex.to_ascii_lowercase() {

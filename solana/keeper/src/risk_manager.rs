@@ -63,6 +63,8 @@ impl Default for RiskManagerMemory {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+// On-chain layout — all fields must be present for correct deserialization
 pub struct RiskManagerOutcome {
     pub risk_level: RiskLevel,
     pub previous_risk_level: Option<RiskLevel>,

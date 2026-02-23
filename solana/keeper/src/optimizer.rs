@@ -98,15 +98,6 @@ impl ParamVector {
         Self::from_flat(out)
     }
 
-    pub fn sub(&self, other: &Self) -> Self {
-        let a = self.flatten();
-        let b = other.flatten();
-        let mut out = [0.0; PARAM_DIM];
-        for i in 0..PARAM_DIM {
-            out[i] = a[i] - b[i];
-        }
-        Self::from_flat(out)
-    }
 
     pub fn scale(&self, s: f64) -> Self {
         let a = self.flatten();
@@ -131,25 +122,6 @@ impl ParamVector {
         true
     }
 
-    pub fn clip_delta(&self, reference: &Self, max_delta: &Self) -> Self {
-        let p = self.flatten();
-        let r = reference.flatten();
-        let d = max_delta.flatten();
-        let mut out = [0.0; PARAM_DIM];
-
-        for i in 0..PARAM_DIM {
-            let delta = if d[i].is_finite() {
-                d[i].max(0.0)
-            } else {
-                f64::INFINITY
-            };
-            let lo = r[i] - delta;
-            let hi = r[i] + delta;
-            out[i] = p[i].clamp(lo, hi);
-        }
-
-        Self::from_flat(out)
-    }
 }
 
 /// Runtime protocol snapshot used for loss evaluation.
@@ -643,6 +615,7 @@ impl Default for SafetyBounds {
 }
 
 impl SafetyBounds {
+    #[cfg(test)]
     pub fn with_reference(mut self, reference: ParamVector) -> Self {
         self.reference_params = Some(reference);
         self
@@ -1076,6 +1049,7 @@ fn clamp_with_optional_delta(
     value.clamp(lo, hi)
 }
 
+#[cfg(test)]
 fn project_onto_capped_simplex(v: [f64; WEIGHT_DIM], caps: [f64; WEIGHT_DIM]) -> [f64; WEIGHT_DIM] {
     let lower = [0.0; WEIGHT_DIM];
     let mut upper = [1.0; WEIGHT_DIM];

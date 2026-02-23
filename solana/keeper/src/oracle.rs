@@ -33,6 +33,8 @@ const PYTH_FEED_ID_USDS: [u8; 32] = [
 ];
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+// On-chain layout — all fields must be present for correct deserialization
 pub struct OracleUpdateResult {
     pub symbol: String,
     pub collateral_index: u8,
@@ -62,6 +64,8 @@ struct PreparedOracleUpdate {
 }
 
 #[derive(Debug, Clone, BorshDeserialize)]
+#[allow(dead_code)]
+// On-chain layout — all fields must be present for correct deserialization
 enum RawPythVerificationLevel {
     Partial { num_signatures: u8 },
     Full,

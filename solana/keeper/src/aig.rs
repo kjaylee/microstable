@@ -113,6 +113,7 @@ pub fn run_sandbox_trial(params: &ParamVector, scenario: &ProtocolSnapshot, epoc
     cumulative_loss
 }
 
+#[cfg(test)]
 pub fn evaluate_challenge_result(loss: f64, baseline_loss: f64) -> ChallengeResult {
     evaluate_challenge_result_for_tier(loss, baseline_loss, 1)
 }

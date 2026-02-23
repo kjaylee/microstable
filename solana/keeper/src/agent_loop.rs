@@ -56,6 +56,7 @@ impl Default for AgentLoopState {
     }
 }
 
+#[cfg(test)]
 pub fn maybe_run_aig_cycle(cfg: &KeeperConfig, state: &mut AgentLoopState) -> Result<()> {
     maybe_run_aig_cycle_inner(cfg, state, None)
 }
@@ -202,6 +203,7 @@ fn maybe_run_aig_cycle_inner(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn maybe_run_tournament_cycle(cfg: &KeeperConfig, state: &mut AgentLoopState) -> Result<()> {
     maybe_run_tournament_cycle_inner(cfg, state, None)
 }
