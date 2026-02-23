@@ -16,13 +16,12 @@ JLIST_JSON="$(pm2 jlist 2>/dev/null || true)"
 if [[ -z "${JLIST_JSON}" ]]; then
   echo "⚠️  WARNING: unable to read pm2 process list from the current PM2 domain."
 else
-  SUMMARY="$(KEEPER_NAME="${KEEPER_NAME}" python3 - <<'PY' <<<"${JLIST_JSON}"
+  SUMMARY="$(JLIST_JSON="${JLIST_JSON}" KEEPER_NAME="${KEEPER_NAME}" python3 <<'PY'
 import json
 import os
-import sys
 
 target = os.environ.get("KEEPER_NAME", "microstable-keeper")
-procs = json.load(sys.stdin)
+procs = json.loads(os.environ.get("JLIST_JSON", "[]"))
 names = [p.get("name") for p in procs]
 
 keeper_pid = ""
