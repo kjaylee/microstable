@@ -382,27 +382,13 @@ pub fn run_rebalance_cycle(
         "rebalance commit sent"
     );
 
-    // After commit TX lands, re-read on-chain pending slot to sync with
-    // actual execution slot (fixes slot-drift between keeper and validator)
-    // Re-read on-chain state to get actual pending_rebalance_slot
-    let actual_batch_slot = match utils::fetch_account::<wire::ProtocolState>(rpc, &derived.protocol_state, "ProtocolState") {
-        Ok(state) if state.pending_rebalance_slot > 0 => {
-            if state.pending_rebalance_slot != batch_slot {
-                info!(
-                    keeper_batch_slot = batch_slot,
-                    onchain_pending_slot = state.pending_rebalance_slot,
-                    "syncing batch_slot to on-chain pending_rebalance_slot (slot drift corrected)"
-                );
-            }
-            state.pending_rebalance_slot
-        }
-        _ => batch_slot,
-    };
-
+    // Freeze the commit-time batch_slot in keeper memory.
+    // Reveal hash verification must use the same batch_slot preimage
+    // that was used when commit_hash was constructed.
     memory.pending_reveal = Some(PendingReveal {
         commit_hash,
         target_weights,
-        batch_slot: actual_batch_slot,
+        batch_slot,
         reveal_salt,
         pending_params,
     });
@@ -904,8 +890,8 @@ fn select_batch_slot(current_slot: u64) -> u64 {
 fn batch_window_has_room(current_slot: u64, reveal_delay_slots: u64) -> bool {
     let position_in_window = current_slot % BATCH_WINDOW_SLOTS;
     let remaining = BATCH_WINDOW_SLOTS.saturating_sub(position_in_window);
-    // Need at least delay + 1 slot margin for TX landing drift
-    remaining > reveal_delay_slots.saturating_add(1)
+    // Need at least delay + 2 slot margin for tolerated ±2 TX landing drift
+    remaining > reveal_delay_slots.saturating_add(2)
 }
 
 fn deferred_reveal_ready(
@@ -1372,19 +1358,22 @@ mod tests {
 
     #[test]
     fn tc_ow_15_batch_window_has_room_prevents_dead_zone_commits() {
-        // Position 25 in window, delay 5 → remaining 7 > 6 → OK
-        assert!(batch_window_has_room(25, 5));
+        // Position 24 in window, delay 5 → remaining 8 > 7 → OK
+        assert!(batch_window_has_room(24, 5));
 
-        // Position 27 in window, delay 5 → remaining 5 ≤ 6 → NOT OK
+        // Position 25 in window, delay 5 → remaining 7 = 7 → NOT OK
+        assert!(!batch_window_has_room(25, 5));
+
+        // Position 27 in window, delay 5 → remaining 5 ≤ 7 → NOT OK
         assert!(!batch_window_has_room(27, 5));
 
-        // Position 31 in window, delay 1 → remaining 1 ≤ 2 → NOT OK
+        // Position 31 in window, delay 1 → remaining 1 ≤ 3 → NOT OK
         assert!(!batch_window_has_room(31, 1));
 
-        // Position 0, delay 30 → remaining 32 > 31 → OK
-        assert!(batch_window_has_room(0, 30));
+        // Position 0, delay 29 → remaining 32 > 31 → OK
+        assert!(batch_window_has_room(0, 29));
 
-        // Position 0, delay 31 → remaining 32 = 32 → NOT OK
-        assert!(!batch_window_has_room(0, 31));
+        // Position 0, delay 30 → remaining 32 = 32 → NOT OK
+        assert!(!batch_window_has_room(0, 30));
     }
 }
