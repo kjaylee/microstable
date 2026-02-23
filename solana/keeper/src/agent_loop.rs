@@ -7,7 +7,11 @@ use crate::{
     wire,
 };
 use anyhow::Result;
-use solana_client::rpc_client::RpcClient;
+use solana_client::{
+    rpc_client::RpcClient,
+    rpc_config::RpcProgramAccountsConfig,
+    rpc_filter::{Memcmp, RpcFilterType},
+};
 use solana_sdk::{
     hash::{hash, hashv},
     instruction::Instruction,
@@ -25,6 +29,7 @@ const AIG_TARGET_TIER: u8 = 2;
 const TOURNAMENT_BASE_AGENT_SCORE: u64 = 500_000;
 const TOURNAMENT_TOP_BOOST: i64 = 50_000;
 const TOURNAMENT_BOTTOM_REDUCTION: i64 = -25_000;
+const AGENT_RECORD_ACCOUNT_DATA_SIZE: u64 = 8 + 160;
 
 type TxRuntime<'a> = (
     &'a RpcClient,
@@ -236,7 +241,8 @@ fn maybe_run_tournament_cycle_inner(
     let snapshot = ProtocolSnapshot::default();
     let mut tournament = tournament::create_tournament(snapshot, round, 1);
 
-    let registered_agents: Vec<RegisteredAgent> = if let Some((rpc, _, _, keepers, _)) = tx_runtime {
+    let registered_agents: Vec<RegisteredAgent> = if let Some((rpc, _, _, keepers, _)) = tx_runtime
+    {
         match fetch_registered_agents(rpc, cfg.program_id, keepers) {
             Ok(agents) => agents,
             Err(err) => {
@@ -365,8 +371,7 @@ struct RegisteredAgent {
 }
 
 fn select_candidate_agent(registered_agents: &[RegisteredAgent], slot_seed: u64) -> Option<Pubkey> {
-    weighted_random_index(registered_agents, slot_seed, 0)
-        .map(|idx| registered_agents[idx].agent)
+    weighted_random_index(registered_agents, slot_seed, 0).map(|idx| registered_agents[idx].agent)
 }
 
 fn select_tournament_participants(
@@ -434,14 +439,16 @@ fn fetch_registered_agents(
     keepers: &[Keypair],
 ) -> Result<Vec<RegisteredAgent>> {
     let keeper_pubkeys: HashSet<Pubkey> = keepers.iter().map(Keypair::pubkey).collect();
-    let discriminator = agent_record_discriminator();
 
     let mut agents = Vec::new();
-    for (_, account) in rpc.get_program_accounts(&program_id)? {
+    for (_, account) in rpc.get_program_accounts_with_config(
+        &program_id,
+        RpcProgramAccountsConfig {
+            filters: Some(agent_record_scan_filters()),
+            ..RpcProgramAccountsConfig::default()
+        },
+    )? {
         let data = account.data;
-        if data.len() < 8 || data[..8] != discriminator {
-            continue;
-        }
 
         let record = match wire::decode_account::<wire::AgentRecord>(&data, "AgentRecord") {
             Ok(record) => record,
@@ -467,6 +474,16 @@ fn fetch_registered_agents(
     agents.sort_by_key(|candidate| candidate.agent);
     agents.dedup_by(|lhs, rhs| lhs.agent == rhs.agent);
     Ok(agents)
+}
+
+fn agent_record_scan_filters() -> Vec<RpcFilterType> {
+    vec![
+        RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            0,
+            agent_record_discriminator().to_vec(),
+        )),
+        RpcFilterType::DataSize(AGENT_RECORD_ACCOUNT_DATA_SIZE),
+    ]
 }
 
 fn agent_record_discriminator() -> [u8; 8] {
@@ -685,7 +702,14 @@ mod wiring_tests {
             Ok(Signature::default())
         };
 
-        submit_agent_actions(&cfg, &derived, keeper_one, keeper_two, &actions, &mut sender);
+        submit_agent_actions(
+            &cfg,
+            &derived,
+            keeper_one,
+            keeper_two,
+            &actions,
+            &mut sender,
+        );
 
         assert_eq!(captured.len(), 2);
 
@@ -771,7 +795,14 @@ mod wiring_tests {
             Ok(Signature::default())
         };
 
-        submit_agent_actions(&cfg, &derived, keeper_one, keeper_two, &actions, &mut sender);
+        submit_agent_actions(
+            &cfg,
+            &derived,
+            keeper_one,
+            keeper_two,
+            &actions,
+            &mut sender,
+        );
         assert_eq!(captured.len(), 3);
 
         let expected_discriminator = wire::ix_update_agent_score(
@@ -846,5 +877,25 @@ mod wiring_tests {
         assert_ne!(sampled[0], sampled[1]);
         assert!(agents.iter().any(|candidate| candidate.agent == sampled[0]));
         assert!(agents.iter().any(|candidate| candidate.agent == sampled[1]));
+    }
+
+    #[test]
+    fn tc_alw_05_agent_record_scan_filters_include_discriminator_and_size() {
+        let filters = agent_record_scan_filters();
+        assert_eq!(filters.len(), 2);
+
+        match &filters[0] {
+            RpcFilterType::Memcmp(memcmp) => {
+                assert_eq!(memcmp.offset(), 0);
+                let bytes = memcmp.bytes().expect("memcmp bytes should decode");
+                assert_eq!(bytes.as_ref(), &agent_record_discriminator());
+            }
+            _ => panic!("first filter should be memcmp discriminator"),
+        }
+
+        match filters[1] {
+            RpcFilterType::DataSize(size) => assert_eq!(size, AGENT_RECORD_ACCOUNT_DATA_SIZE),
+            _ => panic!("second filter should be dataSize"),
+        }
     }
 }

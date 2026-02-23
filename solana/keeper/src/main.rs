@@ -16,6 +16,8 @@ mod agent_loop_tests;
 #[cfg(test)]
 mod aig_tests;
 #[cfg(test)]
+mod main_preflight_tests;
+#[cfg(test)]
 mod main_wiring_tests;
 #[cfg(test)]
 mod optimizer_tests;
@@ -33,11 +35,21 @@ use config::KeeperConfig;
 use monitor::MonitorMemory;
 use rebalance::RebalanceMemory;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{commitment_config::CommitmentConfig, signature::Signer};
-use std::{path::PathBuf, time::Duration};
+use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tokio::time::MissedTickBehavior;
 use tracing::{error, info, warn};
 use watchdog::WatchdogMemory;
+
+const DEFAULT_KEEPER_ENV_PATH: &str = "/home/spritz/microstable-keeper/.env";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -135,6 +147,8 @@ async fn main() -> Result<()> {
     let keypairs = utils::load_keypairs(&cfg.keeper_keypairs)?;
     let keeper_pubkeys: Vec<_> = keypairs.iter().map(|kp| kp.pubkey().to_string()).collect();
     info!(keepers = ?keeper_pubkeys, "keeper keypairs loaded");
+
+    run_startup_preflight(&rpc, &cfg, &keypairs);
 
     let mut monitor_memory = MonitorMemory::default();
     let mut rebalance_memory = RebalanceMemory::default();
@@ -276,6 +290,149 @@ async fn main() -> Result<()> {
 
     info!("keeper stopped gracefully");
     Ok(())
+}
+
+fn run_startup_preflight(rpc: &RpcClient, cfg: &KeeperConfig, keepers: &[Keypair]) {
+    if let Err(err) = preflight_keeper_agent_registration(rpc, cfg, keepers) {
+        warn!(
+            error = %err,
+            "startup preflight could not fully verify keeper agent registration state"
+        );
+    }
+
+    check_pm2_isolation();
+    check_dotenv_permissions();
+}
+
+fn preflight_keeper_agent_registration(
+    rpc: &RpcClient,
+    cfg: &KeeperConfig,
+    keepers: &[Keypair],
+) -> Result<()> {
+    for keeper in keepers {
+        let keeper_key = keeper.pubkey();
+        let agent_record = derive_agent_record_pda(cfg.program_id, keeper_key);
+
+        let response =
+            rpc.get_account_with_commitment(&agent_record, CommitmentConfig::processed())?;
+        let Some(account) = response.value else {
+            warn!(
+                keeper_key = %keeper_key,
+                "keeper key {} not registered as agent — rebalance commit will be unavailable",
+                keeper_key
+            );
+            continue;
+        };
+
+        if account.owner != cfg.program_id {
+            warn!(
+                keeper_key = %keeper_key,
+                owner = %account.owner,
+                "keeper key {} not registered as agent — rebalance commit will be unavailable",
+                keeper_key
+            );
+            continue;
+        }
+
+        let Ok(record) = wire::decode_account::<wire::AgentRecord>(&account.data, "AgentRecord")
+        else {
+            warn!(
+                keeper_key = %keeper_key,
+                "keeper key {} not registered as agent — rebalance commit will be unavailable",
+                keeper_key
+            );
+            continue;
+        };
+
+        if record.tier < 2 {
+            warn!(
+                keeper_key = %keeper_key,
+                tier = record.tier,
+                "keeper key {} is tier {}, needs tier 2+ for rebalance commit",
+                keeper_key,
+                record.tier
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"agent", agent.as_ref()], &program_id).0
+}
+
+fn check_pm2_isolation() {
+    let home = env::var("HOME").ok().map(PathBuf::from);
+    let pm2_home = env::var("PM2_HOME").ok();
+
+    let pm2_is_shared = pm2_home.as_deref().map(Path::new).map_or(true, |pm2_path| {
+        is_default_pm2_home(pm2_path, home.as_deref())
+    });
+
+    if pm2_is_shared {
+        warn!("keeper running in shared PM2 domain — recommend dedicated PM2_HOME for isolation");
+    }
+}
+
+fn is_default_pm2_home(pm2_home: &Path, home: Option<&Path>) -> bool {
+    if pm2_home == Path::new("~/.pm2") {
+        return true;
+    }
+
+    if let Some(home) = home {
+        if pm2_home == home.join(".pm2") {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(unix)]
+fn has_restrictive_env_permissions(mode: u32) -> bool {
+    mode == 0o600
+}
+
+fn check_dotenv_permissions() {
+    let env_path = env::var("KEEPER_ENV_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_KEEPER_ENV_PATH));
+
+    let metadata = match fs::metadata(&env_path) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            warn!(
+                path = %env_path.display(),
+                error = %err,
+                "keeper .env file not found at expected path"
+            );
+            return;
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = metadata.permissions().mode() & 0o777;
+        if !has_restrictive_env_permissions(mode) {
+            warn!(
+                path = %env_path.display(),
+                mode = format_args!("{:o}", mode),
+                "keeper .env permissions are not restrictive; expected mode 600"
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        warn!(
+            path = %env_path.display(),
+            "keeper .env permission mode check is not supported on this platform"
+        );
+    }
 }
 
 struct SecondaryRpcRuntime<'a> {

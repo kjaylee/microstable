@@ -5,7 +5,11 @@ use crate::{
     wire,
 };
 use anyhow::{anyhow, Result};
-use solana_client::rpc_client::RpcClient;
+use solana_client::{
+    rpc_client::RpcClient,
+    rpc_config::RpcProgramAccountsConfig,
+    rpc_filter::{Memcmp, RpcFilterType},
+};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     hash::{hash, hashv},
@@ -24,6 +28,7 @@ const CR_TARGET_MAX_PPM: u64 = 2_000_000;
 const FEE_MAX_PPM: u64 = 10_000;
 const DEFAULT_CR_TARGET_PPM: u64 = 1_200_000;
 const DEFAULT_FEE_PPM: u64 = 2_000;
+const AGENT_RECORD_ACCOUNT_DATA_SIZE: u64 = 8 + 160;
 
 #[derive(Debug, Clone)]
 pub struct RebalanceOutcome {
@@ -283,9 +288,14 @@ pub fn run_rebalance_cycle(
     let Some(submitting_agent_signer) =
         select_commit_submitting_signer(keepers, &eligible_agents, k1.pubkey())
     else {
+        let local_keeper_pubkeys: Vec<String> = keepers
+            .iter()
+            .map(|keeper| keeper.pubkey().to_string())
+            .collect();
         warn!(
             eligible_agents = eligible_agents.len(),
-            "rebalance commit skipped: no locally-available tier-2 active registered agent"
+            local_keepers = ?local_keeper_pubkeys,
+            "rebalance commit skipped: no local keeper key is an active tier-2 registered agent; register/promote at least one configured keeper key to tier 2+"
         );
         return Ok(outcome);
     };
@@ -884,15 +894,16 @@ fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
 }
 
 fn fetch_eligible_commit_agents(rpc: &RpcClient, program_id: Pubkey) -> Result<Vec<Pubkey>> {
-    let discriminator = agent_record_discriminator();
     let mut agents = Vec::new();
 
-    for (_, account) in rpc.get_program_accounts(&program_id)? {
+    for (_, account) in rpc.get_program_accounts_with_config(
+        &program_id,
+        RpcProgramAccountsConfig {
+            filters: Some(agent_record_scan_filters()),
+            ..RpcProgramAccountsConfig::default()
+        },
+    )? {
         let data = account.data;
-        if data.len() < 8 || data[..8] != discriminator {
-            continue;
-        }
-
         let record = match wire::decode_account::<wire::AgentRecord>(&data, "AgentRecord") {
             Ok(record) => record,
             Err(_) => continue,
@@ -908,6 +919,16 @@ fn fetch_eligible_commit_agents(rpc: &RpcClient, program_id: Pubkey) -> Result<V
     agents.sort();
     agents.dedup();
     Ok(agents)
+}
+
+fn agent_record_scan_filters() -> Vec<RpcFilterType> {
+    vec![
+        RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            0,
+            agent_record_discriminator().to_vec(),
+        )),
+        RpcFilterType::DataSize(AGENT_RECORD_ACCOUNT_DATA_SIZE),
+    ]
 }
 
 fn select_commit_submitting_signer<'a>(
@@ -1158,7 +1179,10 @@ mod tests {
 
         let deviation_bps = weight_deviation_bps(current, target);
 
-        assert!(deviation_bps > 300, "deviation should exceed default 300bps threshold");
+        assert!(
+            deviation_bps > 300,
+            "deviation should exceed default 300bps threshold"
+        );
         assert_eq!(deviation_bps, 6_000);
     }
 
@@ -1197,13 +1221,30 @@ mod tests {
         let k2 = Keypair::new();
         let keepers = vec![k1, k2];
 
-        let selected = select_commit_submitting_signer(
-            &keepers,
-            &[keepers[1].pubkey()],
-            keepers[0].pubkey(),
-        )
-        .expect("fallback signer should resolve");
+        let selected =
+            select_commit_submitting_signer(&keepers, &[keepers[1].pubkey()], keepers[0].pubkey())
+                .expect("fallback signer should resolve");
 
         assert_eq!(selected.pubkey(), keepers[1].pubkey());
+    }
+
+    #[test]
+    fn tc_ow_11_agent_record_scan_filters_include_discriminator_and_size() {
+        let filters = agent_record_scan_filters();
+        assert_eq!(filters.len(), 2);
+
+        match &filters[0] {
+            RpcFilterType::Memcmp(memcmp) => {
+                assert_eq!(memcmp.offset(), 0);
+                let bytes = memcmp.bytes().expect("memcmp bytes should decode");
+                assert_eq!(bytes.as_ref(), &agent_record_discriminator());
+            }
+            _ => panic!("first filter should be memcmp discriminator"),
+        }
+
+        match filters[1] {
+            RpcFilterType::DataSize(size) => assert_eq!(size, AGENT_RECORD_ACCOUNT_DATA_SIZE),
+            _ => panic!("second filter should be dataSize"),
+        }
     }
 }
