@@ -56,18 +56,84 @@ flowchart TB
 
 ## Quick Start (Devnet)
 
-### Keeper
+### 1) Prerequisites
+
+```bash
+rustc --version
+cargo --version
+anchor --version   # expected: 0.31.1
+solana --version   # required for cargo-build-sbf / deploy flows
+```
+
+Also required:
+- Solana keypair at `~/.config/solana/devnet-keypair.json`
+- Devnet SOL for transaction fees
+- Node.js + Yarn (for `solana/scripts/*.ts` utilities)
+
+Set Solana CLI to devnet:
+
+```bash
+solana config set --url https://api.devnet.solana.com
+solana config set --keypair ~/.config/solana/devnet-keypair.json
+```
+
+### 2) Build the on-chain program (Anchor/Rust)
+
+```bash
+cd solana
+anchor build
+```
+
+> If `anchor build` fails with `no such command: build-sbf`, install/update Solana CLI first (it provides `cargo-build-sbf`).
+
+### 3) Build the keeper (Rust)
+
+```bash
+cd solana
+cargo build -p microstable-keeper
+```
+
+### 4) Run keeper on devnet
+
+The checked-in devnet config expects 5 keeper keypair paths, including `/tmp/keeper2.json` and `/tmp/keeper3.json`.
+Create those files once if they do not exist:
+
+```bash
+solana-keygen new --no-bip39-passphrase -o /tmp/keeper2.json
+solana-keygen new --no-bip39-passphrase -o /tmp/keeper3.json
+```
+
+Run one cycle (smoke test):
+
+```bash
+cd solana
+cargo run -p microstable-keeper -- --config keeper/config.devnet.json --once
+```
+
+Run continuously:
+
 ```bash
 cd solana
 cargo run -p microstable-keeper -- --config keeper/config.devnet.json
 ```
 
-### Tests
+Confirm the devnet program is reachable:
+
 ```bash
-cd solana/keeper
-cargo test -p microstable-keeper
+solana program show BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3
 ```
-Last verified (2026‑02‑23): **123** total tests (58 unit + 65 integration).
+
+### 5) Dashboard access (Mission Control)
+
+- Live devnet dashboard: https://kjaylee.github.io/microstable/
+- Program ID on devnet: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
+
+### 6) Keeper tests
+
+```bash
+cd solana
+cargo test -p microstable-keeper -- --test-threads=1
+```
 
 ---
 
