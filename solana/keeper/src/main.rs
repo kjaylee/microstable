@@ -69,6 +69,10 @@ struct Cli {
     /// Emit structured JSON logs
     #[arg(long)]
     json_logs: bool,
+
+    /// Exit with status 1 when no locally loaded keeper key can submit rebalance commits.
+    #[arg(long)]
+    require_rebalance: bool,
 }
 
 #[tokio::main]
@@ -148,7 +152,7 @@ async fn main() -> Result<()> {
     let keeper_pubkeys: Vec<_> = keypairs.iter().map(|kp| kp.pubkey().to_string()).collect();
     info!(keepers = ?keeper_pubkeys, "keeper keypairs loaded");
 
-    run_startup_preflight(&rpc, &cfg, &keypairs);
+    run_startup_preflight(&rpc, &cfg, &keypairs, cli.require_rebalance)?;
 
     let mut monitor_memory = MonitorMemory::default();
     let mut rebalance_memory = RebalanceMemory::default();
@@ -292,23 +296,76 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_startup_preflight(rpc: &RpcClient, cfg: &KeeperConfig, keepers: &[Keypair]) {
-    if let Err(err) = preflight_keeper_agent_registration(rpc, cfg, keepers) {
-        warn!(
-            error = %err,
-            "startup preflight could not fully verify keeper agent registration state"
-        );
+fn run_startup_preflight(
+    rpc: &RpcClient,
+    cfg: &KeeperConfig,
+    keepers: &[Keypair],
+    require_rebalance: bool,
+) -> Result<()> {
+    match preflight_keeper_agent_registration(rpc, cfg, keepers) {
+        Ok(readiness) => {
+            if readiness.has_eligible_submitter() {
+                info!(
+                    eligible_keepers = ?readiness.eligible_keepers,
+                    checked_keepers = readiness.checked_keepers,
+                    "startup preflight verified rebalance submitter readiness"
+                );
+            } else {
+                let guidance = rebalance_preflight_instructions();
+                error!(
+                    checked_keepers = readiness.checked_keepers,
+                    "startup preflight found no locally loaded keeper key eligible for rebalance commit (requires registered AgentRecord + status=Active + tier>=2)"
+                );
+                error!(instructions = guidance, "rebalance setup required");
+                eprintln!("{guidance}");
+
+                if require_rebalance {
+                    return Err(anyhow!(
+                        "--require-rebalance set and no eligible local rebalance submitter is available"
+                    ));
+                }
+            }
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "startup preflight could not fully verify keeper agent registration state"
+            );
+            if require_rebalance {
+                return Err(anyhow!(
+                    "--require-rebalance set and keeper agent registration preflight could not be completed: {err}"
+                ));
+            }
+        }
     }
 
     check_pm2_isolation();
     check_dotenv_permissions();
+    Ok(())
+}
+
+#[derive(Debug, Default)]
+struct RebalanceSubmitterReadiness {
+    checked_keepers: usize,
+    eligible_keepers: Vec<Pubkey>,
+}
+
+impl RebalanceSubmitterReadiness {
+    fn has_eligible_submitter(&self) -> bool {
+        !self.eligible_keepers.is_empty()
+    }
 }
 
 fn preflight_keeper_agent_registration(
     rpc: &RpcClient,
     cfg: &KeeperConfig,
     keepers: &[Keypair],
-) -> Result<()> {
+) -> Result<RebalanceSubmitterReadiness> {
+    let mut readiness = RebalanceSubmitterReadiness {
+        checked_keepers: keepers.len(),
+        ..RebalanceSubmitterReadiness::default()
+    };
+
     for keeper in keepers {
         let keeper_key = keeper.pubkey();
         let agent_record = derive_agent_record_pda(cfg.program_id, keeper_key);
@@ -318,7 +375,7 @@ fn preflight_keeper_agent_registration(
         let Some(account) = response.value else {
             warn!(
                 keeper_key = %keeper_key,
-                "keeper key {} not registered as agent — rebalance commit will be unavailable",
+                "keeper key {} is not registered as agent — rebalance commit will be unavailable",
                 keeper_key
             );
             continue;
@@ -328,7 +385,7 @@ fn preflight_keeper_agent_registration(
             warn!(
                 keeper_key = %keeper_key,
                 owner = %account.owner,
-                "keeper key {} not registered as agent — rebalance commit will be unavailable",
+                "keeper key {} has invalid agent record owner — rebalance commit will be unavailable",
                 keeper_key
             );
             continue;
@@ -338,24 +395,49 @@ fn preflight_keeper_agent_registration(
         else {
             warn!(
                 keeper_key = %keeper_key,
-                "keeper key {} not registered as agent — rebalance commit will be unavailable",
+                "keeper key {} agent record decode failed — rebalance commit will be unavailable",
                 keeper_key
             );
             continue;
         };
 
-        if record.tier < 2 {
-            warn!(
-                keeper_key = %keeper_key,
-                tier = record.tier,
-                "keeper key {} is tier {}, needs tier 2+ for rebalance commit",
-                keeper_key,
-                record.tier
-            );
+        if !agent_record_is_rebalance_eligible(&record) {
+            if record.status != wire::AgentStatus::Active {
+                warn!(
+                    keeper_key = %keeper_key,
+                    status = ?record.status,
+                    "keeper key {} is not Active — rebalance commit requires active status",
+                    keeper_key
+                );
+            }
+            if record.tier < 2 {
+                warn!(
+                    keeper_key = %keeper_key,
+                    tier = record.tier,
+                    "keeper key {} is tier {}, needs tier 2+ for rebalance commit",
+                    keeper_key,
+                    record.tier
+                );
+            }
+            continue;
         }
+
+        readiness.eligible_keepers.push(keeper_key);
     }
 
-    Ok(())
+    Ok(readiness)
+}
+
+fn agent_record_is_rebalance_eligible(record: &wire::AgentRecord) -> bool {
+    record.status == wire::AgentStatus::Active && record.tier >= 2
+}
+
+fn rebalance_preflight_instructions() -> &'static str {
+    "Rebalance submitter setup required:\n\
+- Register at least one configured keeper key as an agent:\n\
+  ts-node solana/scripts/register-agents.ts\n\
+- Promote that keeper agent to tier 2+ (keeper quorum required):\n\
+  use update_agent_score + promote_agent instructions"
 }
 
 fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
@@ -371,22 +453,58 @@ fn check_pm2_isolation() {
     });
 
     if pm2_is_shared {
-        warn!("keeper running in shared PM2 domain — recommend dedicated PM2_HOME for isolation");
+        warn!(
+            pm2_home = pm2_home.as_deref().unwrap_or("<unset>"),
+            "keeper running in shared PM2 domain — recommend dedicated PM2_HOME for isolation"
+        );
     }
 }
 
 fn is_default_pm2_home(pm2_home: &Path, home: Option<&Path>) -> bool {
-    if pm2_home == Path::new("~/.pm2") {
+    if pm2_home == Path::new("~/.pm2") || pm2_home == Path::new("$HOME/.pm2") {
         return true;
     }
 
-    if let Some(home) = home {
-        if pm2_home == home.join(".pm2") {
-            return true;
-        }
+    let Some(home_dir) = home else {
+        return false;
+    };
+
+    let observed = canonicalize_for_compare(&expand_home_alias(pm2_home, home_dir));
+    [
+        PathBuf::from("~/.pm2"),
+        PathBuf::from("$HOME/.pm2"),
+        home_dir.join(".pm2"),
+    ]
+    .into_iter()
+    .map(|candidate| expand_home_alias(&candidate, home_dir))
+    .map(|candidate| canonicalize_for_compare(&candidate))
+    .any(|candidate| candidate == observed)
+}
+
+fn expand_home_alias(path: &Path, home: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+
+    if raw == "~" || raw == "$HOME" {
+        return home.to_path_buf();
     }
 
-    false
+    if let Some(suffix) = raw.strip_prefix("~/") {
+        return home.join(suffix);
+    }
+
+    if let Some(suffix) = raw.strip_prefix("$HOME/") {
+        return home.join(suffix);
+    }
+
+    path.to_path_buf()
+}
+
+fn canonicalize_for_compare(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| normalize_path(path))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    path.components().collect()
 }
 
 #[cfg(unix)]

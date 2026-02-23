@@ -57,6 +57,28 @@ pm2 describe microstable-keeper
 - `.env`가 `-rw-------`(600)인지 확인
 - PM2가 최신 환경을 다시 로드했는지 확인
 
+### 4) Rebalance 가용성 필수 요건(중요)
+
+`rebalance commit` 트랜잭션은 **로컬 keeper가 실제로 보유한 서명키**로만 제출할 수 있다.
+따라서 keeper에 로드된 키 중 최소 1개는 반드시 다음 조건을 만족해야 한다.
+
+- AgentRecord가 온체인에 존재
+- `status == Active`
+- `tier >= 2`
+
+운영 시 준비 명령:
+
+```bash
+# Register keeper as agent (from register-agents.ts):
+ts-node solana/scripts/register-agents.ts
+
+# Promote to tier 2 (requires quorum):
+# Use update_agent_score + promote_agent instructions
+```
+
+권장: 배포 파이프라인에서 keeper 시작 전에 위 조건을 사전 점검하고,
+운영 정책상 rebalance가 필수인 환경에서는 keeper를 `--require-rebalance` 플래그와 함께 실행한다.
+
 ## 추가 권고
 - Keeper 전용 OS 사용자 및 전용 PM2 HOME(`PM2_HOME`) 분리
 - PM2 RPC/socket 접근 권한 최소화
