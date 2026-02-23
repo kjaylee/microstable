@@ -55,8 +55,10 @@ fn tc_mp_04_rebalance_eligibility_requires_active_and_tier_two() {
         proposals_submitted: 0,
         proposals_accepted: 0,
         registered_at: 0,
+        registered_slot: 0,
         last_active_at: 0,
         agent_score: 0,
+        last_slashed_slot: 0,
         bump: 255,
     };
 

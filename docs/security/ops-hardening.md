@@ -57,6 +57,19 @@ pm2 describe microstable-keeper
 - `.env`가 `-rw-------`(600)인지 확인
 - PM2가 최신 환경을 다시 로드했는지 확인
 
+### 3-1) PM2 격리 검증(엄격 모드)
+
+기본 실행은 경고만 출력하고 종료 코드 0을 유지한다(기존 호환).
+CI/CD 또는 배포 게이트에서는 반드시 `--strict`를 사용한다.
+
+```bash
+solana/keeper/scripts/verify-isolation.sh --strict
+```
+
+`--strict` 동작:
+- `NOT ISOLATED`인 경우 종료 코드 `1`
+- 어떤 `WARNING`이라도 발생하면 종료 코드 `1`
+
 ### 4) Rebalance 가용성 필수 요건(중요)
 
 `rebalance commit` 트랜잭션은 **로컬 keeper가 실제로 보유한 서명키**로만 제출할 수 있다.

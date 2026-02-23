@@ -44,6 +44,24 @@ fn base_config_json() -> Value {
                 "collateral_index": 0,
                 "price_account": "Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX",
                 "max_age_secs": 120
+            },
+            {
+                "symbol": "USDT/USD",
+                "collateral_index": 1,
+                "price_account": "HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM",
+                "max_age_secs": 120
+            },
+            {
+                "symbol": "DAI/USD",
+                "collateral_index": 2,
+                "price_account": "FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN",
+                "max_age_secs": 120
+            },
+            {
+                "symbol": "USDS/USD",
+                "collateral_index": 3,
+                "price_account": "9h4r3d4s8Jc8k5YfVY6Bnd3ETf6gVfGvSzj8Pzpo7aQw",
+                "max_age_secs": 120
             }
         ],
         "tick_interval_secs": 30,
@@ -89,6 +107,19 @@ fn tc_rk001_rejects_null_secondary_rpc() {
     let msg = format!("{err:#}");
     assert!(
         msg.contains("secondary_rpc_url") && (msg.contains("required") || msg.contains("empty")),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn tc_rk004_rejects_missing_vault_feed_mapping() {
+    let mut cfg = base_config_json();
+    cfg["pyth_feeds"].as_array_mut().expect("pyth_feeds array").pop();
+
+    let err = write_and_load(cfg).expect_err("missing vault feed must be rejected");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing collateral indexes") || msg.contains("must include all 4 vaults"),
         "unexpected error: {msg}"
     );
 }

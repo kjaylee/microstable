@@ -13,7 +13,7 @@ use solana_client::{
     rpc_filter::{Memcmp, RpcFilterType},
 };
 use solana_sdk::{
-    hash::{hash, hashv},
+    hash::{hash, hashv, Hash},
     instruction::Instruction,
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
@@ -29,6 +29,9 @@ const AIG_TARGET_TIER: u8 = 2;
 const TOURNAMENT_BASE_AGENT_SCORE: u64 = 500_000;
 const TOURNAMENT_TOP_BOOST: i64 = 50_000;
 const TOURNAMENT_BOTTOM_REDUCTION: i64 = -25_000;
+const TOURNAMENT_MIN_REGISTRATION_AGE_SLOTS: u64 = 100;
+const TOURNAMENT_PARTICIPANT_DIVISOR: usize = 10;
+const TOURNAMENT_MIN_PARTICIPANTS: usize = 2;
 const AGENT_RECORD_ACCOUNT_DATA_SIZE: u64 = 8 + 160;
 
 type TxRuntime<'a> = (
@@ -151,8 +154,9 @@ fn maybe_run_aig_cycle_inner(
                 return Ok(());
             }
         };
+        let selection_seed = selection_seed_with_entropy(rpc, derived, selection_slot);
 
-        if let Some(agent) = select_candidate_agent(&registered_agents, selection_slot) {
+        if let Some(agent) = select_candidate_agent(&registered_agents, selection_seed) {
             match resolve_keeper_quorum_signers(rpc, keepers, derived) {
                 Ok((keeper_one, keeper_two)) => {
                     let actions = aig_actions_for_outcome(
@@ -257,7 +261,7 @@ fn maybe_run_tournament_cycle_inner(
         Vec::new()
     };
 
-    if registered_agents.len() < 2 {
+    if registered_agents.len() < TOURNAMENT_MIN_PARTICIPANTS {
         warn!(
             participants = registered_agents.len(),
             "tournament cycle skipped: not enough participant agents"
@@ -266,8 +270,8 @@ fn maybe_run_tournament_cycle_inner(
         return Ok(());
     }
 
-    let selection_slot = if let Some((rpc, _, _, _, _)) = tx_runtime {
-        match rpc.get_slot() {
+    let (selection_slot, selection_seed) = if let Some((rpc, _, _, _, derived)) = tx_runtime {
+        let slot = match rpc.get_slot() {
             Ok(slot) => slot,
             Err(err) => {
                 warn!(
@@ -277,28 +281,37 @@ fn maybe_run_tournament_cycle_inner(
                 state.last_tournament_run = Some(now);
                 return Ok(());
             }
-        }
+        };
+        (slot, selection_seed_with_entropy(rpc, derived, slot))
     } else {
-        round
+        (round, round)
     };
 
-    let participants = select_tournament_participants(&registered_agents, selection_slot, 2);
-    if participants.len() < 2 {
+    let eligible_agents = filter_tournament_eligible_agents(&registered_agents, selection_slot);
+    if eligible_agents.len() < TOURNAMENT_MIN_PARTICIPANTS {
+        warn!(
+            registered = registered_agents.len(),
+            eligible = eligible_agents.len(),
+            min_age_slots = TOURNAMENT_MIN_REGISTRATION_AGE_SLOTS,
+            "tournament cycle skipped: not enough agents satisfy registration-age gate"
+        );
+        state.last_tournament_run = Some(now);
+        return Ok(());
+    }
+
+    let participant_cap = tournament_participant_cap(registered_agents.len());
+    let participant_target = participant_cap.min(eligible_agents.len());
+    let participants =
+        select_tournament_participants(&eligible_agents, selection_seed, participant_target);
+    if participants.len() < TOURNAMENT_MIN_PARTICIPANTS {
         warn!("tournament cycle skipped: weighted sampling returned insufficient participants");
         state.last_tournament_run = Some(now);
         return Ok(());
     }
 
-    let base_proposal = ParamVector::default();
-    let challenger_proposal = ParamVector {
-        weights: [0.30, 0.30, 0.20, 0.20],
-        target_cr: 1.25,
-        mint_fee: 0.002,
-        redeem_fee: 0.002,
-    };
-
-    tournament::submit_proposal(&mut tournament, participants[0], base_proposal, 1)?;
-    tournament::submit_proposal(&mut tournament, participants[1], challenger_proposal, 1)?;
+    for (idx, agent) in participants.iter().enumerate() {
+        tournament::submit_proposal(&mut tournament, *agent, tournament_proposal_for_index(idx), 1)?;
+    }
 
     let result = tournament::evaluate_proposals(&tournament);
     let summary = tournament::tournament_summary(&result);
@@ -306,6 +319,8 @@ fn maybe_run_tournament_cycle_inner(
     info!(
         round = result.round,
         participants = result.participants,
+        selection_slot,
+        selection_seed,
         winner = ?result.winner,
         winning_loss = result.winning_loss,
         summary = %summary,
@@ -368,6 +383,7 @@ fn interval_elapsed(last_run: Option<Instant>, interval_secs: u64, now: Instant)
 struct RegisteredAgent {
     agent: Pubkey,
     stake: u64,
+    registered_slot: u64,
 }
 
 fn select_candidate_agent(registered_agents: &[RegisteredAgent], slot_seed: u64) -> Option<Pubkey> {
@@ -391,6 +407,87 @@ fn select_tournament_participants(
     }
 
     selected
+}
+
+fn filter_tournament_eligible_agents(
+    registered_agents: &[RegisteredAgent],
+    current_slot: u64,
+) -> Vec<RegisteredAgent> {
+    registered_agents
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            current_slot.saturating_sub(candidate.registered_slot)
+                >= TOURNAMENT_MIN_REGISTRATION_AGE_SLOTS
+        })
+        .collect()
+}
+
+fn tournament_participant_cap(registered_agent_count: usize) -> usize {
+    if registered_agent_count == 0 {
+        return 0;
+    }
+
+    (registered_agent_count / TOURNAMENT_PARTICIPANT_DIVISOR)
+        .max(TOURNAMENT_MIN_PARTICIPANTS)
+        .min(registered_agent_count)
+}
+
+fn tournament_proposal_for_index(index: usize) -> ParamVector {
+    match index % 4 {
+        0 => ParamVector::default(),
+        1 => ParamVector {
+            weights: [0.30, 0.30, 0.20, 0.20],
+            target_cr: 1.25,
+            mint_fee: 0.002,
+            redeem_fee: 0.002,
+        },
+        2 => ParamVector {
+            weights: [0.35, 0.25, 0.20, 0.20],
+            target_cr: 1.22,
+            mint_fee: 0.003,
+            redeem_fee: 0.0015,
+        },
+        _ => ParamVector {
+            weights: [0.28, 0.32, 0.20, 0.20],
+            target_cr: 1.28,
+            mint_fee: 0.0015,
+            redeem_fee: 0.0025,
+        },
+    }
+}
+
+fn selection_seed_with_entropy(rpc: &RpcClient, derived: &DerivedAccounts, slot_seed: u64) -> u64 {
+    let recent_blockhash = rpc.get_latest_blockhash().ok();
+    let protocol_nonce =
+        utils::fetch_account::<wire::ProtocolState>(rpc, &derived.protocol_state, "ProtocolState")
+            .ok()
+            .map(|protocol| protocol.last_update_slot);
+
+    derive_selection_seed(slot_seed, recent_blockhash, protocol_nonce)
+}
+
+fn derive_selection_seed(
+    slot_seed: u64,
+    recent_blockhash: Option<Hash>,
+    protocol_nonce: Option<u64>,
+) -> u64 {
+    let blockhash_bytes = recent_blockhash
+        .map(|blockhash| blockhash.to_bytes())
+        .unwrap_or_default();
+    let nonce_bytes = protocol_nonce.unwrap_or_default().to_le_bytes();
+
+    let digest = hashv(&[
+        b"microstable-agent-selection-v3",
+        &slot_seed.to_le_bytes(),
+        &blockhash_bytes,
+        &nonce_bytes,
+    ])
+    .to_bytes();
+
+    let mut seed_bytes = [0u8; 8];
+    seed_bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(seed_bytes)
 }
 
 fn weighted_random_index(
@@ -468,6 +565,7 @@ fn fetch_registered_agents(
         agents.push(RegisteredAgent {
             agent: record.agent,
             stake: record.stake,
+            registered_slot: record.registered_slot,
         });
     }
 
@@ -829,14 +927,17 @@ mod wiring_tests {
             RegisteredAgent {
                 agent: Pubkey::new_unique(),
                 stake: 100,
+                registered_slot: 0,
             },
             RegisteredAgent {
                 agent: Pubkey::new_unique(),
                 stake: 100,
+                registered_slot: 0,
             },
             RegisteredAgent {
                 agent: Pubkey::new_unique(),
                 stake: 100,
+                registered_slot: 0,
             },
         ];
 
@@ -861,14 +962,17 @@ mod wiring_tests {
             RegisteredAgent {
                 agent: Pubkey::new_unique(),
                 stake: 500,
+                registered_slot: 0,
             },
             RegisteredAgent {
                 agent: Pubkey::new_unique(),
                 stake: 250,
+                registered_slot: 0,
             },
             RegisteredAgent {
                 agent: Pubkey::new_unique(),
                 stake: 100,
+                registered_slot: 0,
             },
         ];
 
@@ -880,7 +984,50 @@ mod wiring_tests {
     }
 
     #[test]
-    fn tc_alw_05_agent_record_scan_filters_include_discriminator_and_size() {
+    fn tc_alw_05_registration_age_filter_blocks_fresh_agents() {
+        let mature = RegisteredAgent {
+            agent: Pubkey::new_unique(),
+            stake: 500,
+            registered_slot: 100,
+        };
+        let fresh = RegisteredAgent {
+            agent: Pubkey::new_unique(),
+            stake: 500,
+            registered_slot: 190,
+        };
+
+        let filtered = filter_tournament_eligible_agents(&[mature, fresh], 200);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].agent, mature.agent);
+    }
+
+    #[test]
+    fn tc_alw_06_tournament_participant_cap_scales_with_registry_size() {
+        assert_eq!(tournament_participant_cap(0), 0);
+        assert_eq!(tournament_participant_cap(2), 2);
+        assert_eq!(tournament_participant_cap(9), 2);
+        assert_eq!(tournament_participant_cap(20), 2);
+        assert_eq!(tournament_participant_cap(30), 3);
+        assert_eq!(tournament_participant_cap(100), 10);
+    }
+
+    #[test]
+    fn tc_alw_07_entropy_seed_mixes_slot_blockhash_and_nonce() {
+        let slot_seed = 42;
+        let blockhash_a = Hash::new_unique();
+        let blockhash_b = Hash::new_unique();
+
+        let seed_a = derive_selection_seed(slot_seed, Some(blockhash_a), Some(7));
+        let seed_b = derive_selection_seed(slot_seed, Some(blockhash_b), Some(7));
+        let seed_c = derive_selection_seed(slot_seed, Some(blockhash_a), Some(8));
+
+        assert_ne!(seed_a, slot_seed);
+        assert_ne!(seed_a, seed_b);
+        assert_ne!(seed_a, seed_c);
+    }
+
+    #[test]
+    fn tc_alw_08_agent_record_scan_filters_include_discriminator_and_size() {
         let filters = agent_record_scan_filters();
         assert_eq!(filters.len(), 2);
 

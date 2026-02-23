@@ -133,6 +133,21 @@ fn minimal_valid_config_json() -> String {
       "symbol": "USDC/USD",
       "collateral_index": 0,
       "price_account": "Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX"
+    },
+    {
+      "symbol": "USDT/USD",
+      "collateral_index": 1,
+      "price_account": "HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM"
+    },
+    {
+      "symbol": "DAI/USD",
+      "collateral_index": 2,
+      "price_account": "FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN"
+    },
+    {
+      "symbol": "USDS/USD",
+      "collateral_index": 3,
+      "price_account": "9h4r3d4s8Jc8k5YfVY6Bnd3ETf6gVfGvSzj8Pzpo7aQw"
     }
   ],
   "tick_interval_secs": 30,
@@ -362,6 +377,7 @@ fn st_2_5_future_publish_time_rejection_guard_exists() {
 fn st_2_6_three_feeds_stale_path_is_graceful_continue() {
     let source = include_str!("oracle.rs");
     assert!(source.contains("oracle update skipped: stale publish time"));
+    assert!(source.contains("status = \"unconfigured\""));
     assert!(source.contains("continue;"));
 }
 

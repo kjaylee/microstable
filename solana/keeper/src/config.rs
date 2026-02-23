@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use tracing::error;
 
 pub const DEFAULT_CONFIG_PATH: &str = "keeper/config.devnet.json";
 
@@ -36,6 +37,7 @@ const MIN_EMERGENCY_CR_BPS: u64 = 10_000;
 const MAX_EMERGENCY_CR_BPS: u64 = 20_000;
 const MAX_COMMIT_VALID_FOR_SLOTS: u64 = 1_000;
 const MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 100;
+const EXPECTED_VAULT_COUNT: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct KeeperConfig {
@@ -172,6 +174,12 @@ impl KeeperConfig {
                     price_account: pubkey!("FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN"),
                     max_age_secs: 120,
                 },
+                PythFeedConfig {
+                    symbol: "USDS/USD".to_string(),
+                    collateral_index: 3,
+                    price_account: pubkey!("9h4r3d4s8Jc8k5YfVY6Bnd3ETf6gVfGvSzj8Pzpo7aQw"),
+                    max_age_secs: 120,
+                },
             ],
             tick_interval_secs: 30,
             oracle_max_age_secs: 120,
@@ -303,8 +311,26 @@ impl KeeperConfig {
             return Err(anyhow!("keeper_keypairs must contain at least 2 entries"));
         }
 
-        if self.pyth_feeds.is_empty() {
-            return Err(anyhow!("pyth_feeds must contain at least one feed"));
+        if self.pyth_feeds.len() < EXPECTED_VAULT_COUNT {
+            let configured: HashSet<u8> = self
+                .pyth_feeds
+                .iter()
+                .map(|feed| feed.collateral_index)
+                .collect();
+            let missing: Vec<u8> = (0..EXPECTED_VAULT_COUNT as u8)
+                .filter(|idx| !configured.contains(idx))
+                .collect();
+            error!(
+                expected_vault_count = EXPECTED_VAULT_COUNT,
+                configured_feed_count = self.pyth_feeds.len(),
+                missing_vault_indices = ?missing,
+                "keeper config invalid: missing oracle feed mapping for one or more vaults"
+            );
+            return Err(anyhow!(
+                "pyth_feeds must include all {} vaults; missing collateral indexes {:?}",
+                EXPECTED_VAULT_COUNT,
+                missing
+            ));
         }
 
         let mut seen_collateral_indexes = HashSet::new();
@@ -332,6 +358,29 @@ impl KeeperConfig {
                     feed.symbol
                 ));
             }
+        }
+
+        if self.pyth_feeds.len() != EXPECTED_VAULT_COUNT {
+            return Err(anyhow!(
+                "pyth_feeds must contain exactly {} entries (got {})",
+                EXPECTED_VAULT_COUNT,
+                self.pyth_feeds.len()
+            ));
+        }
+
+        let missing_after_validation: Vec<u8> = (0..EXPECTED_VAULT_COUNT as u8)
+            .filter(|idx| !seen_collateral_indexes.contains(idx))
+            .collect();
+        if !missing_after_validation.is_empty() {
+            error!(
+                expected_vault_count = EXPECTED_VAULT_COUNT,
+                missing_vault_indices = ?missing_after_validation,
+                "keeper config invalid: unresolved collateral feed gaps"
+            );
+            return Err(anyhow!(
+                "pyth_feeds missing collateral indexes {:?}",
+                missing_after_validation
+            ));
         }
 
         if !(MIN_TICK_INTERVAL_SECS..=MAX_TICK_INTERVAL_SECS).contains(&self.tick_interval_secs) {

@@ -10,7 +10,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::HashSet, time::{SystemTime, UNIX_EPOCH}};
 use tracing::{info, warn};
 
 const PYTH_RECEIVER_PROGRAM: &str = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ";
@@ -164,6 +164,23 @@ pub fn run_oracle_cycle(
         .as_secs() as i64;
 
     let mut prepared_updates = Vec::with_capacity(cfg.pyth_feeds.len());
+
+    let configured_indices: HashSet<u8> = cfg
+        .pyth_feeds
+        .iter()
+        .map(|feed| feed.collateral_index)
+        .collect();
+    for (vault_index, vault) in vaults.iter().enumerate() {
+        let collateral_index = vault_index as u8;
+        if !configured_indices.contains(&collateral_index) {
+            warn!(
+                collateral_index,
+                vault = %vault.vault,
+                status = "unconfigured",
+                "oracle update skipped: vault has no configured feed"
+            );
+        }
+    }
 
     for feed in &cfg.pyth_feeds {
         let Some(vault) = vaults.get(feed.collateral_index as usize) else {

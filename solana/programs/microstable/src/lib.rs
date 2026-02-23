@@ -69,8 +69,9 @@ const COMMIT_REVEAL_MAX_VALIDITY: u64 = 1_000;
 const KEEPER_ROTATION_DELAY_SLOTS: u64 = 100;
 
 // OAE / AIG constants.
-const AGENT_MIN_STAKE_LAMPORTS: u64 = 100_000_000;
+const AGENT_MIN_STAKE_LAMPORTS: u64 = 1_000_000_000;
 const AGENT_STAKE_COOLDOWN_SECONDS: i64 = 86_400;
+const AGENT_SLASH_COOLDOWN_SLOTS: u64 = 100;
 const AIG_MIN_COMMIT_TIER: u8 = 2;
 const AIG_TIER1_THRESHOLD: u64 = 600_000;
 const AIG_TIER2_THRESHOLD: u64 = 750_000;
@@ -351,7 +352,9 @@ pub mod microstable {
     ) -> Result<()> {
         validate_registration_stake(stake_amount)?;
 
-        let now = Clock::get()?.unix_timestamp;
+        let clock = Clock::get()?;
+        let now = clock.unix_timestamp;
+        let slot = clock.slot;
         let agent_key = ctx.accounts.agent.key();
 
         invoke(
@@ -375,6 +378,7 @@ pub mod microstable {
             role,
             stake_amount,
             now,
+            slot,
             ctx.bumps.agent_record,
         ));
         Ok(())
@@ -451,43 +455,50 @@ pub mod microstable {
         slash_amount: u64,
         reason: [u8; 32],
     ) -> Result<()> {
-        require_keys_eq!(
-            ctx.accounts.authority.key(),
-            TRUSTED_INITIALIZER,
-            ErrorCode::Unauthorized
-        );
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
         require_keys_eq!(
             ctx.accounts.protocol_treasury.key(),
             PROTOCOL_TREASURY,
             ErrorCode::InvalidTreasuryAccount
         );
+        require!(slash_amount > 0, ErrorCode::InvalidAmount);
 
-        let now = Clock::get()?.unix_timestamp;
+        let clock = Clock::get()?;
+        let now = clock.unix_timestamp;
+        let slot = clock.slot;
         let record = &mut ctx.accounts.agent_record;
+        require!(
+            slash_cooldown_elapsed(record.last_slashed_slot, slot),
+            ErrorCode::SlashCooldownActive
+        );
+
         let slash_value = capped_slash_amount(record.stake, slash_amount);
+        require!(slash_value > 0, ErrorCode::InvalidAmount);
 
-        if slash_value > 0 {
-            let escrow_info = ctx.accounts.agent_escrow.to_account_info();
-            let treasury_info = ctx.accounts.protocol_treasury.to_account_info();
+        let escrow_info = ctx.accounts.agent_escrow.to_account_info();
+        let treasury_info = ctx.accounts.protocol_treasury.to_account_info();
 
-            let escrow_remaining = escrow_info
-                .lamports()
-                .checked_sub(slash_value)
-                .ok_or_else(|| error!(ErrorCode::EscrowInsufficientBalance))?;
-            let treasury_next = treasury_info
-                .lamports()
-                .checked_add(slash_value)
-                .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        let escrow_remaining = escrow_info
+            .lamports()
+            .checked_sub(slash_value)
+            .ok_or_else(|| error!(ErrorCode::EscrowInsufficientBalance))?;
+        let treasury_next = treasury_info
+            .lamports()
+            .checked_add(slash_value)
+            .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
 
-            **escrow_info.try_borrow_mut_lamports()? = escrow_remaining;
-            **treasury_info.try_borrow_mut_lamports()? = treasury_next;
+        **escrow_info.try_borrow_mut_lamports()? = escrow_remaining;
+        **treasury_info.try_borrow_mut_lamports()? = treasury_next;
 
-            record.stake = record
-                .stake
-                .checked_sub(slash_value)
-                .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
-        }
-
+        record.stake = record
+            .stake
+            .checked_sub(slash_value)
+            .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        record.last_slashed_slot = slot;
         record.status = AgentStatus::Slashed;
         record.last_active_at = now;
         let _ = reason;
@@ -801,10 +812,9 @@ pub mod microstable {
         let gross_musd = mul_div_floor(collateral_amount, price, SCALE)?;
         let max_mintable_by_cr =
             mul_div_floor(gross_musd, SCALE, ctx.accounts.protocol_state.cr_target)?;
-        let fee = mul_div_ceil(
+        let fee = protocol_fee_amount(
             max_mintable_by_cr,
-            ctx.accounts.protocol_state.fee_rate,
-            SCALE,
+            ctx.accounts.protocol_state.mint_fee_rate,
         )?;
         let minted_musd = max_mintable_by_cr
             .checked_sub(fee)
@@ -1106,27 +1116,33 @@ pub mod microstable {
             musd_amount,
         )?;
 
+        let redeem_fee = protocol_fee_amount(musd_amount, ctx.accounts.protocol_state.redeem_fee_rate)?;
+        let net_redeem_musd = musd_amount
+            .checked_sub(redeem_fee)
+            .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+        require!(net_redeem_musd > 0, ErrorCode::InvalidAmount);
+
         let payout_usdc = preview_redeem_from_vault(
             ctx.accounts.vault_usdc.total_deposits,
-            musd_amount,
+            net_redeem_musd,
             supply_before,
             payout_discount,
         )?;
         let payout_usdt = preview_redeem_from_vault(
             ctx.accounts.vault_usdt.total_deposits,
-            musd_amount,
+            net_redeem_musd,
             supply_before,
             payout_discount,
         )?;
         let payout_dai = preview_redeem_from_vault(
             ctx.accounts.vault_dai.total_deposits,
-            musd_amount,
+            net_redeem_musd,
             supply_before,
             payout_discount,
         )?;
         let payout_usds = preview_redeem_from_vault(
             ctx.accounts.vault_usds.total_deposits,
-            musd_amount,
+            net_redeem_musd,
             supply_before,
             payout_discount,
         )?;
@@ -2119,7 +2135,8 @@ pub struct SlashAgent<'info> {
     #[account(seeds = [b"protocol_state"], bump = protocol_state.bump)]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    pub authority: Signer<'info>,
+    pub keeper_one: Signer<'info>,
+    pub keeper_two: Signer<'info>,
 
     #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
     pub agent_record: Account<'info, AgentRecord>,
@@ -2311,8 +2328,10 @@ pub struct AgentRecord {
     pub proposals_submitted: u64,
     pub proposals_accepted: u64,
     pub registered_at: i64,
+    pub registered_slot: u64,
     pub last_active_at: i64,
     pub agent_score: u64,
+    pub last_slashed_slot: u64,
     pub bump: u8,
 }
 
@@ -2404,6 +2423,8 @@ pub enum ErrorCode {
     AgentNotDeregistered,
     #[msg("Stake cooldown is still active")]
     StakeCooldownActive,
+    #[msg("Agent slash cooldown is still active")]
+    SlashCooldownActive,
     #[msg("Agent tier is below minimum rebalance submit tier")]
     AgentTierTooLow,
     #[msg("Agent signer does not match agent record")]
@@ -2935,6 +2956,8 @@ fn apply_protocol_param_update(
     protocol.cr_target = new_cr_target;
     protocol.mint_fee_rate = new_mint_fee;
     protocol.redeem_fee_rate = new_redeem_fee;
+    // Legacy alias: keep fee_rate synchronized with mint_fee_rate for wire compatibility.
+    protocol.fee_rate = new_mint_fee;
     protocol.last_update_slot = slot;
     Ok(())
 }
@@ -2962,6 +2985,13 @@ fn mul_div_ceil(a: u64, b: u64, denominator: u64) -> Result<u64> {
         .checked_div(denominator as u128)
         .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
     u64::try_from(value).map_err(|_| error!(ErrorCode::MathOverflow))
+}
+
+fn protocol_fee_amount(amount: u64, fee_rate: u64) -> Result<u64> {
+    if fee_rate == 0 || amount == 0 {
+        return Ok(0);
+    }
+    mul_div_ceil(amount, fee_rate, SCALE)
 }
 
 fn abs_diff(a: u64, b: u64) -> u64 {
@@ -3331,6 +3361,7 @@ fn build_agent_record(
     role: AgentRole,
     stake: u64,
     now: i64,
+    slot: u64,
     bump: u8,
 ) -> AgentRecord {
     AgentRecord {
@@ -3343,14 +3374,22 @@ fn build_agent_record(
         proposals_submitted: 0,
         proposals_accepted: 0,
         registered_at: now,
+        registered_slot: slot,
         last_active_at: now,
         agent_score: 0,
+        last_slashed_slot: 0,
         bump,
     }
 }
 
 fn capped_slash_amount(current_stake: u64, requested_slash: u64) -> u64 {
-    requested_slash.min(current_stake)
+    let max_slash = current_stake / 2;
+    requested_slash.min(max_slash)
+}
+
+fn slash_cooldown_elapsed(last_slashed_slot: u64, current_slot: u64) -> bool {
+    last_slashed_slot == 0
+        || current_slot.saturating_sub(last_slashed_slot) >= AGENT_SLASH_COOLDOWN_SLOTS
 }
 
 fn can_claim_stake(status: AgentStatus, cooldown_started_at: i64, now: i64) -> Result<()> {
@@ -3472,12 +3511,14 @@ mod tests {
             AgentRole::Liquidator,
         ] {
             validate_registration_stake(AGENT_MIN_STAKE_LAMPORTS).unwrap();
-            let record = build_agent_record(agent, role, 10, 123, 1);
+            let record = build_agent_record(agent, role, 10, 123, 456, 1);
             assert_eq!(record.agent, agent);
             assert_eq!(record.role, role);
             assert_eq!(record.stake, 10);
             assert_eq!(record.tier, 0);
             assert_eq!(record.status, AgentStatus::Active);
+            assert_eq!(record.registered_slot, 456);
+            assert_eq!(record.last_slashed_slot, 0);
         }
     }
 
@@ -3538,9 +3579,22 @@ mod tests {
     }
 
     #[test]
-    fn slash_capped_at_stake() {
+    fn slash_capped_at_half_stake() {
         assert_eq!(capped_slash_amount(1_000, 300), 300);
-        assert_eq!(capped_slash_amount(1_000, 9_999), 1_000);
+        assert_eq!(capped_slash_amount(1_000, 9_999), 500);
+    }
+
+    #[test]
+    fn slash_cooldown_enforced_by_slot_gap() {
+        assert!(slash_cooldown_elapsed(0, 1));
+        assert!(!slash_cooldown_elapsed(1_000, 1_050));
+        assert!(slash_cooldown_elapsed(1_000, 1_100));
+    }
+
+    #[test]
+    fn protocol_fee_amount_zero_rate_preserves_backward_compat_no_fee() {
+        assert_eq!(protocol_fee_amount(1_000_000, 0).unwrap(), 0);
+        assert_eq!(protocol_fee_amount(1_000_000, 2_000).unwrap(), 2_000);
     }
 
     #[test]
@@ -3571,7 +3625,7 @@ mod tests {
         let agent = Pubkey::new_unique();
         let wrong_signer = Pubkey::new_unique();
 
-        let mut record = build_agent_record(agent, AgentRole::Optimizer, 10, 0, 1);
+        let mut record = build_agent_record(agent, AgentRole::Optimizer, 10, 0, 0, 1);
         record.tier = 2;
         assert_err_contains(
             assert_agent_commit_eligibility(&record, wrong_signer),
@@ -3722,6 +3776,7 @@ mod tests {
         assert_eq!(protocol.cr_target, 1_500_000);
         assert_eq!(protocol.mint_fee_rate, 900);
         assert_eq!(protocol.redeem_fee_rate, 700);
+        assert_eq!(protocol.fee_rate, 900);
         assert_eq!(protocol.last_update_slot, 999);
     }
 

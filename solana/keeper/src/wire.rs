@@ -87,8 +87,10 @@ pub struct AgentRecord {
     pub proposals_submitted: u64,
     pub proposals_accepted: u64,
     pub registered_at: i64,
+    pub registered_slot: u64,
     pub last_active_at: i64,
     pub agent_score: u64,
+    pub last_slashed_slot: u64,
     pub bump: u8,
 }
 
