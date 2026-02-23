@@ -26,7 +26,7 @@ const HIGH_VOL_MINT_ORACLE_STALENESS_MAX: u64 = 8;
 const HIGH_VOL_REDEEM_ORACLE_STALENESS_MAX: u64 = 16;
 const HIGH_VOL_ORACLE_STALENESS_MAX: u64 = 30;
 const MINT_ORACLE_CONFIDENCE_MAX: u64 = 20_000; // 2%
-// FIX CRITICAL-22: stale oracle data receives progressive valuation haircut.
+                                                // FIX CRITICAL-22: stale oracle data receives progressive valuation haircut.
 const STALE_ORACLE_PENALTY_PER_SLOT: u64 = 1_500; // 0.15%/slot
                                                   // FIX CRITICAL-22: confidence spread receives progressive valuation haircut.
 const CONFIDENCE_PENALTY_MULTIPLIER: u64 = 4; // 4x confidence ratio penalty
@@ -41,7 +41,7 @@ const MAX_REDEEM_PER_TX_PPM: u64 = 15_000; // 1.5%
 const MAX_ABSOLUTE_REDEEM_PER_SLOT: u64 = 2_500_000_000; // 2,500 MSTB @ 6 decimals
 const REDEEM_VELOCITY_FEE_START_PPM: u64 = 400_000; // start surcharge above 40% slot utilization
 const MAX_PROGRESSIVE_REDEEM_FEE_RATE: u64 = 10_000; // capped to global protocol fee max (1%)
-                                             // FIX MEDIUM-23/10: governance update pacing limits.
+                                                     // FIX MEDIUM-23/10: governance update pacing limits.
 const AGENT_GOVERNANCE_COOLDOWN_SECS: i64 = 60;
 const AGENT_SCORE_DELTA_LIMIT: u64 = 100_000; // 10%
                                               // FIX HIGH-03: manual oracle write path is disabled unless explicitly time-boxed.
@@ -53,7 +53,7 @@ const MANUAL_ORACLE_MAX_ACTIVATIONS_PER_EPOCH: u64 = 3;
 const TWAP_ALPHA_PPM: u64 = 250_000; // 25% fresh observation, 75% history.
 const TWAP_MAX_DEVIATION_PPM: u64 = 25_000; // 2.5%
 const HIGH_VOLATILITY_DEVIATION_PPM: u64 = 12_500; // 1.25%
-// FIX PTV2-002: enforce publish_time freshness for Pyth price updates.
+                                                   // FIX PTV2-002: enforce publish_time freshness for Pyth price updates.
 const PYTH_PUBLISH_TIME_MAX_AGE: i64 = 60;
 const ORACLE_CONFIDENCE_MAX: u64 = 50_000; // 5%
 const DEPEG_ON_THRESHOLD: u64 = 20_000; // 2%
@@ -164,6 +164,7 @@ pub mod microstable {
         protocol.flow_control_slot = slot;
         protocol.minted_in_flow_slot = 0;
         protocol.redeemed_in_flow_slot = 0;
+        protocol.last_twap_update_slots = [slot; 4];
         protocol.max_mint_per_slot_ppm = DEFAULT_MAX_MINT_PER_SLOT_PPM;
         protocol.max_redeem_per_slot_ppm = DEFAULT_MAX_REDEEM_PER_SLOT_PPM;
         protocol.manual_oracle_mode_expiry_slot = 0;
@@ -314,6 +315,7 @@ pub mod microstable {
             flow_control_slot: slot,
             minted_in_flow_slot: 0,
             redeemed_in_flow_slot: 0,
+            last_twap_update_slots: [slot; 4],
             max_mint_per_slot_ppm: DEFAULT_MAX_MINT_PER_SLOT_PPM,
             max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
             manual_oracle_mode_expiry_slot: 0,
@@ -678,30 +680,46 @@ pub mod microstable {
         );
 
         match collateral_index {
-            0 => update_vault_oracle(
-                &mut ctx.accounts.vault_usdc,
-                price,
-                confidence,
-                observed_slot,
-            )?,
-            1 => update_vault_oracle(
-                &mut ctx.accounts.vault_usdt,
-                price,
-                confidence,
-                observed_slot,
-            )?,
-            2 => update_vault_oracle(
-                &mut ctx.accounts.vault_dai,
-                price,
-                confidence,
-                observed_slot,
-            )?,
-            3 => update_vault_oracle(
-                &mut ctx.accounts.vault_usds,
-                price,
-                confidence,
-                observed_slot,
-            )?,
+            0 => {
+                let next_slot = update_vault_oracle(
+                    &mut ctx.accounts.vault_usdc,
+                    price,
+                    confidence,
+                    observed_slot,
+                    ctx.accounts.protocol_state.last_twap_update_slots[0],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[0] = next_slot;
+            }
+            1 => {
+                let next_slot = update_vault_oracle(
+                    &mut ctx.accounts.vault_usdt,
+                    price,
+                    confidence,
+                    observed_slot,
+                    ctx.accounts.protocol_state.last_twap_update_slots[1],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[1] = next_slot;
+            }
+            2 => {
+                let next_slot = update_vault_oracle(
+                    &mut ctx.accounts.vault_dai,
+                    price,
+                    confidence,
+                    observed_slot,
+                    ctx.accounts.protocol_state.last_twap_update_slots[2],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[2] = next_slot;
+            }
+            3 => {
+                let next_slot = update_vault_oracle(
+                    &mut ctx.accounts.vault_usds,
+                    price,
+                    confidence,
+                    observed_slot,
+                    ctx.accounts.protocol_state.last_twap_update_slots[3],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[3] = next_slot;
+            }
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         }
 
@@ -797,38 +815,54 @@ pub mod microstable {
         allowed_authorities.push(PYTH_TRUSTED_WRITE_AUTHORITY);
         allowed_authorities.extend_from_slice(&ctx.accounts.protocol_state.keeper_set);
         match collateral_index {
-            0 => update_vault_oracle_from_pyth(
-                &mut ctx.accounts.vault_usdc,
-                &ctx.accounts.pyth_price_account,
-                slot,
-                unix_timestamp,
-                expected_feed_id,
-                &allowed_authorities,
-            )?,
-            1 => update_vault_oracle_from_pyth(
-                &mut ctx.accounts.vault_usdt,
-                &ctx.accounts.pyth_price_account,
-                slot,
-                unix_timestamp,
-                expected_feed_id,
-                &allowed_authorities,
-            )?,
-            2 => update_vault_oracle_from_pyth(
-                &mut ctx.accounts.vault_dai,
-                &ctx.accounts.pyth_price_account,
-                slot,
-                unix_timestamp,
-                expected_feed_id,
-                &allowed_authorities,
-            )?,
-            3 => update_vault_oracle_from_pyth(
-                &mut ctx.accounts.vault_usds,
-                &ctx.accounts.pyth_price_account,
-                slot,
-                unix_timestamp,
-                expected_feed_id,
-                &allowed_authorities,
-            )?,
+            0 => {
+                let next_slot = update_vault_oracle_from_pyth(
+                    &mut ctx.accounts.vault_usdc,
+                    &ctx.accounts.pyth_price_account,
+                    slot,
+                    unix_timestamp,
+                    expected_feed_id,
+                    &allowed_authorities,
+                    ctx.accounts.protocol_state.last_twap_update_slots[0],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[0] = next_slot;
+            }
+            1 => {
+                let next_slot = update_vault_oracle_from_pyth(
+                    &mut ctx.accounts.vault_usdt,
+                    &ctx.accounts.pyth_price_account,
+                    slot,
+                    unix_timestamp,
+                    expected_feed_id,
+                    &allowed_authorities,
+                    ctx.accounts.protocol_state.last_twap_update_slots[1],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[1] = next_slot;
+            }
+            2 => {
+                let next_slot = update_vault_oracle_from_pyth(
+                    &mut ctx.accounts.vault_dai,
+                    &ctx.accounts.pyth_price_account,
+                    slot,
+                    unix_timestamp,
+                    expected_feed_id,
+                    &allowed_authorities,
+                    ctx.accounts.protocol_state.last_twap_update_slots[2],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[2] = next_slot;
+            }
+            3 => {
+                let next_slot = update_vault_oracle_from_pyth(
+                    &mut ctx.accounts.vault_usds,
+                    &ctx.accounts.pyth_price_account,
+                    slot,
+                    unix_timestamp,
+                    expected_feed_id,
+                    &allowed_authorities,
+                    ctx.accounts.protocol_state.last_twap_update_slots[3],
+                )?;
+                ctx.accounts.protocol_state.last_twap_update_slots[3] = next_slot;
+            }
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         }
 
@@ -881,38 +915,60 @@ pub mod microstable {
             ctx.accounts.circuit_breaker.mint_rate_limit > 0,
             ErrorCode::MintPausedByCircuitBreaker
         );
-        require!(
-            !oracle_degraded(vaults_before, slot),
-            ErrorCode::OracleDegraded
-        );
+        let (price, confidence, oracle_slot, raw_twap_price, selected_oracle_degraded) =
+            match collateral_index {
+                0 => (
+                    ctx.accounts.vault_usdc.price,
+                    ctx.accounts.vault_usdc.confidence,
+                    ctx.accounts.vault_usdc.last_oracle_slot,
+                    ctx.accounts.vault_usdc.twap_price,
+                    vault_oracle_degraded(
+                        ctx.accounts.vault_usdc.as_ref(),
+                        slot,
+                        ORACLE_STALENESS_MAX,
+                        HIGH_VOL_ORACLE_STALENESS_MAX,
+                    ),
+                ),
+                1 => (
+                    ctx.accounts.vault_usdt.price,
+                    ctx.accounts.vault_usdt.confidence,
+                    ctx.accounts.vault_usdt.last_oracle_slot,
+                    ctx.accounts.vault_usdt.twap_price,
+                    vault_oracle_degraded(
+                        ctx.accounts.vault_usdt.as_ref(),
+                        slot,
+                        ORACLE_STALENESS_MAX,
+                        HIGH_VOL_ORACLE_STALENESS_MAX,
+                    ),
+                ),
+                2 => (
+                    ctx.accounts.vault_dai.price,
+                    ctx.accounts.vault_dai.confidence,
+                    ctx.accounts.vault_dai.last_oracle_slot,
+                    ctx.accounts.vault_dai.twap_price,
+                    vault_oracle_degraded(
+                        ctx.accounts.vault_dai.as_ref(),
+                        slot,
+                        ORACLE_STALENESS_MAX,
+                        HIGH_VOL_ORACLE_STALENESS_MAX,
+                    ),
+                ),
+                3 => (
+                    ctx.accounts.vault_usds.price,
+                    ctx.accounts.vault_usds.confidence,
+                    ctx.accounts.vault_usds.last_oracle_slot,
+                    ctx.accounts.vault_usds.twap_price,
+                    vault_oracle_degraded(
+                        ctx.accounts.vault_usds.as_ref(),
+                        slot,
+                        ORACLE_STALENESS_MAX,
+                        HIGH_VOL_ORACLE_STALENESS_MAX,
+                    ),
+                ),
+                _ => return err!(ErrorCode::InvalidCollateralIndex),
+            };
+        require!(!selected_oracle_degraded, ErrorCode::OracleDegraded);
 
-        let (price, confidence, oracle_slot, raw_twap_price) = match collateral_index {
-            0 => (
-                ctx.accounts.vault_usdc.price,
-                ctx.accounts.vault_usdc.confidence,
-                ctx.accounts.vault_usdc.last_oracle_slot,
-                ctx.accounts.vault_usdc.twap_price,
-            ),
-            1 => (
-                ctx.accounts.vault_usdt.price,
-                ctx.accounts.vault_usdt.confidence,
-                ctx.accounts.vault_usdt.last_oracle_slot,
-                ctx.accounts.vault_usdt.twap_price,
-            ),
-            2 => (
-                ctx.accounts.vault_dai.price,
-                ctx.accounts.vault_dai.confidence,
-                ctx.accounts.vault_dai.last_oracle_slot,
-                ctx.accounts.vault_dai.twap_price,
-            ),
-            3 => (
-                ctx.accounts.vault_usds.price,
-                ctx.accounts.vault_usds.confidence,
-                ctx.accounts.vault_usds.last_oracle_slot,
-                ctx.accounts.vault_usds.twap_price,
-            ),
-            _ => return err!(ErrorCode::InvalidCollateralIndex),
-        };
         let twap_price = canonical_twap_price(price, raw_twap_price);
         validate_spot_vs_twap(price, twap_price)?;
         let mint_staleness_limit = dynamic_oracle_staleness_limit(
@@ -937,7 +993,10 @@ pub mod microstable {
         let mint_haircut_ppm = mint_haircut_ppm(price, confidence, oracle_slot, slot)?;
         let effective_price = mul_div_floor(price, mint_haircut_ppm, SCALE)?;
         require!(effective_price > 0, ErrorCode::InvalidPrice);
-        require!(effective_price <= max_price, ErrorCode::MintPriceAboveUserLimit);
+        require!(
+            effective_price <= max_price,
+            ErrorCode::MintPriceAboveUserLimit
+        );
 
         let gross_musd = mul_div_floor(collateral_amount, effective_price, SCALE)?;
         let max_mintable_by_cr =
@@ -1163,10 +1222,20 @@ pub mod microstable {
         let supply_before = ctx.accounts.protocol_state.total_supply;
         require!(supply_before > 0, ErrorCode::InsufficientBalance);
 
-        require!(
-            !oracle_redeem_degraded(vaults_before, slot),
-            ErrorCode::OracleDegraded
+        let degraded_redeem_vaults = count_degraded_vaults(
+            vaults_before,
+            slot,
+            REDEEM_ORACLE_STALENESS_MAX,
+            HIGH_VOL_REDEEM_ORACLE_STALENESS_MAX,
         );
+        require!(degraded_redeem_vaults < 4, ErrorCode::OracleDegraded);
+
+        refresh_slot_flow_window(&mut ctx.accounts.protocol_state, slot);
+        let redeemed_in_flow_slot_before_tx = ctx.accounts.protocol_state.redeemed_in_flow_slot;
+        let effective_redeem_fee_rate = progressive_redeem_fee_rate(
+            &ctx.accounts.protocol_state,
+            redeemed_in_flow_slot_before_tx,
+        )?;
 
         enforce_single_tx_flow_limit(
             ctx.accounts.protocol_state.total_supply,
@@ -1276,7 +1345,6 @@ pub mod microstable {
             musd_amount,
         )?;
 
-        let effective_redeem_fee_rate = progressive_redeem_fee_rate(&ctx.accounts.protocol_state)?;
         let redeem_fee = protocol_fee_amount(musd_amount, effective_redeem_fee_rate)?;
         let net_redeem_musd = musd_amount
             .checked_sub(redeem_fee)
@@ -1872,7 +1940,9 @@ pub mod microstable {
             cooldown = MANUAL_ORACLE_MODE_REENABLE_COOLDOWN_SLOTS;
         }
         if protocol.manual_oracle_mode_expiry_slot > 0 {
-            let reenable_slot = protocol.manual_oracle_mode_expiry_slot.saturating_add(cooldown);
+            let reenable_slot = protocol
+                .manual_oracle_mode_expiry_slot
+                .saturating_add(cooldown);
             require!(
                 slot >= reenable_slot,
                 ErrorCode::ManualOracleModeCooldownActive
@@ -1955,6 +2025,7 @@ pub mod microstable {
             flow_control_slot: slot,
             minted_in_flow_slot: 0,
             redeemed_in_flow_slot: 0,
+            last_twap_update_slots: [slot; 4],
             max_mint_per_slot_ppm: DEFAULT_MAX_MINT_PER_SLOT_PPM,
             max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
             manual_oracle_mode_expiry_slot: 0,
@@ -2550,6 +2621,8 @@ pub struct ProtocolState {
     pub flow_control_slot: u64,
     pub minted_in_flow_slot: u64,
     pub redeemed_in_flow_slot: u64,
+    /// Per-vault TWAP update slots to enforce single update per slot.
+    pub last_twap_update_slots: [u64; 4],
     pub max_mint_per_slot_ppm: u64,
     pub max_redeem_per_slot_ppm: u64,
     /// FIX HIGH-03: manual keeper oracle writes are time-boxed.
@@ -3015,22 +3088,32 @@ fn update_vault_oracle(
     price: u64,
     confidence: u64,
     observed_slot: u64,
-) -> Result<()> {
+    last_twap_update_slot: u64,
+) -> Result<u64> {
     require!(
-        observed_slot >= vault.last_oracle_slot,
+        observed_slot > vault.last_oracle_slot,
         ErrorCode::OracleSlotRegression
     );
 
+    let twap_reference_slot = last_twap_update_slot.max(vault.last_oracle_slot);
+    require!(
+        observed_slot > twap_reference_slot,
+        ErrorCode::OracleSlotRegression
+    );
+
+    let slot_delta = observed_slot
+        .checked_sub(twap_reference_slot)
+        .ok_or_else(|| error!(ErrorCode::MathOverflow))?
+        .max(1);
     let previous_twap = canonical_twap_price(vault.price, vault.twap_price);
-    let next_twap = mul_div_floor(previous_twap, SCALE.saturating_sub(TWAP_ALPHA_PPM), SCALE)?
-        .checked_add(mul_div_floor(price, TWAP_ALPHA_PPM, SCALE)?)
-        .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+    let alpha = twap_alpha_for_slot_delta(slot_delta)?;
+    let next_twap = ewma_next_price(previous_twap, price, alpha)?;
 
     vault.price = price;
     vault.confidence = confidence;
     vault.last_oracle_slot = observed_slot;
     vault.twap_price = next_twap.max(1);
-    Ok(())
+    Ok(observed_slot)
 }
 
 fn update_vault_oracle_from_pyth(
@@ -3040,7 +3123,8 @@ fn update_vault_oracle_from_pyth(
     current_timestamp: i64,
     expected_feed_id: [u8; 32],
     allowed_authorities: &[Pubkey],
-) -> Result<()> {
+    last_twap_update_slot: u64,
+) -> Result<u64> {
     require!(
         vault.pyth_price_feed != Pubkey::default(),
         ErrorCode::PythFeedNotConfigured
@@ -3076,14 +3160,24 @@ fn update_vault_oracle_from_pyth(
     );
 
     let twap_price = canonical_twap_price(price, vault.twap_price);
-    let staleness_limit =
-        dynamic_oracle_staleness_limit(price, twap_price, ORACLE_STALENESS_MAX, HIGH_VOL_ORACLE_STALENESS_MAX);
+    let staleness_limit = dynamic_oracle_staleness_limit(
+        price,
+        twap_price,
+        ORACLE_STALENESS_MAX,
+        HIGH_VOL_ORACLE_STALENESS_MAX,
+    );
     require!(
         current_slot.saturating_sub(observed_slot) <= staleness_limit,
         ErrorCode::OracleStale
     );
 
-    update_vault_oracle(vault, price, confidence, observed_slot)
+    update_vault_oracle(
+        vault,
+        price,
+        confidence,
+        observed_slot,
+        last_twap_update_slot,
+    )
 }
 
 fn is_allowed_pyth_write_authority(
@@ -3428,6 +3522,34 @@ fn canonical_twap_price(spot_price: u64, twap_price: u64) -> u64 {
     }
 }
 
+fn fixed_point_pow_ppm(mut base_ppm: u64, mut exponent: u64) -> Result<u64> {
+    let mut result = SCALE;
+    while exponent > 0 {
+        if exponent & 1 == 1 {
+            result = mul_div_floor(result, base_ppm, SCALE)?;
+        }
+        exponent >>= 1;
+        if exponent > 0 {
+            base_ppm = mul_div_floor(base_ppm, base_ppm, SCALE)?;
+        }
+    }
+
+    Ok(result)
+}
+
+fn twap_alpha_for_slot_delta(slot_delta: u64) -> Result<u64> {
+    let per_slot_decay = SCALE.saturating_sub(TWAP_ALPHA_PPM);
+    let decay = fixed_point_pow_ppm(per_slot_decay, slot_delta)?;
+    Ok(SCALE.saturating_sub(decay).min(SCALE))
+}
+
+fn ewma_next_price(previous: u64, observed: u64, alpha_ppm: u64) -> Result<u64> {
+    let history_weight = SCALE.saturating_sub(alpha_ppm.min(SCALE));
+    mul_div_floor(previous, history_weight, SCALE)?
+        .checked_add(mul_div_floor(observed, alpha_ppm.min(SCALE), SCALE)?)
+        .ok_or_else(|| error!(ErrorCode::MathOverflow))
+}
+
 fn price_deviation_ppm(spot_price: u64, twap_price: u64) -> u64 {
     let twap = canonical_twap_price(spot_price, twap_price);
     let diff = abs_diff(spot_price, twap) as u128;
@@ -3459,36 +3581,53 @@ fn dynamic_oracle_staleness_limit(
     }
 }
 
-fn oracle_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u64) -> bool {
-    vaults.iter().any(|v| {
-        let twap = canonical_twap_price(v.price, v.twap_price);
-        let staleness_limit =
-            dynamic_oracle_staleness_limit(v.price, twap, ORACLE_STALENESS_MAX, HIGH_VOL_ORACLE_STALENESS_MAX);
-        let deviation = price_deviation_ppm(v.price, twap);
+fn vault_oracle_degraded(
+    vault: &CollateralVault,
+    slot: u64,
+    normal_staleness_limit: u64,
+    high_vol_staleness_limit: u64,
+) -> bool {
+    let twap = canonical_twap_price(vault.price, vault.twap_price);
+    let staleness_limit = dynamic_oracle_staleness_limit(
+        vault.price,
+        twap,
+        normal_staleness_limit,
+        high_vol_staleness_limit,
+    );
+    let deviation = price_deviation_ppm(vault.price, twap);
 
-        v.price == 0
-            || v.confidence > ORACLE_CONFIDENCE_MAX
-            || deviation > TWAP_MAX_DEVIATION_PPM
-            || slot.saturating_sub(v.last_oracle_slot) > staleness_limit
-    })
+    vault.price == 0
+        || vault.confidence > ORACLE_CONFIDENCE_MAX
+        || deviation > TWAP_MAX_DEVIATION_PPM
+        || slot.saturating_sub(vault.last_oracle_slot) > staleness_limit
 }
 
-fn oracle_redeem_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u64) -> bool {
-    vaults.iter().any(|v| {
-        let twap = canonical_twap_price(v.price, v.twap_price);
-        let staleness_limit = dynamic_oracle_staleness_limit(
-            v.price,
-            twap,
-            REDEEM_ORACLE_STALENESS_MAX,
-            HIGH_VOL_REDEEM_ORACLE_STALENESS_MAX,
-        );
-        let deviation = price_deviation_ppm(v.price, twap);
+fn count_degraded_vaults<'info>(
+    vaults: [&Account<'info, CollateralVault>; 4],
+    slot: u64,
+    normal_staleness_limit: u64,
+    high_vol_staleness_limit: u64,
+) -> usize {
+    vaults
+        .iter()
+        .filter(|v| {
+            vault_oracle_degraded(
+                v.as_ref(),
+                slot,
+                normal_staleness_limit,
+                high_vol_staleness_limit,
+            )
+        })
+        .count()
+}
 
-        v.price == 0
-            || v.confidence > ORACLE_CONFIDENCE_MAX
-            || deviation > TWAP_MAX_DEVIATION_PPM
-            || slot.saturating_sub(v.last_oracle_slot) > staleness_limit
-    })
+fn oracle_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u64) -> bool {
+    count_degraded_vaults(
+        vaults,
+        slot,
+        ORACLE_STALENESS_MAX,
+        HIGH_VOL_ORACLE_STALENESS_MAX,
+    ) > 0
 }
 
 fn basket_max_depeg<'info>(vaults: [&Account<'info, CollateralVault>; 4]) -> u64 {
@@ -3650,18 +3789,23 @@ fn redeem_discount_ppm<'info>(
     Ok(SCALE.saturating_sub(total_penalty))
 }
 
-fn progressive_redeem_fee_rate(protocol: &ProtocolState) -> Result<u64> {
+fn progressive_redeem_fee_rate(
+    protocol: &ProtocolState,
+    redeemed_in_flow_slot_before_tx: u64,
+) -> Result<u64> {
     let redeem_cap = slot_flow_limit(
         protocol.total_supply,
         protocol.max_redeem_per_slot_ppm,
         SlotFlowKind::Redeem,
     )?;
     if redeem_cap == 0 {
-        return Ok(protocol.redeem_fee_rate.min(MAX_PROGRESSIVE_REDEEM_FEE_RATE));
+        return Ok(protocol
+            .redeem_fee_rate
+            .min(MAX_PROGRESSIVE_REDEEM_FEE_RATE));
     }
 
     let velocity_ppm = mul_div_floor(
-        protocol.redeemed_in_flow_slot.min(redeem_cap),
+        redeemed_in_flow_slot_before_tx.min(redeem_cap),
         SCALE,
         redeem_cap,
     )?;
@@ -4080,6 +4224,7 @@ mod tests {
             flow_control_slot: 0,
             minted_in_flow_slot: 0,
             redeemed_in_flow_slot: 0,
+            last_twap_update_slots: [0; 4],
             max_mint_per_slot_ppm: DEFAULT_MAX_MINT_PER_SLOT_PPM,
             max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
             manual_oracle_mode_expiry_slot: 0,

@@ -47,8 +47,8 @@ use std::{
 };
 use tokio::time::MissedTickBehavior;
 use tracing::{error, info, warn};
-use watchdog::WatchdogMemory;
 use utils::KeyUsagePolicy;
+use watchdog::WatchdogMemory;
 
 const DEFAULT_KEEPER_ENV_PATH: &str = "/home/spritz/microstable-keeper/.env";
 const FAILURE_BACKOFF_SECS: u64 = 30;
@@ -147,8 +147,8 @@ async fn main() -> Result<()> {
 
     let secondary_runtime_for_boot = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
     if let Some(secondary) = secondary_runtime_for_boot.active_secondary_rpc {
-        if let Err(err) = utils::verify_program_deployed(secondary, &cfg.program_id)
-            .and_then(|_| {
+        if let Err(err) =
+            utils::verify_program_deployed(secondary, &cfg.program_id).and_then(|_| {
                 utils::verify_upgrade_authority_immutable(
                     secondary,
                     &cfg.program_id,
@@ -197,7 +197,10 @@ async fn main() -> Result<()> {
         if epoch_info.epoch >= cutover_epoch {
             let matches_next = next_keys.iter().all(|pk| loaded.contains(pk));
             if matches_next {
-                info!(cutover_epoch, "key rotation active: loaded keys match next rotation set");
+                info!(
+                    cutover_epoch,
+                    "key rotation active: loaded keys match next rotation set"
+                );
             } else if epoch_info.epoch <= grace_end {
                 warn!(
                     cutover_epoch,

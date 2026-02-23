@@ -83,6 +83,7 @@ fn sample_protocol_state() -> wire::ProtocolState {
         flow_control_slot: 42,
         minted_in_flow_slot: 0,
         redeemed_in_flow_slot: 0,
+        last_twap_update_slots: [42; 4],
         max_mint_per_slot_ppm: 120_000,
         max_redeem_per_slot_ppm: 80_000,
         manual_oracle_mode_expiry_slot: 0,

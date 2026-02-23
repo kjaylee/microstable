@@ -1,9 +1,13 @@
 use anyhow::{anyhow, Context, Result};
+use base64::Engine;
 use borsh::BorshDeserialize;
+use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+use pbkdf2::pbkdf2_hmac;
+use serde::Deserialize;
+use sha2::Sha256;
 use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 #[allow(deprecated)]
 use solana_sdk::bpf_loader_upgradeable::{self, UpgradeableLoaderState};
-use serde::Deserialize;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     hash::hash,
@@ -12,10 +16,6 @@ use solana_sdk::{
     signature::{read_keypair, Keypair, Signature, Signer},
     transaction::Transaction,
 };
-use base64::Engine;
-use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
-use pbkdf2::pbkdf2_hmac;
-use sha2::Sha256;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     env, fs,
@@ -518,13 +518,94 @@ fn decrypt_keypair_payload(encrypted: &EncryptedKeyFile) -> Result<Vec<u8>> {
 
     let aad = encrypted.aad.as_deref().unwrap_or(KEYFILE_AAD);
     let plaintext = cipher
-        .decrypt(nonce, chacha20poly1305::aead::Payload {
-            msg: &ciphertext,
-            aad: aad.as_bytes(),
-        })
+        .decrypt(
+            nonce,
+            chacha20poly1305::aead::Payload {
+                msg: &ciphertext,
+                aad: aad.as_bytes(),
+            },
+        )
         .map_err(|_| anyhow::anyhow!("failed to decrypt keyfile payload"))?;
 
     Ok(plaintext)
+}
+
+#[cfg(unix)]
+fn open_passphrase_file(path: &Path) -> Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "failed to open passphrase file securely: {}",
+                path.display()
+            )
+        })
+}
+
+#[cfg(not(unix))]
+fn open_passphrase_file(path: &Path) -> Result<fs::File> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to stat passphrase path: {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!(
+            "refusing symlinked passphrase file: {}",
+            path.display()
+        ));
+    }
+
+    fs::File::open(path)
+        .with_context(|| format!("failed to open passphrase file: {}", path.display()))
+}
+
+fn validate_passphrase_file_security(file: &fs::File, path: &Path) -> Result<()> {
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("failed to stat opened passphrase fd: {}", path.display()))?;
+
+    if !metadata.is_file() {
+        return Err(anyhow!("passphrase path is not a file: {}", path.display()));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            return Err(anyhow!(
+                "insecure passphrase file mode {:o} for {} (required: 600)",
+                mode,
+                path.display()
+            ));
+        }
+
+        let owner_uid = metadata.uid();
+        let effective_uid = effective_uid()?;
+        if owner_uid != effective_uid {
+            return Err(anyhow!(
+                "passphrase file {} owned by uid {}, expected uid {}",
+                path.display(),
+                owner_uid,
+                effective_uid
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn read_passphrase_file(path: &Path) -> Result<String> {
+    let mut file = open_passphrase_file(path)?;
+    validate_passphrase_file_security(&file, path)?;
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .with_context(|| format!("failed to read passphrase file: {}", path.display()))?;
+    Ok(content)
 }
 
 fn load_key_passphrase() -> Result<String> {
@@ -535,9 +616,9 @@ fn load_key_passphrase() -> Result<String> {
         }
     }
 
-    if let Ok(path) = env::var(KEY_PASSPHRASE_FILE_ENV) {
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read passphrase file: {}", path))?;
+    if let Ok(path_raw) = env::var(KEY_PASSPHRASE_FILE_ENV) {
+        let path = PathBuf::from(path_raw);
+        let content = read_passphrase_file(&path)?;
         let trimmed = content.trim();
         if !trimmed.is_empty() {
             return Ok(trimmed.to_string());
@@ -609,9 +690,9 @@ fn verify_keypair_integrity(signers: &[&Keypair]) -> Result<()> {
         .expect("key integrity mutex poisoned");
 
     for kp in signers {
-        let expected = state.get(&kp.pubkey()).ok_or_else(|| {
-            anyhow!("key integrity pin missing for signer {}", kp.pubkey())
-        })?;
+        let expected = state
+            .get(&kp.pubkey())
+            .ok_or_else(|| anyhow!("key integrity pin missing for signer {}", kp.pubkey()))?;
         let observed = hash(&kp.to_bytes()).to_bytes();
         if &observed != expected {
             return Err(anyhow!(
@@ -633,15 +714,29 @@ fn enforce_key_usage_limits(rpc: &RpcClient, signers: &[&Keypair]) -> Result<()>
         return Ok(());
     }
 
-    let epoch_info = rpc.get_epoch_info().context("failed to fetch epoch info")?;
+    let epoch_info = match rpc.get_epoch_info() {
+        Ok(info) => info,
+        Err(err) => {
+            warn!(
+                error = %err,
+                "failed to fetch epoch info for key-usage guard; continuing in observe-only mode"
+            );
+            return Ok(());
+        }
+    };
     let epoch = epoch_info.epoch;
     let now = Instant::now();
 
-    let mut state = key_usage_state()
-        .lock()
-        .expect("key usage mutex poisoned");
+    let mut state = key_usage_state().lock().expect("key usage mutex poisoned");
 
     if state.epoch != epoch {
+        if state.epoch != 0 {
+            info!(
+                previous_epoch = state.epoch,
+                new_epoch = epoch,
+                "key-usage counters reset on epoch boundary"
+            );
+        }
         state.epoch = epoch;
         state.usage.clear();
         state.events.clear();
@@ -649,14 +744,16 @@ fn enforce_key_usage_limits(rpc: &RpcClient, signers: &[&Keypair]) -> Result<()>
 
     for kp in signers {
         let entry = state.usage.entry(kp.pubkey()).or_insert(0);
-        if entry.saturating_add(1) > policy.max_per_epoch {
-            return Err(anyhow!(
-                "signer {} exceeded max signatures per epoch (limit={})",
-                kp.pubkey(),
-                policy.max_per_epoch
-            ));
-        }
         *entry = entry.saturating_add(1);
+        if *entry > policy.max_per_epoch {
+            warn!(
+                signer = %kp.pubkey(),
+                observed = *entry,
+                limit = policy.max_per_epoch,
+                epoch,
+                "key-usage per-epoch signature budget exceeded; continuing in observe-only mode"
+            );
+        }
 
         let window = Duration::from_secs(policy.anomaly_window_secs.max(1));
         let events = state
@@ -673,12 +770,13 @@ fn enforce_key_usage_limits(rpc: &RpcClient, signers: &[&Keypair]) -> Result<()>
         }
 
         if events.len() as u64 >= policy.anomaly_burst_threshold {
-            return Err(anyhow!(
-                "signing anomaly detected for signer {} ({} signatures within {}s)",
-                kp.pubkey(),
-                events.len(),
-                policy.anomaly_window_secs
-            ));
+            warn!(
+                signer = %kp.pubkey(),
+                burst_count = events.len(),
+                burst_window_secs = policy.anomaly_window_secs,
+                burst_threshold = policy.anomaly_burst_threshold,
+                "signing anomaly threshold reached; continuing in observe-only mode"
+            );
         }
     }
 
@@ -733,12 +831,13 @@ pub fn verify_program_deployed(rpc: &RpcClient, program_id: &Pubkey) -> Result<(
         ));
     }
 
-    let program_state: UpgradeableLoaderState = bincode::deserialize(
-        &program_account.data[..UpgradeableLoaderState::size_of_program()],
-    )
-    .with_context(|| format!("failed to decode upgradeable program state: {program_id}"))?;
+    let program_state: UpgradeableLoaderState =
+        bincode::deserialize(&program_account.data[..UpgradeableLoaderState::size_of_program()])
+            .with_context(|| format!("failed to decode upgradeable program state: {program_id}"))?;
     let programdata_address = match program_state {
-        UpgradeableLoaderState::Program { programdata_address } => programdata_address,
+        UpgradeableLoaderState::Program {
+            programdata_address,
+        } => programdata_address,
         _ => {
             return Err(anyhow!(
                 "program account is not in Program state for upgradeable loader: {program_id}"
@@ -796,7 +895,10 @@ pub fn verify_upgrade_authority_immutable(
     }
 
     let authority = observed.expect("checked is_some");
-    if allowed_multisigs.iter().any(|allowed| *allowed == authority) {
+    if allowed_multisigs
+        .iter()
+        .any(|allowed| *allowed == authority)
+    {
         warn!(
             program_id = %program_id,
             upgrade_authority = %authority,
@@ -841,12 +943,13 @@ fn read_upgrade_authority(rpc: &RpcClient, program_id: &Pubkey) -> Result<Option
         ));
     }
 
-    let program_state: UpgradeableLoaderState = bincode::deserialize(
-        &program_account.data[..UpgradeableLoaderState::size_of_program()],
-    )
-    .with_context(|| format!("failed to decode upgradeable program state: {program_id}"))?;
+    let program_state: UpgradeableLoaderState =
+        bincode::deserialize(&program_account.data[..UpgradeableLoaderState::size_of_program()])
+            .with_context(|| format!("failed to decode upgradeable program state: {program_id}"))?;
     let programdata_address = match program_state {
-        UpgradeableLoaderState::Program { programdata_address } => programdata_address,
+        UpgradeableLoaderState::Program {
+            programdata_address,
+        } => programdata_address,
         _ => {
             return Err(anyhow!(
                 "program account is not in Program state for upgradeable loader: {program_id}"
@@ -886,10 +989,7 @@ fn read_upgrade_authority(rpc: &RpcClient, program_id: &Pubkey) -> Result<Option
     }
 }
 
-fn enforce_upgrade_authority_pinning(
-    program_id: &Pubkey,
-    observed: Option<Pubkey>,
-) -> Result<()> {
+fn enforce_upgrade_authority_pinning(program_id: &Pubkey, observed: Option<Pubkey>) -> Result<()> {
     let allow_unpinned = env::var(ALLOW_UNPINNED_UPGRADE_AUTHORITY_ENV)
         .map(|value| value == "1")
         .unwrap_or(false);
@@ -1142,6 +1242,14 @@ pub fn validate_protocol_state_with_tolerance(
             primary.redeemed_in_flow_slot,
             secondary.redeemed_in_flow_slot,
             CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if primary.last_twap_update_slots != secondary.last_twap_update_slots {
+        return Err(anyhow!(
+            "protocol.last_twap_update_slots mismatch (primary={:?}, secondary={:?})",
+            primary.last_twap_update_slots,
+            secondary.last_twap_update_slots
         ));
     }
 
@@ -1502,7 +1610,10 @@ pub fn send_instructions(
 
     let mut unique_signers: Vec<&Keypair> = Vec::new();
     for signer in std::iter::once(payer).chain(signers.iter().copied()) {
-        if !unique_signers.iter().any(|existing| existing.pubkey() == signer.pubkey()) {
+        if !unique_signers
+            .iter()
+            .any(|existing| existing.pubkey() == signer.pubkey())
+        {
             unique_signers.push(signer);
         }
     }

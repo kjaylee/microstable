@@ -26,6 +26,7 @@ pub struct ProtocolState {
     pub flow_control_slot: u64,
     pub minted_in_flow_slot: u64,
     pub redeemed_in_flow_slot: u64,
+    pub last_twap_update_slots: [u64; 4],
     pub max_mint_per_slot_ppm: u64,
     pub max_redeem_per_slot_ppm: u64,
     pub manual_oracle_mode_expiry_slot: u64,

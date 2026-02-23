@@ -38,7 +38,18 @@ fn base_protocol() -> wire::ProtocolState {
         pending_rebalance_expiry: 0,
         pending_keeper_set: [[0u8; 32]; 3],
         pending_keeper_activation_slot: 0,
+        flow_control_slot: 123,
+        minted_in_flow_slot: 0,
+        redeemed_in_flow_slot: 0,
+        last_twap_update_slots: [123; 4],
+        max_mint_per_slot_ppm: 120_000,
+        max_redeem_per_slot_ppm: 80_000,
+        manual_oracle_mode_expiry_slot: 0,
         bump: 1,
+        manual_oracle_reenable_delay_slots: 600,
+        manual_oracle_last_activation_slot: 0,
+        manual_oracle_activation_epoch: 0,
+        manual_oracle_activation_count_epoch: 0,
     }
 }
 

@@ -1216,7 +1216,9 @@ fn load_pending_reveal_checkpoint() -> Result<Option<PendingReveal>> {
     let pending_json = serde_json::to_vec_pretty(&envelope.pending)?;
     let expected_tag = keyed_hash_hex(state_hmac_key()?.as_bytes(), &pending_json);
     if envelope.integrity_tag.trim().to_ascii_lowercase() != expected_tag {
-        return Err(anyhow!("pending reveal checkpoint integrity verification failed"));
+        return Err(anyhow!(
+            "pending reveal checkpoint integrity verification failed"
+        ));
     }
 
     Ok(Some(envelope.pending))
@@ -1235,7 +1237,12 @@ fn state_hmac_key() -> Result<String> {
     env::var(STATE_HMAC_ENV_KEY)
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("{} must be set to persist pending reveal state", STATE_HMAC_ENV_KEY))
+        .ok_or_else(|| {
+            anyhow!(
+                "{} must be set to persist pending reveal state",
+                STATE_HMAC_ENV_KEY
+            )
+        })
 }
 
 fn keyed_hash_hex(key: &[u8], payload: &[u8]) -> String {
@@ -1300,6 +1307,7 @@ mod tests {
             flow_control_slot: 0,
             minted_in_flow_slot: 0,
             redeemed_in_flow_slot: 0,
+            last_twap_update_slots: [0; 4],
             max_mint_per_slot_ppm: 120_000,
             max_redeem_per_slot_ppm: 80_000,
             manual_oracle_mode_expiry_slot: 0,
