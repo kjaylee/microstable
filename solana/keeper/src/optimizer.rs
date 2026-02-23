@@ -548,6 +548,25 @@ impl AdamOptimizer {
         self.state.t = self.state.t.saturating_add(1);
         let t = self.state.t as f64;
         let lr = self.learning_rate_for_step(self.state.t);
+        if !lr.is_finite() || lr < 0.0 {
+            return *params;
+        }
+
+        let beta1 = if self.beta1.is_finite() {
+            self.beta1.clamp(0.0, 1.0)
+        } else {
+            0.9
+        };
+        let beta2 = if self.beta2.is_finite() {
+            self.beta2.clamp(0.0, 1.0)
+        } else {
+            0.999
+        };
+        let eps = if self.epsilon.is_finite() && self.epsilon > 0.0 {
+            self.epsilon
+        } else {
+            1e-8
+        };
 
         let g_flat = g.flatten();
         let m_flat = self.state.m.flatten();
@@ -557,14 +576,31 @@ impl AdamOptimizer {
         let mut new_v = [0.0; PARAM_DIM];
         let mut update = [0.0; PARAM_DIM];
 
+        let m_bias_correction = 1.0 - beta1.powf(t);
+        let v_bias_correction = 1.0 - beta2.powf(t);
+
         for i in 0..PARAM_DIM {
-            new_m[i] = self.beta1 * m_flat[i] + (1.0 - self.beta1) * g_flat[i];
-            new_v[i] = self.beta2 * v_flat[i] + (1.0 - self.beta2) * g_flat[i] * g_flat[i];
+            new_m[i] = beta1 * m_flat[i] + (1.0 - beta1) * g_flat[i];
+            new_v[i] = beta2 * v_flat[i] + (1.0 - beta2) * g_flat[i] * g_flat[i];
 
-            let m_hat = new_m[i] / (1.0 - self.beta1.powf(t));
-            let v_hat = new_v[i] / (1.0 - self.beta2.powf(t));
+            let m_hat = if m_bias_correction.abs() <= f64::EPSILON {
+                new_m[i]
+            } else {
+                new_m[i] / m_bias_correction
+            };
+            let v_hat = if v_bias_correction.abs() <= f64::EPSILON {
+                new_v[i].abs()
+            } else {
+                (new_v[i] / v_bias_correction).abs()
+            };
 
-            update[i] = lr * m_hat / (v_hat.sqrt() + self.epsilon);
+            let denom = v_hat.sqrt() + eps;
+            let candidate_update = lr * m_hat / denom;
+            update[i] = if candidate_update.is_finite() {
+                candidate_update
+            } else {
+                0.0
+            };
         }
 
         self.state.m = ParamVector::from_flat(new_m);

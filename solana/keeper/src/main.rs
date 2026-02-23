@@ -22,6 +22,8 @@ mod optimizer_tests;
 #[cfg(test)]
 mod risk_manager_tests;
 #[cfg(test)]
+mod stress_tests;
+#[cfg(test)]
 mod tournament_tests;
 
 use agent_loop::AgentLoopState;
