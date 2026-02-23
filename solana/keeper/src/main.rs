@@ -50,6 +50,7 @@ use tracing::{error, info, warn};
 use watchdog::WatchdogMemory;
 
 const DEFAULT_KEEPER_ENV_PATH: &str = "/home/spritz/microstable-keeper/.env";
+const FAILURE_BACKOFF_SECS: u64 = 30;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -149,8 +150,7 @@ async fn main() -> Result<()> {
     );
 
     let keypairs = utils::load_keypairs(&cfg.keeper_keypairs)?;
-    let keeper_pubkeys: Vec<_> = keypairs.iter().map(|kp| kp.pubkey().to_string()).collect();
-    info!(keepers = ?keeper_pubkeys, "keeper keypairs loaded");
+    info!(keeper_count = keypairs.len(), "keeper keypairs loaded");
 
     run_startup_preflight(&rpc, &cfg, &keypairs, cli.require_rebalance)?;
 
@@ -161,6 +161,7 @@ async fn main() -> Result<()> {
     let mut agent_loop_state = AgentLoopState::default();
 
     load_optimizer_checkpoint_into_memory(&mut rebalance_memory);
+    rebalance_memory.load_pending_reveal_from_disk();
 
     if cli.once {
         let secondary_runtime = resolve_secondary_rpc_runtime(secondary_rpc.as_ref());
@@ -224,10 +225,13 @@ async fn main() -> Result<()> {
                                 "cycle failed"
                             );
                             if consecutive_failed_cycles >= cfg.max_consecutive_failed_cycles {
-                                return Err(anyhow!(
-                                    "too many consecutive failed cycles ({}), exiting for operator intervention",
-                                    consecutive_failed_cycles
-                                ));
+                                error!(
+                                    consecutive_failed_cycles,
+                                    backoff_secs = FAILURE_BACKOFF_SECS,
+                                    "failure threshold reached; entering self-heal backoff instead of exiting"
+                                );
+                                std::thread::sleep(Duration::from_secs(FAILURE_BACKOFF_SECS));
+                                consecutive_failed_cycles = 0;
                             }
                         }
                     }
@@ -278,10 +282,13 @@ async fn main() -> Result<()> {
                                 "cycle failed"
                             );
                             if consecutive_failed_cycles >= cfg.max_consecutive_failed_cycles {
-                                return Err(anyhow!(
-                                    "too many consecutive failed cycles ({}), exiting for operator intervention",
-                                    consecutive_failed_cycles
-                                ));
+                                error!(
+                                    consecutive_failed_cycles,
+                                    backoff_secs = FAILURE_BACKOFF_SECS,
+                                    "failure threshold reached; entering self-heal backoff instead of exiting"
+                                );
+                                std::thread::sleep(Duration::from_secs(FAILURE_BACKOFF_SECS));
+                                consecutive_failed_cycles = 0;
                             }
                         }
                     }
@@ -409,19 +416,17 @@ fn preflight_keeper_agent_registration(
             rpc.get_account_with_commitment(&agent_record, CommitmentConfig::processed())?;
         let Some(account) = response.value else {
             warn!(
-                keeper_key = %keeper_key,
-                "keeper key {} is not registered as agent — rebalance commit will be unavailable",
-                keeper_key
+                keeper_key = %redact_pubkey(keeper_key),
+                "keeper signer is not registered as agent — rebalance commit will be unavailable"
             );
             continue;
         };
 
         if account.owner != cfg.program_id {
             warn!(
-                keeper_key = %keeper_key,
+                keeper_key = %redact_pubkey(keeper_key),
                 owner = %account.owner,
-                "keeper key {} has invalid agent record owner — rebalance commit will be unavailable",
-                keeper_key
+                "keeper signer has invalid agent record owner — rebalance commit will be unavailable"
             );
             continue;
         }
@@ -429,9 +434,8 @@ fn preflight_keeper_agent_registration(
         let Ok(record) = wire::decode_account::<wire::AgentRecord>(&account.data, "AgentRecord")
         else {
             warn!(
-                keeper_key = %keeper_key,
-                "keeper key {} agent record decode failed — rebalance commit will be unavailable",
-                keeper_key
+                keeper_key = %redact_pubkey(keeper_key),
+                "keeper signer agent record decode failed — rebalance commit will be unavailable"
             );
             continue;
         };
@@ -439,18 +443,16 @@ fn preflight_keeper_agent_registration(
         if !agent_record_is_rebalance_eligible(&record) {
             if record.status != wire::AgentStatus::Active {
                 warn!(
-                    keeper_key = %keeper_key,
+                    keeper_key = %redact_pubkey(keeper_key),
                     status = ?record.status,
-                    "keeper key {} is not Active — rebalance commit requires active status",
-                    keeper_key
+                    "keeper signer is not Active — rebalance commit requires active status"
                 );
             }
             if record.tier < 2 {
                 warn!(
-                    keeper_key = %keeper_key,
+                    keeper_key = %redact_pubkey(keeper_key),
                     tier = record.tier,
-                    "keeper key {} is tier {}, needs tier 2+ for rebalance commit",
-                    keeper_key,
+                    "keeper signer tier is below 2 (current={})",
                     record.tier
                 );
             }
@@ -477,6 +479,14 @@ fn rebalance_preflight_instructions() -> &'static str {
 
 fn derive_agent_record_pda(program_id: Pubkey, agent: Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"agent", agent.as_ref()], &program_id).0
+}
+
+fn redact_pubkey(pubkey: Pubkey) -> String {
+    let raw = pubkey.to_string();
+    if raw.len() <= 10 {
+        return raw;
+    }
+    format!("{}…{}", &raw[..4], &raw[raw.len() - 4..])
 }
 
 fn check_pm2_isolation() {
@@ -736,39 +746,54 @@ fn run_cycle(
     info!(secondary_mode = ?secondary_mode, "cycle start");
 
     let mut failed_steps = Vec::new();
-
-    match oracle::run_oracle_cycle(rpc, secondary_rpc, secondary_mode, cfg, keepers, derived) {
-        Ok(updates) => info!(count = updates.len(), "oracle step complete"),
-        Err(err) => {
-            failed_steps.push("oracle");
-            warn!(error = %err, "oracle step failed");
-        }
+    let allow_mutation_txs = !matches!(secondary_mode, utils::SecondaryRpcMode::Degraded);
+    if !allow_mutation_txs {
+        warn!("secondary RPC is degraded; running keeper in read-only safe mode");
     }
 
-    match rebalance::run_rebalance_cycle(
-        rpc,
-        secondary_rpc,
-        secondary_mode,
-        cfg,
-        keepers,
-        derived,
-        rebalance_memory,
-    ) {
-        Ok(outcome) => {
-            if outcome.proposed {
-                info!(
-                    deviation_bps = outcome.deviation_bps,
-                    target_weights = ?outcome.target_weights,
-                    commit_signature = ?outcome.commit_signature,
-                    rebalance_signature = ?outcome.rebalance_signature,
-                    "rebalance proposal generated"
-                );
+    let mut safe_cfg = cfg.clone();
+    if !allow_mutation_txs {
+        safe_cfg.auto_emergency_shutdown = false;
+        safe_cfg.send_watchdog_alert_tx = false;
+        safe_cfg.execute_rebalance_immediately = false;
+    }
+
+    if allow_mutation_txs {
+        match oracle::run_oracle_cycle(rpc, secondary_rpc, secondary_mode, cfg, keepers, derived) {
+            Ok(updates) => info!(count = updates.len(), "oracle step complete"),
+            Err(err) => {
+                failed_steps.push("oracle");
+                warn!(error = %err, "oracle step failed");
             }
         }
-        Err(err) => {
-            failed_steps.push("rebalance");
-            warn!(error = %err, "rebalance step failed");
+
+        match rebalance::run_rebalance_cycle(
+            rpc,
+            secondary_rpc,
+            secondary_mode,
+            cfg,
+            keepers,
+            derived,
+            rebalance_memory,
+        ) {
+            Ok(outcome) => {
+                if outcome.proposed {
+                    info!(
+                        deviation_bps = outcome.deviation_bps,
+                        target_weights = ?outcome.target_weights,
+                        commit_signature = ?outcome.commit_signature,
+                        rebalance_signature = ?outcome.rebalance_signature,
+                        "rebalance proposal generated"
+                    );
+                }
+            }
+            Err(err) => {
+                failed_steps.push("rebalance");
+                warn!(error = %err, "rebalance step failed");
+            }
         }
+    } else {
+        info!("oracle/rebalance mutations skipped in degraded read-only mode");
     }
 
     match risk_manager::run_risk_manager_cycle(
@@ -788,18 +813,22 @@ fn run_cycle(
                 "risk manager step complete"
             );
 
-            if let Err(err) = maybe_apply_dynamic_fees(
-                rpc,
-                secondary_rpc,
-                secondary_mode,
-                cfg,
-                keepers,
-                derived,
-                outcome.risk_level,
-                risk_manager_memory,
-            ) {
-                failed_steps.push("risk_manager");
-                warn!(error = %err, "risk manager dynamic fee update failed");
+            if allow_mutation_txs {
+                if let Err(err) = maybe_apply_dynamic_fees(
+                    rpc,
+                    secondary_rpc,
+                    secondary_mode,
+                    cfg,
+                    keepers,
+                    derived,
+                    outcome.risk_level,
+                    risk_manager_memory,
+                ) {
+                    failed_steps.push("risk_manager");
+                    warn!(error = %err, "risk manager dynamic fee update failed");
+                }
+            } else {
+                info!("risk manager dynamic fee writes skipped in degraded read-only mode");
             }
         }
         Err(err) => {
@@ -808,43 +837,47 @@ fn run_cycle(
         }
     }
 
-    match agent_loop::maybe_run_aig_cycle_with_tx(
-        rpc,
-        secondary_rpc,
-        secondary_mode,
-        cfg,
-        keepers,
-        derived,
-        agent_loop_state,
-    ) {
-        Ok(()) => {}
-        Err(err) => {
-            failed_steps.push("aig");
-            warn!(error = %err, "aig step failed");
+    if allow_mutation_txs {
+        match agent_loop::maybe_run_aig_cycle_with_tx(
+            rpc,
+            secondary_rpc,
+            secondary_mode,
+            cfg,
+            keepers,
+            derived,
+            agent_loop_state,
+        ) {
+            Ok(()) => {}
+            Err(err) => {
+                failed_steps.push("aig");
+                warn!(error = %err, "aig step failed");
+            }
         }
-    }
 
-    match agent_loop::maybe_run_tournament_cycle_with_tx(
-        rpc,
-        secondary_rpc,
-        secondary_mode,
-        cfg,
-        keepers,
-        derived,
-        agent_loop_state,
-    ) {
-        Ok(()) => {}
-        Err(err) => {
-            failed_steps.push("tournament");
-            warn!(error = %err, "tournament step failed");
+        match agent_loop::maybe_run_tournament_cycle_with_tx(
+            rpc,
+            secondary_rpc,
+            secondary_mode,
+            cfg,
+            keepers,
+            derived,
+            agent_loop_state,
+        ) {
+            Ok(()) => {}
+            Err(err) => {
+                failed_steps.push("tournament");
+                warn!(error = %err, "tournament step failed");
+            }
         }
+    } else {
+        info!("aig/tournament mutations skipped in degraded read-only mode");
     }
 
     match monitor::run_monitor_cycle(
         rpc,
         secondary_rpc,
         secondary_mode,
-        cfg,
+        &safe_cfg,
         keepers,
         derived,
         monitor_memory,
@@ -870,7 +903,7 @@ fn run_cycle(
         rpc,
         secondary_rpc,
         secondary_mode,
-        cfg,
+        &safe_cfg,
         keepers,
         derived,
         watchdog_memory,

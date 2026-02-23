@@ -1,0 +1,583 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1771849140232,
+  "projectRoot": "/Users/kjaylee/.openclaw/workspace/microstable",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      },
+      {
+        "name": "Rust",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Cargo.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "mocha",
+        "version": "10.8.2",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "yarn",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test",
+    "lintCommand": "yarn lint",
+    "devCommand": "cargo run",
+    "scripts": {
+      "lint": "prettier \"**/*.{js,ts}\" --check",
+      "lint:fix": "prettier \"**/*.{js,ts}\" -w"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "tests"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 17,
+      "lastAccessed": 1771849140198,
+      "keyFiles": [
+        "adversarial_agents.cpython-314.pyc",
+        "agent_intelligence_gate.cpython-314.pyc",
+        "mega_stress_test.cpython-314.pyc",
+        "microstable.cpython-314.pyc",
+        "open_agent_economy.cpython-314.pyc"
+      ]
+    },
+    "agents": {
+      "path": "agents",
+      "purpose": null,
+      "fileCount": 6,
+      "lastAccessed": 1771849140199,
+      "keyFiles": [
+        "__init__.py",
+        "auditor.py",
+        "consensus.py",
+        "keeper.py",
+        "security_controls.py"
+      ]
+    },
+    "chaos": {
+      "path": "chaos",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1771849140211,
+      "keyFiles": [
+        "__init__.py",
+        "degradation_test.py",
+        "runner.py",
+        "scenarios.py"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 43,
+      "lastAccessed": 1771849140213,
+      "keyFiles": [
+        "SECURITY.md",
+        "adversarial-agent-infrastructure.md",
+        "agent-intelligence-gate.md",
+        "algorithm-verification.md",
+        "audit-report.md"
+      ]
+    },
+    "mcp-server": {
+      "path": "mcp-server",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1771849140223,
+      "keyFiles": [
+        "README.md",
+        "package-lock.json",
+        "package.json",
+        "tsconfig.json"
+      ]
+    },
+    "migrations": {
+      "path": "migrations",
+      "purpose": "Database migrations",
+      "fileCount": 1,
+      "lastAccessed": 1771849140224,
+      "keyFiles": [
+        "deploy.ts"
+      ]
+    },
+    "monitoring": {
+      "path": "monitoring",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1771849140225,
+      "keyFiles": [
+        "__init__.py",
+        "alerts.py",
+        "dashboard_data.py",
+        "healthcheck.py",
+        "metrics.py"
+      ]
+    },
+    "programs": {
+      "path": "programs",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1771849140225,
+      "keyFiles": []
+    },
+    "scenarios": {
+      "path": "scenarios",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1771849140226,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 1,
+      "lastAccessed": 1771849140226,
+      "keyFiles": [
+        "multi-airdrop.sh"
+      ]
+    },
+    "security": {
+      "path": "security",
+      "purpose": null,
+      "fileCount": 10,
+      "lastAccessed": 1771849140226,
+      "keyFiles": [
+        "__init__.py",
+        "green-team-report.md",
+        "invariant_monitor.py",
+        "program-immutability-proof.txt",
+        "red-team-report.md"
+      ]
+    },
+    "simulation": {
+      "path": "simulation",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1771849140226,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "solana": {
+      "path": "solana",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1771849140227,
+      "keyFiles": [
+        "Anchor.toml",
+        "Cargo.lock",
+        "Cargo.toml",
+        "docs-pyth-devnet.md",
+        "package.json"
+      ]
+    },
+    "specs": {
+      "path": "specs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1771849140227,
+      "keyFiles": [
+        "whitepaper-impl-gap.md"
+      ]
+    },
+    "target": {
+      "path": "target",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1771849140227,
+      "keyFiles": []
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1771849140227,
+      "keyFiles": [
+        "microstable.ts",
+        "test_all.py",
+        "test_verification.py"
+      ]
+    },
+    "wallets": {
+      "path": "wallets",
+      "purpose": null,
+      "fileCount": 13,
+      "lastAccessed": 1771849140228,
+      "keyFiles": [
+        "auditor-agent.json",
+        "keeper-agent.json",
+        "wallet-1.json",
+        "wallet-10.json",
+        "wallet-2.json"
+      ]
+    },
+    "mcp-server/dist": {
+      "path": "mcp-server/dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 1,
+      "lastAccessed": 1771849140229,
+      "keyFiles": [
+        "index.js"
+      ]
+    },
+    "mcp-server/node_modules": {
+      "path": "mcp-server/node_modules",
+      "purpose": "Dependencies",
+      "fileCount": 1,
+      "lastAccessed": 1771849140229,
+      "keyFiles": []
+    },
+    "mcp-server/scripts": {
+      "path": "mcp-server/scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 1,
+      "lastAccessed": 1771849140229,
+      "keyFiles": [
+        "microstable-bridge.py"
+      ]
+    },
+    "mcp-server/src": {
+      "path": "mcp-server/src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1771849140229,
+      "keyFiles": [
+        "index.ts"
+      ]
+    },
+    "simulation/docs": {
+      "path": "simulation/docs",
+      "purpose": "Documentation",
+      "fileCount": 0,
+      "lastAccessed": 1771849140230,
+      "keyFiles": []
+    },
+    "simulation/tests": {
+      "path": "simulation/tests",
+      "purpose": "Test files",
+      "fileCount": 8,
+      "lastAccessed": 1771849140230,
+      "keyFiles": [
+        "test_adversarial_agents.py",
+        "test_agent_intelligence_gate.py",
+        "test_blue_team_v2.py"
+      ]
+    },
+    "solana/app": {
+      "path": "solana/app",
+      "purpose": "Application code",
+      "fileCount": 0,
+      "lastAccessed": 1771849140231,
+      "keyFiles": []
+    },
+    "target/types": {
+      "path": "target/types",
+      "purpose": "Type definitions",
+      "fileCount": 1,
+      "lastAccessed": 1771849140232,
+      "keyFiles": [
+        "microstable.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "solana/programs/microstable/src/lib.rs",
+      "accessCount": 37,
+      "lastAccessed": 1771853235068,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src",
+      "accessCount": 32,
+      "lastAccessed": 1771853114224,
+      "type": "directory"
+    },
+    {
+      "path": "programs/microstable/src",
+      "accessCount": 20,
+      "lastAccessed": 1771849295651,
+      "type": "directory"
+    },
+    {
+      "path": "",
+      "accessCount": 12,
+      "lastAccessed": 1771852409898,
+      "type": "directory"
+    },
+    {
+      "path": "solana",
+      "accessCount": 7,
+      "lastAccessed": 1771852410518,
+      "type": "directory"
+    },
+    {
+      "path": "solana/keeper/src/risk_manager.rs",
+      "accessCount": 7,
+      "lastAccessed": 1771853120798,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/config.rs",
+      "accessCount": 6,
+      "lastAccessed": 1771853114254,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/rebalance.rs",
+      "accessCount": 6,
+      "lastAccessed": 1771853115357,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/utils.rs",
+      "accessCount": 5,
+      "lastAccessed": 1771853106868,
+      "type": "file"
+    },
+    {
+      "path": "docs",
+      "accessCount": 4,
+      "lastAccessed": 1771849991766,
+      "type": "directory"
+    },
+    {
+      "path": "solana/keeper/src/optimizer.rs",
+      "accessCount": 4,
+      "lastAccessed": 1771852418595,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/main.rs",
+      "accessCount": 3,
+      "lastAccessed": 1771852409851,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/wire.rs",
+      "accessCount": 3,
+      "lastAccessed": 1771852431761,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/Cargo.toml",
+      "accessCount": 3,
+      "lastAccessed": 1771852436018,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/agent_loop.rs",
+      "accessCount": 3,
+      "lastAccessed": 1771853112104,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/lib.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849244032,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/state.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849244470,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/errors.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849244969,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/mod.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849245404,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/initialize.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849245865,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/mint.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849246325,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/redeem.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849246738,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/submit_update.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849247146,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/apply_update.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849247640,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/trigger_circuit_breaker.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849248083,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions/recover_circuit_breaker.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771849248562,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/Cargo.toml",
+      "accessCount": 2,
+      "lastAccessed": 1771849249686,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/oracle.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771852410788,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/monitor.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771852411206,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/watchdog.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771852411661,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/tournament.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771852418801,
+      "type": "file"
+    },
+    {
+      "path": "solana/keeper/src/aig.rs",
+      "accessCount": 2,
+      "lastAccessed": 1771852419020,
+      "type": "file"
+    },
+    {
+      "path": "solana/programs/microstable/Cargo.toml",
+      "accessCount": 2,
+      "lastAccessed": 1771852430502,
+      "type": "file"
+    },
+    {
+      "path": "solana/Anchor.toml",
+      "accessCount": 2,
+      "lastAccessed": 1771853223739,
+      "type": "file"
+    },
+    {
+      "path": "SECURITY.md",
+      "accessCount": 1,
+      "lastAccessed": 1771849192218,
+      "type": "file"
+    },
+    {
+      "path": "docs/security/purple-v17-report.md",
+      "accessCount": 1,
+      "lastAccessed": 1771849204990,
+      "type": "file"
+    },
+    {
+      "path": "docs/audit-report.md",
+      "accessCount": 1,
+      "lastAccessed": 1771849205127,
+      "type": "file"
+    },
+    {
+      "path": "docs/unimplemented-audit.md",
+      "accessCount": 1,
+      "lastAccessed": 1771849205661,
+      "type": "file"
+    },
+    {
+      "path": "solana/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1771849278624,
+      "type": "file"
+    },
+    {
+      "path": "programs/microstable/src/instructions",
+      "accessCount": 1,
+      "lastAccessed": 1771849296587,
+      "type": "directory"
+    },
+    {
+      "path": "solana/Cargo.lock",
+      "accessCount": 1,
+      "lastAccessed": 1771849317799,
+      "type": "directory"
+    },
+    {
+      "path": "solana/keeper",
+      "accessCount": 1,
+      "lastAccessed": 1771852430241,
+      "type": "directory"
+    },
+    {
+      "path": "solana/programs/microstable/src",
+      "accessCount": 1,
+      "lastAccessed": 1771853219007,
+      "type": "directory"
+    }
+  ],
+  "userDirectives": []
+}

@@ -15,7 +15,10 @@ mod watchdog;
 #[path = "../src/wire.rs"]
 mod wire;
 
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+};
 
 fn reset_secondary_state() {
     utils::reset_secondary_rpc_health_for_tests();

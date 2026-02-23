@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use solana_sdk::hash::hashv;
 use std::{
     env,
     error::Error,
@@ -98,7 +99,6 @@ impl ParamVector {
         Self::from_flat(out)
     }
 
-
     pub fn scale(&self, s: f64) -> Self {
         let a = self.flatten();
         let mut out = [0.0; PARAM_DIM];
@@ -121,7 +121,6 @@ impl ParamVector {
 
         true
     }
-
 }
 
 /// Runtime protocol snapshot used for loss evaluation.
@@ -801,16 +800,91 @@ impl OptimizerCheckpoint {
             }
         }
 
-        let data = serde_json::to_string_pretty(self)?;
-        fs::write(path_ref, data)?;
+        let checkpoint_json = serde_json::to_vec_pretty(self)?;
+        let envelope = OptimizerCheckpointEnvelope {
+            version: OPTIMIZER_CHECKPOINT_VERSION,
+            integrity_tag: checkpoint_integrity_tag(&checkpoint_json),
+            checkpoint: self.clone(),
+        };
+
+        let data = serde_json::to_vec_pretty(&envelope)?;
+        let tmp_path = path_ref.with_extension("json.tmp");
+        fs::write(&tmp_path, data)?;
+        fs::rename(&tmp_path, path_ref)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path_ref, fs::Permissions::from_mode(0o600))?;
+        }
         Ok(())
     }
 
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, OptimizerError> {
-        let data = fs::read_to_string(path)?;
-        let checkpoint = serde_json::from_str(&data)?;
-        Ok(checkpoint)
+        let path_ref = path.as_ref();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(path_ref)?.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(OptimizerError::Io(format!(
+                    "checkpoint file has insecure permissions {:o}: {}",
+                    mode,
+                    path_ref.display()
+                )));
+            }
+        }
+
+        let data = fs::read(path_ref)?;
+
+        if let Ok(envelope) = serde_json::from_slice::<OptimizerCheckpointEnvelope>(&data) {
+            if envelope.version != OPTIMIZER_CHECKPOINT_VERSION {
+                return Err(OptimizerError::Serialization(format!(
+                    "unsupported checkpoint envelope version: {}",
+                    envelope.version
+                )));
+            }
+
+            let checkpoint_json = serde_json::to_vec_pretty(&envelope.checkpoint)?;
+            let expected_tag = checkpoint_integrity_tag(&checkpoint_json);
+            if envelope.integrity_tag.trim().to_ascii_lowercase() != expected_tag {
+                return Err(OptimizerError::Serialization(
+                    "optimizer checkpoint integrity verification failed".to_string(),
+                ));
+            }
+
+            return Ok(envelope.checkpoint);
+        }
+
+        // Backward compatibility for legacy unsigned checkpoint format.
+        let legacy: OptimizerCheckpoint = serde_json::from_slice(&data)?;
+        Ok(legacy)
     }
+}
+
+const OPTIMIZER_CHECKPOINT_VERSION: u8 = 1;
+const STATE_HMAC_ENV_KEY: &str = "MICROSTABLE_STATE_HMAC_KEY";
+const STATE_HMAC_DEFAULT_KEY: &str = "microstable-local-state-default-key";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct OptimizerCheckpointEnvelope {
+    version: u8,
+    integrity_tag: String,
+    checkpoint: OptimizerCheckpoint,
+}
+
+fn checkpoint_integrity_tag(payload: &[u8]) -> String {
+    let key = env::var(STATE_HMAC_ENV_KEY)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| STATE_HMAC_DEFAULT_KEY.to_string());
+    let digest = hashv(&[
+        b"microstable:optimizer-checkpoint:v1",
+        key.as_bytes(),
+        payload,
+        key.as_bytes(),
+    ])
+    .to_bytes();
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Errors produced by the optimizer module.

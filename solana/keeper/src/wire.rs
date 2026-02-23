@@ -23,6 +23,12 @@ pub struct ProtocolState {
     pub pending_rebalance_expiry: u64,
     pub pending_keeper_set: [[u8; 32]; 3],
     pub pending_keeper_activation_slot: u64,
+    pub flow_control_slot: u64,
+    pub minted_in_flow_slot: u64,
+    pub redeemed_in_flow_slot: u64,
+    pub max_mint_per_slot_ppm: u64,
+    pub max_redeem_per_slot_ppm: u64,
+    pub manual_oracle_mode_expiry_slot: u64,
     pub bump: u8,
 }
 

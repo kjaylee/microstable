@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use solana_sdk::{pubkey, pubkey::Pubkey};
+use solana_sdk::{hash::hashv, pubkey, pubkey::Pubkey};
 use std::{
     collections::HashSet,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -38,6 +38,15 @@ const MAX_EMERGENCY_CR_BPS: u64 = 20_000;
 const MAX_COMMIT_VALID_FOR_SLOTS: u64 = 1_000;
 const MAX_CONSECUTIVE_FAILED_CYCLES: u64 = 100;
 const EXPECTED_VAULT_COUNT: usize = 4;
+const CONFIG_HMAC_ENV_KEY: &str = "MICROSTABLE_CONFIG_HMAC_KEY";
+const CONFIG_HMAC_ALLOW_UNSIGNED_ENV: &str = "MICROSTABLE_ALLOW_UNSIGNED_CONFIG";
+const CONFIG_SIGNATURE_SUFFIX: &str = ".sig";
+const RPC_ALLOWLIST: [&str; 3] = [
+    "api.devnet.solana.com",
+    "devnet.rpcpool.com",
+    "rpc.ankr.com",
+];
+const FORBIDDEN_KEYPAIR_PREFIXES: [&str; 3] = ["/tmp/", "/var/tmp/", "/dev/shm/"];
 
 #[derive(Debug, Clone)]
 pub struct KeeperConfig {
@@ -129,6 +138,7 @@ impl KeeperConfig {
         if config_path.exists() {
             let content = fs::read_to_string(config_path)
                 .with_context(|| format!("failed to read config: {}", config_path.display()))?;
+            verify_config_integrity(config_path, &content)?;
             let file: KeeperConfigFile = serde_json::from_str(&content)
                 .with_context(|| format!("failed to parse config: {}", config_path.display()))?;
             return Self::from_file(file);
@@ -307,9 +317,13 @@ impl KeeperConfig {
             ));
         }
 
+        validate_rpc_allowlist(&self.rpc_url)?;
+        validate_rpc_allowlist(secondary)?;
+
         if self.keeper_keypairs.len() < 2 {
             return Err(anyhow!("keeper_keypairs must contain at least 2 entries"));
         }
+        validate_keypair_path_policy(&self.keeper_keypairs)?;
 
         if self.pyth_feeds.len() < EXPECTED_VAULT_COUNT {
             let configured: HashSet<u8> = self
@@ -532,4 +546,127 @@ impl KeeperConfig {
             max_consecutive_failed_cycles: Some(self.max_consecutive_failed_cycles),
         }
     }
+}
+
+fn validate_rpc_allowlist(raw_url: &str) -> Result<()> {
+    let host = extract_https_host(raw_url)?;
+    if RPC_ALLOWLIST
+        .iter()
+        .any(|allowed| host.eq_ignore_ascii_case(allowed))
+    {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "rpc endpoint host is not allowlisted: {} (allowed: {:?})",
+        host,
+        RPC_ALLOWLIST
+    ))
+}
+
+fn extract_https_host(raw_url: &str) -> Result<&str> {
+    let url = raw_url.trim();
+    let without_scheme = url
+        .strip_prefix("https://")
+        .ok_or_else(|| anyhow!("rpc_url must use https scheme: {url}"))?;
+
+    let host_port = without_scheme.split('/').next().unwrap_or_default();
+    if host_port.is_empty() {
+        return Err(anyhow!("rpc_url missing host: {url}"));
+    }
+
+    let host = host_port.split('@').next_back().unwrap_or_default();
+    if host.is_empty() {
+        return Err(anyhow!("rpc_url missing host component: {url}"));
+    }
+
+    Ok(host.split(':').next().unwrap_or(host))
+}
+
+fn validate_keypair_path_policy(paths: &[PathBuf]) -> Result<()> {
+    let mut unique_parent_dirs = HashSet::new();
+
+    for path in paths {
+        let normalized = path.to_string_lossy();
+        let normalized_lower = normalized.to_ascii_lowercase();
+
+        if FORBIDDEN_KEYPAIR_PREFIXES
+            .iter()
+            .any(|prefix| normalized_lower.starts_with(prefix))
+        {
+            return Err(anyhow!(
+                "keeper_keypairs cannot use ephemeral directory paths ({})",
+                normalized
+            ));
+        }
+
+        if normalized.contains("..") {
+            return Err(anyhow!(
+                "keeper_keypairs cannot contain parent traversal segments: {}",
+                normalized
+            ));
+        }
+
+        if let Some(parent) = path.parent() {
+            unique_parent_dirs.insert(parent.to_string_lossy().to_string());
+        }
+    }
+
+    if unique_parent_dirs.len() < 2 {
+        return Err(anyhow!(
+            "keeper_keypairs must span at least two distinct parent directories for blast-radius reduction"
+        ));
+    }
+
+    Ok(())
+}
+
+fn verify_config_integrity(config_path: &Path, content: &str) -> Result<()> {
+    let maybe_key = env::var(CONFIG_HMAC_ENV_KEY)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if maybe_key.is_none() {
+        let allow_unsigned = env::var(CONFIG_HMAC_ALLOW_UNSIGNED_ENV)
+            .map(|v| v == "1")
+            .unwrap_or(false)
+            || config_path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .is_some_and(|name| name == "config.devnet.json");
+
+        if allow_unsigned {
+            return Ok(());
+        }
+
+        return Err(anyhow!(
+            "{} is required (or set {}=1 for explicit insecure override)",
+            CONFIG_HMAC_ENV_KEY,
+            CONFIG_HMAC_ALLOW_UNSIGNED_ENV
+        ));
+    }
+
+    let key = maybe_key.expect("checked is_some");
+    let signature_path = format!("{}{}", config_path.display(), CONFIG_SIGNATURE_SUFFIX);
+    let signature = fs::read_to_string(&signature_path).with_context(|| {
+        format!(
+            "failed to read config signature sidecar: {}",
+            signature_path
+        )
+    })?;
+
+    let expected = keyed_hash_hex(key.as_bytes(), content.as_bytes());
+    let observed = signature.trim().to_ascii_lowercase();
+    if observed != expected {
+        return Err(anyhow!(
+            "config signature mismatch for {}",
+            config_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn keyed_hash_hex(key: &[u8], payload: &[u8]) -> String {
+    let digest = hashv(&[b"microstable:keeper-config:v1", key, payload, key]).to_bytes();
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }

@@ -1,5 +1,10 @@
+#![allow(deprecated)]
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{hash::hashv, program::invoke, system_instruction};
+use anchor_lang::solana_program::{
+    hash::{hash, hashv},
+    program::invoke,
+    system_instruction,
+};
 use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{
     self, Burn, Mint as TokenMint, MintTo, Token, TokenAccount, TransferChecked,
@@ -14,6 +19,21 @@ const FEE_RATE_MAX: u64 = 10_000; // 1%
 const WEIGHT_STEP_LIMIT: u64 = 20_000; // 2%
 const TURNOVER_LIMIT: u64 = 150_000; // 15%
 const ORACLE_STALENESS_MAX: u64 = 120;
+// FIX CRITICAL-22: stale oracle data receives progressive valuation haircut.
+const STALE_ORACLE_PENALTY_PER_SLOT: u64 = 1_500; // 0.15%/slot
+                                                  // FIX CRITICAL-22: confidence spread receives progressive valuation haircut.
+const CONFIDENCE_PENALTY_MULTIPLIER: u64 = 4; // 4x confidence ratio penalty
+                                              // FIX CRITICAL-22: hard stop for deep depeg mint attempts.
+const MINT_DEPEG_PAUSE_THRESHOLD: u64 = 80_000; // 8%
+                                                // FIX CRITICAL-21/HI-02: on-chain per-slot flow controls.
+const SLOT_FLOW_LIMIT_MIN_UNITS: u64 = 50_000_000; // 50 MSTB @ 6 decimals
+const DEFAULT_MAX_MINT_PER_SLOT_PPM: u64 = 120_000; // 12%
+const DEFAULT_MAX_REDEEM_PER_SLOT_PPM: u64 = 80_000; // 8%
+                                                     // FIX MEDIUM-23/10: governance update pacing limits.
+const AGENT_GOVERNANCE_COOLDOWN_SECS: i64 = 60;
+const AGENT_SCORE_DELTA_LIMIT: u64 = 100_000; // 10%
+                                              // FIX HIGH-03: manual oracle write path is disabled unless explicitly time-boxed.
+const MANUAL_ORACLE_MODE_MAX_SLOTS: u64 = 120;
 // FIX PTV2-002: enforce publish_time freshness for Pyth price updates.
 const PYTH_PUBLISH_TIME_MAX_AGE: i64 = 60;
 const ORACLE_CONFIDENCE_MAX: u64 = 50_000; // 5%
@@ -54,6 +74,7 @@ const PYTH_FEED_ID_USDS: [u8; 32] = [
 ];
 // FIX PTV2-004: bind accepted updates to trusted write authority.
 const PYTH_TRUSTED_WRITE_AUTHORITY: Pubkey = TRUSTED_INITIALIZER;
+const PYTH_PRICE_UPDATE_ACCOUNT_NAME: &str = "PriceUpdateV2";
 
 // // BLUE-TEAM: INPUT-HARDEN - strict bounds for external numeric inputs.
 const PRICE_MIN: u64 = 500_000; // $0.50
@@ -121,6 +142,12 @@ pub mod microstable {
         protocol.pending_rebalance_expiry = 0;
         protocol.pending_keeper_set = [Pubkey::default(); 3];
         protocol.pending_keeper_activation_slot = 0;
+        protocol.flow_control_slot = slot;
+        protocol.minted_in_flow_slot = 0;
+        protocol.redeemed_in_flow_slot = 0;
+        protocol.max_mint_per_slot_ppm = DEFAULT_MAX_MINT_PER_SLOT_PPM;
+        protocol.max_redeem_per_slot_ppm = DEFAULT_MAX_REDEEM_PER_SLOT_PPM;
+        protocol.manual_oracle_mode_expiry_slot = 0;
         protocol.bump = ctx.bumps.protocol_state;
 
         init_vault(
@@ -261,6 +288,12 @@ pub mod microstable {
             pending_rebalance_expiry: 0,
             pending_keeper_set: [Pubkey::default(); 3],
             pending_keeper_activation_slot: 0,
+            flow_control_slot: slot,
+            minted_in_flow_slot: 0,
+            redeemed_in_flow_slot: 0,
+            max_mint_per_slot_ppm: DEFAULT_MAX_MINT_PER_SLOT_PPM,
+            max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
+            manual_oracle_mode_expiry_slot: 0,
             bump: protocol_bump,
         };
         write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
@@ -370,6 +403,7 @@ pub mod microstable {
             ],
         )?;
 
+        ctx.accounts.agent_escrow.agent = agent_key;
         ctx.accounts.agent_escrow.bump = ctx.bumps.agent_escrow;
 
         let record = &mut ctx.accounts.agent_record;
@@ -413,9 +447,24 @@ pub mod microstable {
         )?;
         validate_agent_score(new_score)?;
 
+        let now = Clock::get()?.unix_timestamp;
         let record = &mut ctx.accounts.agent_record;
+        require!(
+            record.status == AgentStatus::Active,
+            ErrorCode::AgentNotActive
+        );
+        require!(
+            now >= record
+                .last_active_at
+                .saturating_add(AGENT_GOVERNANCE_COOLDOWN_SECS),
+            ErrorCode::AgentGovernanceCooldownActive
+        );
+        require!(
+            abs_diff(record.agent_score, new_score) <= AGENT_SCORE_DELTA_LIMIT,
+            ErrorCode::AgentScoreDeltaTooLarge
+        );
         record.agent_score = new_score;
-        record.last_active_at = Clock::get()?.unix_timestamp;
+        record.last_active_at = now;
         Ok(())
     }
 
@@ -428,6 +477,16 @@ pub mod microstable {
 
         let now = Clock::get()?.unix_timestamp;
         let record = &mut ctx.accounts.agent_record;
+        require!(
+            record.status == AgentStatus::Active,
+            ErrorCode::AgentNotActive
+        );
+        require!(
+            now >= record
+                .last_active_at
+                .saturating_add(AGENT_GOVERNANCE_COOLDOWN_SECS),
+            ErrorCode::AgentGovernanceCooldownActive
+        );
         validate_tier_promotion(record.tier, new_tier, record.agent_score)?;
         record.tier = new_tier;
         record.last_active_at = now;
@@ -443,6 +502,16 @@ pub mod microstable {
 
         let now = Clock::get()?.unix_timestamp;
         let record = &mut ctx.accounts.agent_record;
+        require!(
+            record.status == AgentStatus::Active,
+            ErrorCode::AgentNotActive
+        );
+        require!(
+            now >= record
+                .last_active_at
+                .saturating_add(AGENT_GOVERNANCE_COOLDOWN_SECS),
+            ErrorCode::AgentGovernanceCooldownActive
+        );
         validate_tier_demotion(record.tier, new_tier)?;
         record.tier = new_tier;
         record.last_active_at = now;
@@ -474,6 +543,12 @@ pub mod microstable {
         require!(
             slash_cooldown_elapsed(record.last_slashed_slot, slot),
             ErrorCode::SlashCooldownActive
+        );
+
+        require_keys_eq!(
+            ctx.accounts.agent_escrow.agent,
+            record.agent,
+            ErrorCode::InvalidEscrowOwner
         );
 
         let slash_value = capped_slash_amount(record.stake, slash_amount);
@@ -511,6 +586,11 @@ pub mod microstable {
         let now = Clock::get()?.unix_timestamp;
         let record = &mut ctx.accounts.agent_record;
         require_keys_eq!(record.agent, agent, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.agent_escrow.agent,
+            agent,
+            ErrorCode::InvalidEscrowOwner
+        );
         can_claim_stake(record.status, record.last_active_at, now)?;
 
         let claim_amount = record.stake;
@@ -548,12 +628,12 @@ pub mod microstable {
             ctx.accounts.keeper_one.key(),
             ctx.accounts.keeper_two.key(),
         )?;
-        require!(
-            !ctx.accounts.protocol_state.emergency_shutdown,
-            ErrorCode::EmergencyShutdownActive
-        );
 
         let slot = Clock::get()?.slot;
+        require!(
+            slot <= ctx.accounts.protocol_state.manual_oracle_mode_expiry_slot,
+            ErrorCode::ManualOracleModeInactive
+        );
         refresh_circuit_breakers(&mut ctx.accounts.circuit_breaker, slot);
 
         require!(
@@ -773,43 +853,39 @@ pub mod microstable {
             ErrorCode::OracleDegraded
         );
 
-        let price = match collateral_index {
-            0 => {
-                require!(
-                    slot.saturating_sub(ctx.accounts.vault_usdc.last_oracle_slot)
-                        <= ORACLE_STALENESS_MAX,
-                    ErrorCode::OracleStale
-                );
-                ctx.accounts.vault_usdc.price
-            }
-            1 => {
-                require!(
-                    slot.saturating_sub(ctx.accounts.vault_usdt.last_oracle_slot)
-                        <= ORACLE_STALENESS_MAX,
-                    ErrorCode::OracleStale
-                );
-                ctx.accounts.vault_usdt.price
-            }
-            2 => {
-                require!(
-                    slot.saturating_sub(ctx.accounts.vault_dai.last_oracle_slot)
-                        <= ORACLE_STALENESS_MAX,
-                    ErrorCode::OracleStale
-                );
-                ctx.accounts.vault_dai.price
-            }
-            3 => {
-                require!(
-                    slot.saturating_sub(ctx.accounts.vault_usds.last_oracle_slot)
-                        <= ORACLE_STALENESS_MAX,
-                    ErrorCode::OracleStale
-                );
-                ctx.accounts.vault_usds.price
-            }
+        let (price, confidence, oracle_slot) = match collateral_index {
+            0 => (
+                ctx.accounts.vault_usdc.price,
+                ctx.accounts.vault_usdc.confidence,
+                ctx.accounts.vault_usdc.last_oracle_slot,
+            ),
+            1 => (
+                ctx.accounts.vault_usdt.price,
+                ctx.accounts.vault_usdt.confidence,
+                ctx.accounts.vault_usdt.last_oracle_slot,
+            ),
+            2 => (
+                ctx.accounts.vault_dai.price,
+                ctx.accounts.vault_dai.confidence,
+                ctx.accounts.vault_dai.last_oracle_slot,
+            ),
+            3 => (
+                ctx.accounts.vault_usds.price,
+                ctx.accounts.vault_usds.confidence,
+                ctx.accounts.vault_usds.last_oracle_slot,
+            ),
             _ => return err!(ErrorCode::InvalidCollateralIndex),
         };
+        require!(
+            slot.saturating_sub(oracle_slot) <= ORACLE_STALENESS_MAX,
+            ErrorCode::OracleStale
+        );
 
-        let gross_musd = mul_div_floor(collateral_amount, price, SCALE)?;
+        let mint_haircut_ppm = mint_haircut_ppm(price, confidence, oracle_slot, slot)?;
+        let effective_price = mul_div_floor(price, mint_haircut_ppm, SCALE)?;
+        require!(effective_price > 0, ErrorCode::InvalidPrice);
+
+        let gross_musd = mul_div_floor(collateral_amount, effective_price, SCALE)?;
         let max_mintable_by_cr =
             mul_div_floor(gross_musd, SCALE, ctx.accounts.protocol_state.cr_target)?;
         let fee = protocol_fee_amount(
@@ -827,6 +903,12 @@ pub mod microstable {
             SCALE,
         )?;
         require!(minted_musd <= max_mint, ErrorCode::MintRateLimited);
+        enforce_slot_flow_limit(
+            &mut ctx.accounts.protocol_state,
+            slot,
+            minted_musd,
+            SlotFlowKind::Mint,
+        )?;
 
         // FIX CR-01: validate selected collateral mint/vault bindings and canonical ATA addresses.
         let (expected_mint, expected_vault_ata) = match collateral_index {
@@ -1019,11 +1101,14 @@ pub mod microstable {
         let supply_before = ctx.accounts.protocol_state.total_supply;
         require!(supply_before > 0, ErrorCode::InsufficientBalance);
 
-        let payout_discount = if oracle_degraded(vaults_before, slot) {
-            950_000
-        } else {
-            SCALE
-        };
+        enforce_slot_flow_limit(
+            &mut ctx.accounts.protocol_state,
+            slot,
+            musd_amount,
+            SlotFlowKind::Redeem,
+        )?;
+
+        let payout_discount = redeem_discount_ppm(vaults_before, slot)?;
 
         // FIX CR-01: validate canonical mint/vault token-account bindings for all collateral legs.
         require_keys_eq!(
@@ -1116,7 +1201,8 @@ pub mod microstable {
             musd_amount,
         )?;
 
-        let redeem_fee = protocol_fee_amount(musd_amount, ctx.accounts.protocol_state.redeem_fee_rate)?;
+        let redeem_fee =
+            protocol_fee_amount(musd_amount, ctx.accounts.protocol_state.redeem_fee_rate)?;
         let net_redeem_musd = musd_amount
             .checked_sub(redeem_fee)
             .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
@@ -1664,6 +1750,27 @@ pub mod microstable {
         Ok(())
     }
 
+    pub fn enable_manual_oracle_mode(
+        ctx: Context<EmergencyShutdown>,
+        valid_for_slots: u64,
+    ) -> Result<()> {
+        require_keeper_quorum(
+            &ctx.accounts.protocol_state,
+            ctx.accounts.keeper_one.key(),
+            ctx.accounts.keeper_two.key(),
+        )?;
+        require!(
+            (1..=MANUAL_ORACLE_MODE_MAX_SLOTS).contains(&valid_for_slots),
+            ErrorCode::InvalidManualOracleWindow
+        );
+
+        let slot = Clock::get()?.slot;
+        let protocol = &mut ctx.accounts.protocol_state;
+        protocol.manual_oracle_mode_expiry_slot = slot.saturating_add(valid_for_slots);
+        protocol.last_update_slot = slot;
+        Ok(())
+    }
+
     #[cfg(feature = "devnet-admin")]
     /// DEVNET ONLY: upgrade authority can force-reinitialize protocol state.
     /// Handles struct size migration + keeper_set reset in one shot.
@@ -1690,8 +1797,7 @@ pub mod microstable {
             ProtocolState::SPACE,
         )?;
 
-        let (_, protocol_bump) =
-            Pubkey::find_program_address(&[b"protocol_state"], program_id);
+        let (_, protocol_bump) = Pubkey::find_program_address(&[b"protocol_state"], program_id);
 
         let protocol = ProtocolState {
             weights: [400_000, 300_000, 200_000, 100_000],
@@ -1708,6 +1814,12 @@ pub mod microstable {
             pending_rebalance_expiry: 0,
             pending_keeper_set: [Pubkey::default(); 3],
             pending_keeper_activation_slot: 0,
+            flow_control_slot: slot,
+            minted_in_flow_slot: 0,
+            redeemed_in_flow_slot: 0,
+            max_mint_per_slot_ppm: DEFAULT_MAX_MINT_PER_SLOT_PPM,
+            max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
+            manual_oracle_mode_expiry_slot: 0,
             bump: protocol_bump,
         };
         write_anchor_account(&ctx.accounts.protocol_state.to_account_info(), &protocol)?;
@@ -1720,8 +1832,7 @@ pub mod microstable {
             CircuitBreakerState::SPACE,
         )?;
 
-        let (_, circuit_bump) =
-            Pubkey::find_program_address(&[b"circuit_breaker"], program_id);
+        let (_, circuit_bump) = Pubkey::find_program_address(&[b"circuit_breaker"], program_id);
 
         let circuit = CircuitBreakerState {
             status: [0u8; 4], // Inactive
@@ -1980,6 +2091,7 @@ pub struct Mint<'info> {
     pub user_mstb_ata: Box<Account<'info, TokenAccount>>,
 
     pub collateral_mint: Box<Account<'info, TokenMint>>,
+    #[account(address = token::ID)]
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -2047,6 +2159,7 @@ pub struct Redeem<'info> {
     #[account(mut, associated_token::mint = mstb_mint, associated_token::authority = user)]
     pub user_mstb_ata: Box<Account<'info, TokenAccount>>,
 
+    #[account(address = token::ID)]
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
 }
@@ -2069,7 +2182,7 @@ pub struct RegisterAgent<'info> {
         init_if_needed,
         payer = agent,
         space = AgentEscrow::SPACE,
-        seeds = [b"agent_escrow"],
+        seeds = [b"v2:agent_escrow", agent.key().as_ref()],
         bump
     )]
     pub agent_escrow: Account<'info, AgentEscrow>,
@@ -2141,7 +2254,11 @@ pub struct SlashAgent<'info> {
     #[account(mut, seeds = [b"agent", agent.as_ref()], bump = agent_record.bump)]
     pub agent_record: Account<'info, AgentRecord>,
 
-    #[account(mut, seeds = [b"agent_escrow"], bump = agent_escrow.bump)]
+    #[account(
+        mut,
+        seeds = [b"v2:agent_escrow", agent.as_ref()],
+        bump = agent_escrow.bump
+    )]
     pub agent_escrow: Account<'info, AgentEscrow>,
 
     #[account(mut)]
@@ -2162,7 +2279,11 @@ pub struct ClaimStake<'info> {
     )]
     pub agent_record: Account<'info, AgentRecord>,
 
-    #[account(mut, seeds = [b"agent_escrow"], bump = agent_escrow.bump)]
+    #[account(
+        mut,
+        seeds = [b"v2:agent_escrow", agent.as_ref()],
+        bump = agent_escrow.bump
+    )]
     pub agent_escrow: Account<'info, AgentEscrow>,
 }
 
@@ -2283,20 +2404,29 @@ pub struct ProtocolState {
     /// Pending keeper rotation (timelocked).
     pub pending_keeper_set: [Pubkey; 3],
     pub pending_keeper_activation_slot: u64,
+    /// FIX CRITICAL-21: per-slot mint/redeem flow controls.
+    pub flow_control_slot: u64,
+    pub minted_in_flow_slot: u64,
+    pub redeemed_in_flow_slot: u64,
+    pub max_mint_per_slot_ppm: u64,
+    pub max_redeem_per_slot_ppm: u64,
+    /// FIX HIGH-03: manual keeper oracle writes are time-boxed.
+    pub manual_oracle_mode_expiry_slot: u64,
     pub bump: u8,
 }
 
 impl ProtocolState {
-    pub const SPACE: usize = 8 + 400;
+    pub const SPACE: usize = 8 + 512;
 }
 
 #[account]
 pub struct AgentEscrow {
+    pub agent: Pubkey,
     pub bump: u8,
 }
 
 impl AgentEscrow {
-    pub const SPACE: usize = 8 + 8;
+    pub const SPACE: usize = 8 + 64;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -2417,6 +2547,10 @@ pub enum ErrorCode {
     InvalidAgentTier,
     #[msg("Agent is not active")]
     AgentNotActive,
+    #[msg("Agent governance update cooldown is still active")]
+    AgentGovernanceCooldownActive,
+    #[msg("Agent score delta exceeds per-update limit")]
+    AgentScoreDeltaTooLarge,
     #[msg("Agent is already deregistered")]
     AgentAlreadyDeregistered,
     #[msg("Agent is not deregistered")]
@@ -2431,6 +2565,8 @@ pub enum ErrorCode {
     AgentSignerMismatch,
     #[msg("Escrow has insufficient lamports")]
     EscrowInsufficientBalance,
+    #[msg("Agent escrow owner does not match target agent")]
+    InvalidEscrowOwner,
     #[msg("Invalid protocol treasury account")]
     InvalidTreasuryAccount,
     #[msg("Invalid collateral index")]
@@ -2453,6 +2589,10 @@ pub enum ErrorCode {
     ConfidenceTooHigh,
     #[msg("Observed slot is invalid")]
     InvalidObservedSlot,
+    #[msg("Manual oracle mode is not active")]
+    ManualOracleModeInactive,
+    #[msg("Invalid manual oracle validity window")]
+    InvalidManualOracleWindow,
     #[msg("Oracle update must be monotonic")]
     OracleSlotRegression,
     #[msg("Invalid oracle price")]
@@ -2463,6 +2603,12 @@ pub enum ErrorCode {
     MintPausedByCircuitBreaker,
     #[msg("Mint amount exceeds active rate limit")]
     MintRateLimited,
+    #[msg("Mint volume exceeds per-slot flow control limit")]
+    MintSlotFlowLimitExceeded,
+    #[msg("Redeem volume exceeds per-slot flow control limit")]
+    RedeemSlotFlowLimitExceeded,
+    #[msg("Mint paused for collateral under deep depeg stress")]
+    DepegMintPaused,
     #[msg("Insufficient balance")]
     InsufficientBalance,
     #[msg("Weight change exceeds per-step limit")]
@@ -2535,6 +2681,8 @@ pub enum ErrorCode {
     InvalidPythWriteAuthority,
     #[msg("Pyth feed account owner is invalid")]
     InvalidPythFeedOwner,
+    #[msg("Pyth account discriminator is invalid")]
+    InvalidPythAccountDiscriminator,
     #[msg("Pyth price account data is invalid")]
     InvalidPythAccountData,
     #[msg("Pyth price must be positive")]
@@ -2596,7 +2744,7 @@ fn ensure_account_space<'info>(
     }
 
     if account.data_len() < target_space {
-        account.realloc(target_space, false)?;
+        account.resize(target_space)?;
     }
 
     Ok(())
@@ -2783,6 +2931,12 @@ fn read_pyth_price_update(
         .map_err(|_| error!(ErrorCode::InvalidPythAccountData))?;
     require!(data.len() >= 8, ErrorCode::InvalidPythAccountData);
 
+    let expected_discriminator = anchor_discriminator("account", PYTH_PRICE_UPDATE_ACCOUNT_NAME);
+    require!(
+        data[..8] == expected_discriminator,
+        ErrorCode::InvalidPythAccountDiscriminator
+    );
+
     let mut payload: &[u8] = &data[8..];
     let price_update = RawPythPriceUpdateV2::deserialize(&mut payload)
         .map_err(|_| error!(ErrorCode::InvalidPythAccountData))?;
@@ -2896,6 +3050,14 @@ fn expected_pyth_feed_id(collateral_index: u8) -> Result<[u8; 32]> {
     Ok(feed_id)
 }
 
+fn anchor_discriminator(namespace: &str, name: &str) -> [u8; 8] {
+    let preimage = format!("{namespace}:{name}");
+    let digest = hash(preimage.as_bytes()).to_bytes();
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&digest[..8]);
+    out
+}
+
 fn validate_keeper_set(keeper_set: &[Pubkey; 3]) -> Result<()> {
     // FIX HI-04: reject duplicate/default keeper keys at initialization.
     require!(
@@ -2913,11 +3075,6 @@ fn validate_keeper_set(keeper_set: &[Pubkey; 3]) -> Result<()> {
 
 fn keeper_member(protocol: &ProtocolState, signer: Pubkey) -> bool {
     protocol.keeper_set.iter().any(|k| *k == signer)
-}
-
-fn require_keeper_member(protocol: &ProtocolState, signer: Pubkey) -> Result<()> {
-    require!(keeper_member(protocol, signer), ErrorCode::Unauthorized);
-    Ok(())
 }
 
 fn require_keeper_quorum(
@@ -3051,6 +3208,14 @@ fn assert_invariants<'info>(
 ) -> Result<()> {
     validate_weight_sum(protocol.weights)?;
     require!(protocol.cr_target > 0, ErrorCode::InvalidCrTarget);
+    require!(
+        protocol.max_mint_per_slot_ppm <= SCALE,
+        ErrorCode::MintRateLimited
+    );
+    require!(
+        protocol.max_redeem_per_slot_ppm <= SCALE,
+        ErrorCode::MintRateLimited
+    );
     for (i, v) in vaults.iter().enumerate() {
         require!(
             protocol.weights[i] <= v.weight_cap,
@@ -3081,6 +3246,131 @@ fn oracle_degraded<'info>(vaults: [&Account<'info, CollateralVault>; 4], slot: u
             || v.confidence > ORACLE_CONFIDENCE_MAX
             || slot.saturating_sub(v.last_oracle_slot) > ORACLE_STALENESS_MAX
     })
+}
+
+#[derive(Clone, Copy)]
+enum SlotFlowKind {
+    Mint,
+    Redeem,
+}
+
+fn refresh_slot_flow_window(protocol: &mut ProtocolState, slot: u64) {
+    if protocol.flow_control_slot != slot {
+        protocol.flow_control_slot = slot;
+        protocol.minted_in_flow_slot = 0;
+        protocol.redeemed_in_flow_slot = 0;
+    }
+}
+
+fn slot_flow_limit(total_supply: u64, limit_ppm: u64) -> Result<u64> {
+    let base = total_supply.max(SLOT_FLOW_LIMIT_MIN_UNITS);
+    let by_ppm = mul_div_floor(base, limit_ppm, SCALE)?;
+    Ok(by_ppm.max(SLOT_FLOW_LIMIT_MIN_UNITS))
+}
+
+fn enforce_slot_flow_limit(
+    protocol: &mut ProtocolState,
+    slot: u64,
+    amount: u64,
+    flow_kind: SlotFlowKind,
+) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+
+    refresh_slot_flow_window(protocol, slot);
+
+    let (counter, limit_ppm) = match flow_kind {
+        SlotFlowKind::Mint => (
+            &mut protocol.minted_in_flow_slot,
+            protocol.max_mint_per_slot_ppm,
+        ),
+        SlotFlowKind::Redeem => (
+            &mut protocol.redeemed_in_flow_slot,
+            protocol.max_redeem_per_slot_ppm,
+        ),
+    };
+
+    let cap = slot_flow_limit(protocol.total_supply, limit_ppm)?;
+    let next = counter
+        .checked_add(amount)
+        .ok_or_else(|| error!(ErrorCode::MathOverflow))?;
+
+    match flow_kind {
+        SlotFlowKind::Mint => {
+            require!(next <= cap, ErrorCode::MintSlotFlowLimitExceeded);
+        }
+        SlotFlowKind::Redeem => {
+            require!(next <= cap, ErrorCode::RedeemSlotFlowLimitExceeded);
+        }
+    }
+
+    *counter = next;
+    Ok(())
+}
+
+fn mint_haircut_ppm(
+    price: u64,
+    confidence: u64,
+    oracle_slot: u64,
+    current_slot: u64,
+) -> Result<u64> {
+    let depeg = abs_diff(price, SCALE);
+    require!(
+        depeg < MINT_DEPEG_PAUSE_THRESHOLD,
+        ErrorCode::DepegMintPaused
+    );
+
+    let staleness = current_slot.saturating_sub(oracle_slot);
+    let stale_penalty = staleness.saturating_mul(STALE_ORACLE_PENALTY_PER_SLOT);
+    let depeg_penalty = depeg.saturating_mul(2);
+
+    let confidence_penalty = ((confidence as u128)
+        .saturating_mul(CONFIDENCE_PENALTY_MULTIPLIER as u128)
+        .saturating_mul(SCALE as u128)
+        .checked_div(price.max(1) as u128)
+        .unwrap_or(u128::MAX))
+    .min(SCALE as u128) as u64;
+
+    let total_penalty = stale_penalty
+        .saturating_add(depeg_penalty)
+        .saturating_add(confidence_penalty)
+        .min(450_000);
+    Ok(SCALE.saturating_sub(total_penalty))
+}
+
+fn redeem_discount_ppm<'info>(
+    vaults: [&Account<'info, CollateralVault>; 4],
+    slot: u64,
+) -> Result<u64> {
+    let mut worst_depeg = 0u64;
+    let mut worst_staleness = 0u64;
+    let mut confidence_penalty = 0u64;
+
+    for v in vaults {
+        worst_depeg = worst_depeg.max(abs_diff(v.price, SCALE));
+        worst_staleness = worst_staleness.max(slot.saturating_sub(v.last_oracle_slot));
+
+        let penalty = ((v.confidence as u128)
+            .saturating_mul(CONFIDENCE_PENALTY_MULTIPLIER as u128)
+            .saturating_mul(SCALE as u128)
+            .checked_div(v.price.max(1) as u128)
+            .unwrap_or(u128::MAX))
+        .min(SCALE as u128) as u64;
+        confidence_penalty = confidence_penalty.max(penalty);
+    }
+
+    let mut total_penalty = worst_depeg
+        .saturating_mul(2)
+        .saturating_add(worst_staleness.saturating_mul(STALE_ORACLE_PENALTY_PER_SLOT))
+        .saturating_add(confidence_penalty)
+        .min(250_000);
+
+    if oracle_degraded(vaults, slot) {
+        total_penalty = total_penalty.max(50_000);
+    }
+
+    Ok(SCALE.saturating_sub(total_penalty))
 }
 
 fn mint_mstb_to_user<'info>(
@@ -3479,6 +3769,12 @@ mod tests {
             pending_rebalance_expiry: 0,
             pending_keeper_set: [Pubkey::default(); 3],
             pending_keeper_activation_slot: 0,
+            flow_control_slot: 0,
+            minted_in_flow_slot: 0,
+            redeemed_in_flow_slot: 0,
+            max_mint_per_slot_ppm: DEFAULT_MAX_MINT_PER_SLOT_PPM,
+            max_redeem_per_slot_ppm: DEFAULT_MAX_REDEEM_PER_SLOT_PPM,
+            manual_oracle_mode_expiry_slot: 0,
             bump: 0,
         }
     }
@@ -3834,7 +4130,10 @@ mod tests {
         let n3 = Pubkey::new_unique();
         protocol.keeper_set = [n1, n2, n3];
 
-        assert_err_contains(require_keeper_quorum(&protocol, k1, k2), "KeeperQuorumNotMet");
+        assert_err_contains(
+            require_keeper_quorum(&protocol, k1, k2),
+            "KeeperQuorumNotMet",
+        );
         require_keeper_quorum(&protocol, n1, n2).expect("rotated quorum should pass");
     }
 

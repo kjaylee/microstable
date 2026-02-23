@@ -87,7 +87,12 @@ fn monitor_view(
     monitor::MonitorCrossRpcView::from_state(protocol, circuit, vaults, global_cr_bps)
 }
 
-fn observation(price: u64, confidence: u64, publish_time: i64, observed_slot: u64) -> oracle::OracleObservation {
+fn observation(
+    price: u64,
+    confidence: u64,
+    publish_time: i64,
+    observed_slot: u64,
+) -> oracle::OracleObservation {
     oracle::OracleObservation {
         price,
         confidence,

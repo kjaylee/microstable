@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/kjaylee/.openclaw/workspace/microstable/solana/programs/microstable/src/lib.rs\"}",
+  "error": "File content (43786 tokens) exceeds maximum allowed tokens (25000). Please use offset and limit parameters to read specific portions of the file, or use the GrepTool to search for specific content.",
+  "timestamp": "2026-02-23T13:13:22.606Z",
+  "retry_count": 1
+}

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.devnet.solana.com https://devnet.rpcpool.com https://explorer.solana.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" />
   <title>MICROSTABLE Mission Control | Live Devnet Dashboard</title>
   <meta name="description" content="Real-time Mission Control dashboard for MICROSTABLE. Browser-only, zero backend, direct Solana devnet polling." />
   <meta property="og:title" content="MICROSTABLE Mission Control" />
@@ -893,14 +894,11 @@
     </footer>
   </main>
 
-  <script src="https://unpkg.com/@solana/web3.js@1.95.3/lib/index.iife.min.js" crossorigin="anonymous"></script>
-  <script type="module">
-    import * as splToken from "https://esm.sh/@solana/spl-token@0.4.8?bundle";
-    window.splToken = splToken;
-  </script>
+  <script src="./vendor/solana-web3-1.95.3.iife.min.js"></script>
 
   <script>
     const CFG = {
+      RPC_URLS: ["https://api.devnet.solana.com", "https://devnet.rpcpool.com"],
       RPC_URL: "https://api.devnet.solana.com",
       PROGRAM_ID: "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
       MSTB_MINT: "EZUwC88f1s3k9prgv5DGY6wML8giBqdpRxoA2rLtGA6R",
@@ -968,7 +966,8 @@
         lastMintsKey: "",
         checked: false,
         checking: false
-      }
+      },
+      rpcCursor: 0
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1079,31 +1078,23 @@
       return false;
     }
 
-    function setHtmlIfChanged(el, html) {
-      if (!el) return false;
-      if (el.innerHTML !== html) {
-        el.innerHTML = html;
-        flashOnce(el);
-        return true;
-      }
-      return false;
+    function rpcEndpoints() {
+      const list = Array.isArray(CFG.RPC_URLS) ? CFG.RPC_URLS.filter(Boolean) : [];
+      return list.length ? list : [CFG.RPC_URL];
     }
 
-    function setHtmlOnlyIfChanged(el, html) {
-      if (!el) return false;
-      if (el.innerHTML !== html) {
-        el.innerHTML = html;
-        return true;
-      }
-      return false;
+    function shouldCrossCheck(method) {
+      return method === "getAccountInfo"
+        || method === "getProgramAccounts"
+        || method === "getTokenSupply"
+        || method === "getSignaturesForAddress";
     }
 
-    async function rpc(method, params, timeout = 14000) {
+    async function rpcRequest(url, payload, timeout) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
-      const payload = { jsonrpc: "2.0", id: Math.floor(Math.random() * 1e9), method, params };
       try {
-        const res = await fetch(CFG.RPC_URL, {
+        const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -1117,6 +1108,37 @@
       } finally {
         clearTimeout(timer);
       }
+    }
+
+    async function rpc(method, params, timeout = 14000) {
+      const endpoints = rpcEndpoints();
+      const payload = { jsonrpc: "2.0", id: Math.floor(Math.random() * 1e9), method, params };
+      const errors = [];
+
+      for (let i = 0; i < endpoints.length; i++) {
+        const idx = (state.rpcCursor + i) % endpoints.length;
+        const endpoint = endpoints[idx];
+
+        try {
+          const primary = await rpcRequest(endpoint, payload, timeout);
+
+          if (endpoints.length > 1 && shouldCrossCheck(method)) {
+            const secondaryEndpoint = endpoints[(idx + 1) % endpoints.length];
+            const secondary = await rpcRequest(secondaryEndpoint, payload, timeout);
+            if (JSON.stringify(primary) !== JSON.stringify(secondary)) {
+              throw new Error(`cross-RPC mismatch (${endpoint} vs ${secondaryEndpoint})`);
+            }
+          }
+
+          state.rpcCursor = idx;
+          CFG.RPC_URL = endpoint;
+          return primary;
+        } catch (err) {
+          errors.push(`${endpoint}: ${err?.message || String(err)}`);
+        }
+      }
+
+      throw new Error(`RPC request failed (${method}): ${errors.join(" | ")}`);
     }
 
     function base64ToBytes(b64) {
@@ -1188,6 +1210,12 @@
       const pending_keeper_set = [];
       for (let i = 0; i < 3; i++) { pending_keeper_set.push(readPubkey(bytes, o)); o += 32; }
       const pending_keeper_activation_slot = readU64LE(dv, o); o += 8;
+      const flow_control_slot = readU64LE(dv, o); o += 8;
+      const minted_in_flow_slot = readU64LE(dv, o); o += 8;
+      const redeemed_in_flow_slot = readU64LE(dv, o); o += 8;
+      const max_mint_per_slot_ppm = readU64LE(dv, o); o += 8;
+      const max_redeem_per_slot_ppm = readU64LE(dv, o); o += 8;
+      const manual_oracle_mode_expiry_slot = readU64LE(dv, o); o += 8;
       const bump = bytes[o]; o += 1;
 
       const EMPTY_PUBKEY = "11111111111111111111111111111111";
@@ -1211,7 +1239,9 @@
         weights, fee_rate, mint_fee_rate, redeem_fee_rate, cr_target, total_supply,
         last_update_slot, keeper_set, emergency_shutdown, pending_rebalance_commit,
         pending_rebalance_slot, pending_rebalance_expiry, pending_keeper_set,
-        pending_keeper_activation_slot, bump, usdc_mint, usdt_mint, dai_mint, usds_mint
+        pending_keeper_activation_slot, flow_control_slot, minted_in_flow_slot,
+        redeemed_in_flow_slot, max_mint_per_slot_ppm, max_redeem_per_slot_ppm,
+        manual_oracle_mode_expiry_slot, bump, usdc_mint, usdt_mint, dai_mint, usds_mint
       };
     }
 
@@ -1408,15 +1438,29 @@
       if (state.weightRowsReady) return;
       const labels = ["USDC", "USDT", "DAI", "RESERVE"];
       const box = $("weightsBox");
-      box.innerHTML = "";
+      box.replaceChildren();
       labels.forEach((label, i) => {
         const row = document.createElement("div");
         row.className = "weight-row";
         row.id = `weight-${i}`;
-        row.innerHTML = `
-          <div class="weight-head"><span>${label}</span><span class="weight-pct">--</span></div>
-          <div class="bar"><div class="bar-fill weight-fill" style="width:0%"></div></div>
-        `;
+
+        const head = document.createElement("div");
+        head.className = "weight-head";
+        const left = document.createElement("span");
+        left.textContent = label;
+        const right = document.createElement("span");
+        right.className = "weight-pct";
+        right.textContent = "--";
+        head.append(left, right);
+
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        const fill = document.createElement("div");
+        fill.className = "bar-fill weight-fill";
+        fill.style.width = "0%";
+        bar.appendChild(fill);
+
+        row.append(head, bar);
         box.appendChild(row);
       });
       state.weightRowsReady = true;
@@ -1617,17 +1661,57 @@
       });
     }
 
+    function renderAgentIdentityCell(cell, name, agent) {
+      let nameEl = cell.querySelector("strong");
+      if (!nameEl) {
+        nameEl = document.createElement("strong");
+        cell.appendChild(nameEl);
+      }
+      if (nameEl.textContent !== name) nameEl.textContent = name;
+
+      let br = cell.querySelector("br");
+      if (!br) {
+        br = document.createElement("br");
+        cell.appendChild(br);
+      }
+
+      let keyEl = cell.querySelector("span.muted");
+      if (!keyEl) {
+        keyEl = document.createElement("span");
+        keyEl.className = "muted";
+        cell.appendChild(keyEl);
+      }
+      const next = shortKey(agent);
+      if (keyEl.textContent !== next) keyEl.textContent = next;
+    }
+
     function createAgentRow(row) {
       const tr = document.createElement("tr");
       tr.dataset.agent = row.agent;
-      tr.innerHTML = `
-        <td>#1</td>
-        <td><strong>${row.name}</strong><br/><span class="muted">${shortKey(row.agent)}</span></td>
-        <td class="tier">${tierLabel(row.tier)}</td>
-        <td>${row.role}</td>
-        <td><span class="score-cell">${row.score.toLocaleString()}</span></td>
-        <td>${row.status}</td>
-      `;
+
+      const rankCell = document.createElement("td");
+      rankCell.textContent = "#1";
+
+      const identityCell = document.createElement("td");
+      renderAgentIdentityCell(identityCell, row.name, row.agent);
+
+      const tierCell = document.createElement("td");
+      tierCell.className = "tier";
+      tierCell.textContent = tierLabel(row.tier);
+
+      const roleCell = document.createElement("td");
+      roleCell.textContent = row.role;
+
+      const scoreCell = document.createElement("td");
+      const scoreValue = document.createElement("span");
+      scoreValue.className = "score-cell";
+      scoreValue.textContent = row.score.toLocaleString();
+      scoreCell.appendChild(scoreValue);
+
+      const statusCell = document.createElement("td");
+      statusCell.textContent = row.status;
+
+      tr.append(rankCell, identityCell, tierCell, roleCell, scoreCell, statusCell);
       return tr;
     }
 
@@ -1678,7 +1762,7 @@
         const cells = tr.children;
 
         setTextOnlyIfChanged(cells[0], `#${idx + 1}`);
-        setHtmlOnlyIfChanged(cells[1], `<strong>${r.name}</strong><br/><span class="muted">${shortKey(r.agent)}</span>`);
+        renderAgentIdentityCell(cells[1], r.name, r.agent);
         setTextOnlyIfChanged(cells[2], tierLabel(r.tier));
         setTextOnlyIfChanged(cells[3], r.role);
 
@@ -1735,12 +1819,26 @@
     function createTxRow(tx) {
       const tr = document.createElement("tr");
       tr.dataset.sig = tx.sig;
-      tr.innerHTML = `
-        <td>${tx.blockTime ? fmtClock(tx.blockTime) : "--"}</td>
-        <td>${tx.type}</td>
-        <td><a class="tx-link" target="_blank" rel="noreferrer" href="https://explorer.solana.com/tx/${tx.sig}?cluster=devnet">${shortKey(tx.sig)}</a></td>
-        <td>${tx.status}</td>
-      `;
+
+      const timeCell = document.createElement("td");
+      timeCell.textContent = tx.blockTime ? fmtClock(tx.blockTime) : "--";
+
+      const typeCell = document.createElement("td");
+      typeCell.textContent = tx.type;
+
+      const sigCell = document.createElement("td");
+      const link = document.createElement("a");
+      link.className = "tx-link";
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.href = `https://explorer.solana.com/tx/${tx.sig}?cluster=devnet`;
+      link.textContent = shortKey(tx.sig);
+      sigCell.appendChild(link);
+
+      const statusCell = document.createElement("td");
+      statusCell.textContent = tx.status;
+
+      tr.append(timeCell, typeCell, sigCell, statusCell);
       return tr;
     }
 
@@ -1817,19 +1915,35 @@
     function ensureOracleCards() {
       if (state.oracleCardsReady) return;
       const strip = $("oracleStrip");
-      strip.innerHTML = "";
+      strip.replaceChildren();
       ["USDC", "USDT", "DAI"].forEach((sym) => {
         const card = document.createElement("article");
         card.className = "oracle-card";
         card.id = `oracle-${sym.toLowerCase()}`;
-        card.innerHTML = `
-          <div class="sym">${sym}/USD</div>
-          <div class="price">--</div>
-          <div class="meta">
-            Confidence: <span class="oracle-conf muted">--</span><br/>
-            Updated: <span class="oracle-updated muted">--</span>
-          </div>
-        `;
+
+        const symEl = document.createElement("div");
+        symEl.className = "sym";
+        symEl.textContent = `${sym}/USD`;
+
+        const priceEl = document.createElement("div");
+        priceEl.className = "price";
+        priceEl.textContent = "--";
+
+        const metaEl = document.createElement("div");
+        metaEl.className = "meta";
+        metaEl.appendChild(document.createTextNode("Confidence: "));
+        const confEl = document.createElement("span");
+        confEl.className = "oracle-conf muted";
+        confEl.textContent = "--";
+        metaEl.appendChild(confEl);
+        metaEl.appendChild(document.createElement("br"));
+        metaEl.appendChild(document.createTextNode("Updated: "));
+        const updatedEl = document.createElement("span");
+        updatedEl.className = "oracle-updated muted";
+        updatedEl.textContent = "--";
+        metaEl.appendChild(updatedEl);
+
+        card.append(symEl, priceEl, metaEl);
         strip.appendChild(card);
       });
       state.oracleCardsReady = true;
@@ -1917,7 +2031,7 @@
     function initSolanaContext() {
       if (!window.solanaWeb3) throw new Error("solanaWeb3 CDN failed to load");
       const w3 = window.solanaWeb3;
-      if (!state.connection) {
+      if (!state.connection || state.connection._rpcEndpoint !== CFG.RPC_URL) {
         state.connection = new w3.Connection(CFG.RPC_URL, "confirmed");
       }
       if (!state.pubkeys) {
@@ -2252,14 +2366,19 @@
     function setMintTxStatus(kind, text, signature = "") {
       const el = $("mintTxStatus");
       const cls = kind === "ok" ? "ok" : kind === "warn" ? "warn" : kind === "error" ? "bad" : "muted";
-      if (signature) {
-        const link = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
-        el.className = `mint-status ${cls}`;
-        el.innerHTML = `${text} <a href="${link}" target="_blank" rel="noreferrer">${shortKey(signature)}</a>`;
-        return;
-      }
       el.className = `mint-status ${cls}`;
-      el.textContent = text;
+      el.replaceChildren();
+      el.appendChild(document.createTextNode(text));
+
+      if (signature) {
+        const spacer = document.createTextNode(" ");
+        const link = document.createElement("a");
+        link.href = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = shortKey(signature);
+        el.append(spacer, link);
+      }
     }
 
     function updateMintEstimate() {

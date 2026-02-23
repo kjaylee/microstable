@@ -114,7 +114,10 @@ fn tc_rk001_rejects_null_secondary_rpc() {
 #[test]
 fn tc_rk004_rejects_missing_vault_feed_mapping() {
     let mut cfg = base_config_json();
-    cfg["pyth_feeds"].as_array_mut().expect("pyth_feeds array").pop();
+    cfg["pyth_feeds"]
+        .as_array_mut()
+        .expect("pyth_feeds array")
+        .pop();
 
     let err = write_and_load(cfg).expect_err("missing vault feed must be rejected");
     let msg = format!("{err:#}");

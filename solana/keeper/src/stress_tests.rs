@@ -18,9 +18,7 @@ use crate::{
         assess_risk_level, auto_recovery_step, redemption_queue_policy,
         should_throttle_redemptions, RecoveryAction, RiskLevel,
     },
-    tournament::{
-        create_tournament, evaluate_proposals, submit_proposal, AgentProposal,
-    },
+    tournament::{create_tournament, evaluate_proposals, submit_proposal, AgentProposal},
     utils::{
         adaptive_secondary_confirm_window_secs, assess_tx_confirmation_outcome, load_keypairs,
         retry_with_backoff, SecondaryRpcMode, CROSS_RPC_MAX_ATTEMPTS, TX_CONFIRM_WINDOW_BASE_SECS,
@@ -71,13 +69,23 @@ fn sample_protocol_state() -> wire::ProtocolState {
         cr_target: 1_200_000,
         total_supply: 1_000_000,
         last_update_slot: 42,
-        keeper_set: [Pubkey::new_unique(), Pubkey::new_unique(), Pubkey::new_unique()],
+        keeper_set: [
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ],
         emergency_shutdown: false,
         pending_rebalance_commit: [0u8; 32],
         pending_rebalance_slot: 0,
         pending_rebalance_expiry: 0,
         pending_keeper_set: [[0u8; 32]; 3],
         pending_keeper_activation_slot: 0,
+        flow_control_slot: 42,
+        minted_in_flow_slot: 0,
+        redeemed_in_flow_slot: 0,
+        max_mint_per_slot_ppm: 120_000,
+        max_redeem_per_slot_ppm: 80_000,
+        manual_oracle_mode_expiry_slot: 0,
         bump: 1,
     }
 }
@@ -101,7 +109,12 @@ fn sample_vault(index: u8) -> wire::CollateralVault {
 }
 
 fn sample_vaults() -> [wire::CollateralVault; 4] {
-    [sample_vault(0), sample_vault(1), sample_vault(2), sample_vault(3)]
+    [
+        sample_vault(0),
+        sample_vault(1),
+        sample_vault(2),
+        sample_vault(3),
+    ]
 }
 
 fn sample_circuit_breaker(optimizer_enabled: bool) -> wire::CircuitBreakerState {
@@ -162,7 +175,7 @@ fn minimal_valid_config_json() -> String {
   "watchdog_supply_spike_bps": 2500,
   "watchdog_cr_drop_bps": 1500
 }"#
-        .to_string()
+    .to_string()
 }
 
 // ST-1: Numerical Edge Cases (optimizer.rs)
@@ -606,15 +619,9 @@ fn st_rebalance_cross_rpc_rejects_circuit_optimizer_flag_mismatch() {
     let primary = sample_circuit_breaker(true);
     let secondary = sample_circuit_breaker(false);
 
-    let err = validate_rebalance_cross_rpc(
-        &protocol,
-        &protocol,
-        &primary,
-        &secondary,
-        &vaults,
-        &vaults,
-    )
-    .unwrap_err();
+    let err =
+        validate_rebalance_cross_rpc(&protocol, &protocol, &primary, &secondary, &vaults, &vaults)
+            .unwrap_err();
 
     assert!(err.to_string().contains("optimizer_enabled mismatch"));
 }
@@ -649,7 +656,8 @@ fn st_6_2_missing_optional_fields_use_defaults() {
 #[test]
 fn st_6_3_tick_interval_zero_is_rejected() {
     let path = unique_temp_path("keeper_tick_zero", "json");
-    let body = minimal_valid_config_json().replace("\"tick_interval_secs\": 30", "\"tick_interval_secs\": 0");
+    let body = minimal_valid_config_json()
+        .replace("\"tick_interval_secs\": 30", "\"tick_interval_secs\": 0");
     write_temp(path.as_path(), &body);
 
     let err = KeeperConfig::load(Some(path.as_path())).unwrap_err();
@@ -661,8 +669,10 @@ fn st_6_3_tick_interval_zero_is_rejected() {
 #[test]
 fn st_6_4_tick_interval_u64_max_is_rejected() {
     let path = unique_temp_path("keeper_tick_max", "json");
-    let body = minimal_valid_config_json()
-        .replace("\"tick_interval_secs\": 30", &format!("\"tick_interval_secs\": {}", u64::MAX));
+    let body = minimal_valid_config_json().replace(
+        "\"tick_interval_secs\": 30",
+        &format!("\"tick_interval_secs\": {}", u64::MAX),
+    );
     write_temp(path.as_path(), &body);
 
     let err = KeeperConfig::load(Some(path.as_path())).unwrap_err();
@@ -740,9 +750,11 @@ fn st_7_2_rpc_retry_logic_retries_then_succeeds() {
 
 #[test]
 fn st_7_3_primary_and_secondary_failures_are_reported() {
-    let normal_err = assess_tx_confirmation_outcome(false, false, SecondaryRpcMode::Normal, true)
-        .unwrap_err();
-    assert!(normal_err.to_string().contains("did not reach dual-RPC confirmation"));
+    let normal_err =
+        assess_tx_confirmation_outcome(false, false, SecondaryRpcMode::Normal, true).unwrap_err();
+    assert!(normal_err
+        .to_string()
+        .contains("did not reach dual-RPC confirmation"));
 
     let degraded_err =
         assess_tx_confirmation_outcome(false, false, SecondaryRpcMode::Degraded, true).unwrap_err();
@@ -793,6 +805,14 @@ fn st_2_write_authority_allowlist_works_for_self_or_trusted() {
         pyth_account,
         trusted
     ));
-    assert!(is_allowed_pyth_write_authority(trusted, pyth_account, trusted));
-    assert!(!is_allowed_pyth_write_authority(other, pyth_account, trusted));
+    assert!(is_allowed_pyth_write_authority(
+        trusted,
+        pyth_account,
+        trusted
+    ));
+    assert!(!is_allowed_pyth_write_authority(
+        other,
+        pyth_account,
+        trusted
+    ));
 }

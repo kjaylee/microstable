@@ -10,7 +10,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
-use std::{collections::HashSet, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tracing::{info, warn};
 
 const PYTH_RECEIVER_PROGRAM: &str = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ";
@@ -493,11 +496,7 @@ fn fetch_pyth_observation(
     }
 
     let trusted_write_authority = utils::parse_pubkey(PYTH_TRUSTED_WRITE_AUTHORITY)?;
-    if !is_allowed_pyth_write_authority(
-        update.write_authority,
-        account,
-        trusted_write_authority,
-    ) {
+    if !is_allowed_pyth_write_authority(update.write_authority, account, trusted_write_authority) {
         return Err(anyhow!(
             "unexpected Pyth write_authority for {account}: expected either {trusted_write_authority} or account self, got {}",
             update.write_authority

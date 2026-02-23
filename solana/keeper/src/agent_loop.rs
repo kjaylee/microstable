@@ -29,7 +29,7 @@ const AIG_TARGET_TIER: u8 = 2;
 const TOURNAMENT_BASE_AGENT_SCORE: u64 = 500_000;
 const TOURNAMENT_TOP_BOOST: i64 = 50_000;
 const TOURNAMENT_BOTTOM_REDUCTION: i64 = -25_000;
-const TOURNAMENT_MIN_REGISTRATION_AGE_SLOTS: u64 = 100;
+const TOURNAMENT_MIN_REGISTRATION_AGE_SLOTS: u64 = 1_000;
 const TOURNAMENT_PARTICIPANT_DIVISOR: usize = 10;
 const TOURNAMENT_MIN_PARTICIPANTS: usize = 2;
 const AGENT_RECORD_ACCOUNT_DATA_SIZE: u64 = 8 + 160;
@@ -312,7 +312,12 @@ fn maybe_run_tournament_cycle_inner(
     }
 
     for (idx, agent) in participants.iter().enumerate() {
-        tournament::submit_proposal(&mut tournament, *agent, tournament_proposal_for_index(idx), 1)?;
+        tournament::submit_proposal(
+            &mut tournament,
+            *agent,
+            tournament_proposal_for_index(idx),
+            1,
+        )?;
     }
 
     let result = tournament::evaluate_proposals(&tournament);

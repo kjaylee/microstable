@@ -5,6 +5,7 @@ use crate::{
     wire,
 };
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use solana_client::{
     rpc_client::RpcClient,
     rpc_config::RpcProgramAccountsConfig,
@@ -16,7 +17,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
 };
-use std::{collections::HashSet, thread, time::Duration};
+use std::{collections::HashSet, fs, path::PathBuf, thread, time::Duration};
 use tracing::{info, warn};
 
 const WEIGHT_SCALE: u64 = 1_000_000;
@@ -27,6 +28,8 @@ const CR_TARGET_MIN_PPM: u64 = 1_000_000;
 const CR_TARGET_MAX_PPM: u64 = 2_000_000;
 const FEE_MAX_PPM: u64 = 10_000;
 const AGENT_RECORD_ACCOUNT_DATA_SIZE: u64 = 8 + 160;
+const PENDING_REVEAL_STATE_PATH: &str = ".state/microstable/pending_reveal.json";
+const PENDING_REVEAL_STATE_VERSION: u8 = 1;
 
 #[derive(Debug, Clone)]
 pub struct RebalanceOutcome {
@@ -52,9 +55,40 @@ impl RebalanceMemory {
         self.adam_optimizer = Some(optimizer);
         self.optimizer_checkpoint = Some(checkpoint);
     }
+
+    pub fn load_pending_reveal_from_disk(&mut self) {
+        if self.pending_reveal.is_some() {
+            return;
+        }
+
+        match load_pending_reveal_checkpoint() {
+            Ok(Some(pending)) => {
+                self.pending_reveal = Some(pending);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warn!(error = %err, "failed to load pending reveal checkpoint");
+            }
+        }
+    }
+
+    fn persist_pending_reveal(&self) {
+        if let Some(pending) = &self.pending_reveal {
+            if let Err(err) = save_pending_reveal_checkpoint(pending) {
+                warn!(error = %err, "failed to persist pending reveal checkpoint");
+            }
+        }
+    }
+
+    fn clear_pending_reveal(&mut self) {
+        self.pending_reveal = None;
+        if let Err(err) = clear_pending_reveal_checkpoint() {
+            warn!(error = %err, "failed to clear pending reveal checkpoint");
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingReveal {
     commit_hash: [u8; 32],
     target_weights: [u64; 4],
@@ -63,7 +97,7 @@ struct PendingReveal {
     pending_params: Option<ProtocolParamUpdate>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct ProtocolParamUpdate {
     target_cr: u64,
     mint_fee: u64,
@@ -155,6 +189,7 @@ pub fn run_rebalance_cycle(
 
     let (k1, k2) = utils::keeper_quorum_for_protocol(keepers, &protocol.keeper_set)?;
     let mut current_slot = rpc.get_slot()?;
+    memory.load_pending_reveal_from_disk();
 
     let (target_weights, pending_params) = compute_target_weights(
         &vaults,
@@ -181,7 +216,7 @@ pub fn run_rebalance_cycle(
                 .as_ref()
                 .is_some_and(|p| p.commit_hash == protocol.pending_rebalance_commit)
             {
-                memory.pending_reveal = None;
+                memory.clear_pending_reveal();
             }
         } else if current_slot
             < protocol
@@ -249,7 +284,7 @@ pub fn run_rebalance_cycle(
                             params,
                         );
                     }
-                    memory.pending_reveal = None;
+                    memory.clear_pending_reveal();
                     return Ok(outcome);
                 }
                 Err(err) => {
@@ -399,6 +434,7 @@ pub fn run_rebalance_cycle(
         reveal_salt,
         pending_params,
     });
+    memory.persist_pending_reveal();
 
     outcome.proposed = true;
     outcome.commit_signature = Some(commit_sig);
@@ -460,7 +496,7 @@ pub fn run_rebalance_cycle(
                     params,
                 );
             }
-            memory.pending_reveal = None;
+            memory.clear_pending_reveal();
         }
         Err(err) => {
             warn!(
@@ -1044,6 +1080,60 @@ fn compute_rebalance_commit(
     .to_bytes()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingRevealCheckpoint {
+    version: u8,
+    pending: PendingReveal,
+}
+
+pub fn pending_reveal_checkpoint_path() -> PathBuf {
+    PathBuf::from(PENDING_REVEAL_STATE_PATH)
+}
+
+fn save_pending_reveal_checkpoint(pending: &PendingReveal) -> Result<()> {
+    let path = pending_reveal_checkpoint_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let envelope = PendingRevealCheckpoint {
+        version: PENDING_REVEAL_STATE_VERSION,
+        pending: pending.clone(),
+    };
+
+    let payload = serde_json::to_vec_pretty(&envelope)?;
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, payload)?;
+    fs::rename(&tmp_path, &path)?;
+    Ok(())
+}
+
+fn load_pending_reveal_checkpoint() -> Result<Option<PendingReveal>> {
+    let path = pending_reveal_checkpoint_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let payload = fs::read(&path)?;
+    let envelope: PendingRevealCheckpoint = serde_json::from_slice(&payload)?;
+    if envelope.version != PENDING_REVEAL_STATE_VERSION {
+        return Err(anyhow!(
+            "unsupported pending reveal checkpoint version: {}",
+            envelope.version
+        ));
+    }
+
+    Ok(Some(envelope.pending))
+}
+
+fn clear_pending_reveal_checkpoint() -> Result<()> {
+    let path = pending_reveal_checkpoint_path();
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1069,6 +1159,12 @@ mod tests {
             pending_rebalance_expiry: 0,
             pending_keeper_set: [[0u8; 32]; 3],
             pending_keeper_activation_slot: 0,
+            flow_control_slot: 0,
+            minted_in_flow_slot: 0,
+            redeemed_in_flow_slot: 0,
+            max_mint_per_slot_ppm: 120_000,
+            max_redeem_per_slot_ppm: 80_000,
+            manual_oracle_mode_expiry_slot: 0,
             bump: 255,
         }
     }
@@ -1333,12 +1429,7 @@ mod tests {
         ));
 
         // Drift of 3 should fail
-        assert!(!deferred_reveal_ready(
-            1_003 + delay,
-            1_000,
-            1_003,
-            delay,
-        ));
+        assert!(!deferred_reveal_ready(1_003 + delay, 1_000, 1_003, delay,));
     }
 
     #[test]

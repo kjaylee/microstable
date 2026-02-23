@@ -1,0 +1,14 @@
+file '01-github.png'
+duration 10
+file '02-dashboard.png'
+duration 7
+file '03-dashboard-agents.png'
+duration 5
+file '04-programs.png'
+duration 8
+file '05-keeper.png'
+duration 7
+file '06-audit.png'
+duration 7
+file '02-dashboard.png'
+duration 2

@@ -313,9 +313,25 @@ pub fn load_keypairs(paths: &[PathBuf]) -> Result<Vec<Keypair>> {
 }
 
 fn load_keypair_secure(path: &Path) -> Result<Keypair> {
+    validate_keypair_path_policy(path)?;
     let file = open_keypair_file(path)?;
     validate_keypair_file_security(&file, path)?;
     read_keypair_from_fd(file, path)
+}
+
+fn validate_keypair_path_policy(path: &Path) -> Result<()> {
+    let normalized = path.to_string_lossy().to_ascii_lowercase();
+    if normalized.starts_with("/tmp/")
+        || normalized.starts_with("/var/tmp/")
+        || normalized.starts_with("/dev/shm/")
+    {
+        return Err(anyhow!(
+            "refusing keypair path in ephemeral directory: {}",
+            path.display()
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -590,6 +606,84 @@ pub fn validate_protocol_state_with_tolerance(
             "protocol.pending_keeper_activation_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
             primary.pending_keeper_activation_slot,
             secondary.pending_keeper_activation_slot,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.flow_control_slot,
+        secondary.flow_control_slot,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.flow_control_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.flow_control_slot,
+            secondary.flow_control_slot,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.minted_in_flow_slot,
+        secondary.minted_in_flow_slot,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.minted_in_flow_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.minted_in_flow_slot,
+            secondary.minted_in_flow_slot,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.redeemed_in_flow_slot,
+        secondary.redeemed_in_flow_slot,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.redeemed_in_flow_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.redeemed_in_flow_slot,
+            secondary.redeemed_in_flow_slot,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.max_mint_per_slot_ppm,
+        secondary.max_mint_per_slot_ppm,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.max_mint_per_slot_ppm mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.max_mint_per_slot_ppm,
+            secondary.max_mint_per_slot_ppm,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.max_redeem_per_slot_ppm,
+        secondary.max_redeem_per_slot_ppm,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.max_redeem_per_slot_ppm mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.max_redeem_per_slot_ppm,
+            secondary.max_redeem_per_slot_ppm,
+            CROSS_RPC_NUMERIC_TOLERANCE
+        ));
+    }
+
+    if !within_u64_tolerance(
+        primary.manual_oracle_mode_expiry_slot,
+        secondary.manual_oracle_mode_expiry_slot,
+        CROSS_RPC_NUMERIC_TOLERANCE,
+    ) {
+        return Err(anyhow!(
+            "protocol.manual_oracle_mode_expiry_slot mismatch beyond tolerance (primary={}, secondary={}, tolerance={})",
+            primary.manual_oracle_mode_expiry_slot,
+            secondary.manual_oracle_mode_expiry_slot,
             CROSS_RPC_NUMERIC_TOLERANCE
         ));
     }
