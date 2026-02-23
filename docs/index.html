@@ -3,389 +3,1310 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>µStable — Live Protocol Dashboard</title>
-  <meta name="description" content="µStable (Microstable) real-time protocol dashboard." />
+  <title>MICROSTABLE Mission Control | Live Devnet Dashboard</title>
+  <meta name="description" content="Real-time Mission Control dashboard for MICROSTABLE. Browser-only, zero backend, direct Solana devnet polling." />
+  <meta property="og:title" content="MICROSTABLE Mission Control" />
+  <meta property="og:description" content="Autonomous protocol telemetry: collateral ratio, optimizer parameters, agent arena, live transactions, and Pyth oracle prices." />
+  <meta property="og:image" content="https://kjaylee.github.io/microstable/og-image.png" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://kjaylee.github.io/microstable/" />
   <style>
-    :root{
-      --bg:#070b14;--bg2:#0d1322;--card:#101a2e;--text:#e9f3ff;--muted:#92a9c6;
-      --neon:#3ef0ff;--violet:#8b6cff;--green:#1ee39b;--amber:#ffcc66;--red:#ff5f73;
-      --border:rgba(118,146,190,.25);--shadow:0 12px 40px rgba(0,0,0,.35)
+    :root {
+      --bg: #0a0a0f;
+      --bg-panel: #10121b;
+      --bg-panel-2: #131723;
+      --line: rgba(0, 240, 255, 0.2);
+      --line-soft: rgba(255, 255, 255, 0.08);
+      --txt: #e8f5ff;
+      --muted: #7f95ad;
+      --cyan: #00f0ff;
+      --green: #00ff88;
+      --amber: #ffaa00;
+      --red: #ff3366;
+      --mono: "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
-    *{box-sizing:border-box} html{scroll-behavior:smooth}
-    body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;color:var(--text);
-      background:radial-gradient(circle at 10% -10%,rgba(62,240,255,.15),transparent 35%),
-      radial-gradient(circle at 100% 0%,rgba(139,108,255,.12),transparent 35%),
-      linear-gradient(180deg,var(--bg),var(--bg2));line-height:1.45}
-    a{color:var(--neon);text-decoration:none}.wrap{max-width:1120px;margin:0 auto;padding:0 16px}
-    .topnav{position:sticky;top:0;z-index:30;backdrop-filter:blur(8px);background:rgba(7,11,20,.75);border-bottom:1px solid var(--border)}
-    .nav-inner{display:flex;gap:14px;overflow:auto;padding:12px 0;white-space:nowrap}.nav-inner a{color:var(--muted);font-size:13px}.nav-inner a:hover{color:var(--text)}
 
-    .hero{padding:50px 0 24px}
-    .hero-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
-    .badge{display:inline-block;padding:5px 10px;border-radius:999px;border:1px solid var(--border);font-size:12px;color:var(--muted)}
-    h1{font-size:clamp(32px,7vw,54px);margin:10px 0 8px;line-height:1.08}
-    .subtitle{font-size:clamp(14px,2.8vw,20px);color:#c8d9ef;max-width:900px}
-    .hero-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
-    .btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#0f192e;color:#dff3ff;font-weight:600}
-    .btn:hover{border-color:var(--neon)}
+    * { box-sizing: border-box; }
 
-    .live-pill{display:flex;align-items:center;gap:8px;font-size:12px;color:#c2dcf8;background:rgba(10,18,32,.6);border:1px solid var(--border);padding:7px 10px;border-radius:999px}
-    .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
-    .dot.live{background:var(--green);box-shadow:0 0 0 rgba(30,227,155,.5);animation:pulse 1.3s infinite}
-    .dot.offline{background:var(--red)}
-    @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(30,227,155,.55)}70%{box-shadow:0 0 0 10px rgba(30,227,155,0)}100%{box-shadow:0 0 0 0 rgba(30,227,155,0)}}
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--txt);
+      font-family: var(--mono);
+    }
 
-    section{padding:24px 0}.section-title{font-size:24px;margin:0 0 14px}.section-sub{color:var(--muted);margin:0 0 16px;font-size:14px}
-    .kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-    .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:14px;padding:14px;box-shadow:var(--shadow)}
-    .card h3{margin:0 0 6px;font-size:14px;color:#b9d0eb}.big{font-size:26px;font-weight:800;letter-spacing:.2px}.small{font-size:12px;color:var(--muted)}
-    .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px),
+        radial-gradient(circle at 20% -10%, rgba(0,240,255,0.18), transparent 30%),
+        radial-gradient(circle at 110% 0%, rgba(0,255,136,0.1), transparent 30%);
+      background-size: 28px 28px, 28px 28px, auto, auto;
+      z-index: -1;
+    }
 
-    .status-pass{color:var(--green);font-weight:700}.status-fail{color:var(--red);font-weight:700}
-    .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}
-    .chip-pass{background:rgba(30,227,155,.14);color:var(--green);border:1px solid rgba(30,227,155,.35)}
-    .chip-pending{background:rgba(255,204,102,.12);color:var(--amber);border:1px solid rgba(255,204,102,.3)}
-    .chip-fail{background:rgba(255,95,115,.14);color:var(--red);border:1px solid rgba(255,95,115,.35)}
+    .container {
+      width: min(1180px, 94vw);
+      margin: 0 auto;
+      padding: 20px 0 34px;
+    }
 
-    .pipeline .item{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid var(--border);border-radius:10px;padding:10px 11px;background:rgba(10,18,32,.55)}
-    .pipeline .milestone{font-size:14px}.pipeline .evidence{font-size:11px;color:var(--muted);margin-top:4px}
+    .header {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0.05), rgba(0, 0, 0, 0.2));
+      padding: 18px 18px 14px;
+      border-radius: 16px;
+      box-shadow: 0 0 30px rgba(0, 240, 255, 0.12), inset 0 0 22px rgba(0, 240, 255, 0.03);
+    }
 
-    .scenario-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-    .metric-row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.1)}
-    .metric-row:last-child{border-bottom:none}
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
 
-    details{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:rgba(15,23,39,.45)}
-    summary{cursor:pointer;color:#d9ebff;font-weight:600} table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
-    th,td{padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left} th{color:#9fc2e8}
+    .title {
+      margin: 0;
+      font-size: clamp(28px, 6vw, 56px);
+      letter-spacing: 0.14em;
+      line-height: 1;
+      color: var(--cyan);
+      text-shadow: 0 0 12px rgba(0, 240, 255, 0.75), 0 0 36px rgba(0, 240, 255, 0.35);
+    }
 
-    pre.diagram{overflow:auto;background:#090f1c;border:1px solid var(--border);border-radius:12px;padding:14px;color:#b8d4ef;font-size:12px}
-    .agent{min-height:130px}.agent .role{font-size:16px;font-weight:700;margin-bottom:4px}
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: clamp(12px, 2.5vw, 16px);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
 
-    .bar-wrap{display:grid;gap:10px}.bar-label{display:flex;justify-content:space-between;font-size:13px;color:#d4e6ff}
-    .bar{height:11px;background:#0a1324;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
-    .bar .fill{height:100%;width:0;background:linear-gradient(90deg,var(--neon),var(--violet));transition:width .9s ease}
+    .header-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
 
-    .placeholder{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;margin-bottom:8px;background:rgba(7,12,22,.35)}
-    .spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--neon);border-radius:50%;display:inline-block;animation:spin 1s linear infinite;vertical-align:middle}
-    @keyframes spin{to{transform:rotate(360deg)}}
+    .badge {
+      border: 1px solid var(--line-soft);
+      color: var(--txt);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, 0.02);
+    }
 
-    .toast-wrap{position:fixed;right:14px;bottom:16px;z-index:50;display:grid;gap:8px}
-    .toast{background:#0f1a30;border:1px solid var(--border);padding:10px 12px;border-radius:10px;font-size:12px;color:#d7ebff;box-shadow:var(--shadow);opacity:.98}
+    .badge.devnet {
+      border-color: rgba(0, 240, 255, 0.55);
+      color: var(--cyan);
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.2);
+    }
 
-    footer{padding:34px 0 46px;color:var(--muted);font-size:13px;text-align:center}
-    @media (max-width:900px){.kpis,.grid-4,.grid-2,.scenario-grid{grid-template-columns:1fr}.hero{padding-top:34px}}
+    .live-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      background: var(--red);
+      margin-right: 6px;
+      vertical-align: 0;
+    }
+
+    .live-dot.live { animation: livePulse 1s infinite; }
+
+    @keyframes livePulse {
+      0% { box-shadow: 0 0 0 0 rgba(255, 51, 102, 0.75); }
+      70% { box-shadow: 0 0 0 12px rgba(255, 51, 102, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 51, 102, 0); }
+    }
+
+    .statusline {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .grid2 {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .panel {
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0.05), rgba(20, 24, 35, 0.7));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      letter-spacing: 0.08em;
+      color: var(--cyan);
+      text-transform: uppercase;
+    }
+
+    .cr-value {
+      font-size: clamp(28px, 5vw, 46px);
+      font-weight: 700;
+      margin: 8px 0;
+      line-height: 1;
+    }
+
+    .risk-badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .risk-normal { color: var(--green); border-color: rgba(0, 255, 136, 0.45); background: rgba(0, 255, 136, 0.09); }
+    .risk-elevated { color: var(--amber); border-color: rgba(255, 170, 0, 0.45); background: rgba(255, 170, 0, 0.1); }
+    .risk-high { color: #ff7a36; border-color: rgba(255, 122, 54, 0.45); background: rgba(255, 122, 54, 0.11); }
+    .risk-critical { color: var(--red); border-color: rgba(255, 51, 102, 0.45); background: rgba(255, 51, 102, 0.11); }
+
+    .bar {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      transition: width 0.7s ease;
+      background: var(--green);
+      box-shadow: 0 0 16px currentColor;
+    }
+
+    .kv {
+      margin-top: 11px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px;
+      font-size: 13px;
+      align-items: center;
+    }
+
+    .kv .k { color: var(--muted); }
+
+    .weight-row {
+      margin-top: 8px;
+    }
+
+    .weight-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 4px;
+      color: var(--muted);
+    }
+
+    .weight-fill {
+      background: linear-gradient(90deg, rgba(0, 240, 255, 0.8), rgba(0, 255, 136, 0.8));
+    }
+
+    .optimizer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+
+    .optimizer-grid .label { color: var(--muted); }
+
+    #historyChart {
+      width: 100%;
+      height: 180px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: rgba(8, 10, 16, 0.8);
+      display: block;
+    }
+
+    .legend {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend i { width: 10px; height: 2px; display: inline-block; }
+
+    .full-panel {
+      margin-top: 14px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.2));
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .full-panel h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      color: var(--cyan);
+      text-transform: uppercase;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 9px 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      vertical-align: middle;
+    }
+
+    th { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.05em; }
+
+    .score-cell {
+      transition: background-color 0.6s ease;
+      border-radius: 6px;
+      padding: 3px 6px;
+      display: inline-block;
+      min-width: 62px;
+      text-align: right;
+    }
+
+    .score-up { background: rgba(0, 255, 136, 0.16); color: var(--green); }
+    .score-down { background: rgba(255, 51, 102, 0.16); color: var(--red); }
+
+    .tier { letter-spacing: 0.08em; }
+
+    .tx-link {
+      color: var(--cyan);
+      text-decoration: none;
+    }
+
+    .tx-link:hover { text-decoration: underline; }
+
+    .tx-new {
+      animation: txDrop 0.5s ease;
+      background: rgba(0, 240, 255, 0.06);
+    }
+
+    @keyframes txDrop {
+      from { transform: translateY(-10px); opacity: 0.2; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .oracle-strip {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .oracle-card {
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0.06), rgba(0, 0, 0, 0.2));
+      padding: 10px;
+      min-height: 88px;
+    }
+
+    .oracle-card .sym {
+      color: var(--cyan);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .oracle-card .price {
+      font-size: 22px;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    .oracle-card .meta {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .footer {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line-soft);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .footer a {
+      color: var(--cyan);
+      text-decoration: none;
+    }
+
+    .footer a:hover { text-decoration: underline; }
+
+    .muted { color: var(--muted); }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+
+    @media (max-width: 980px) {
+      .grid2 { grid-template-columns: 1fr; }
+      .oracle-strip { grid-template-columns: 1fr; }
+      .header-badges { justify-content: flex-start; }
+      .container { width: min(1200px, 96vw); }
+      th:nth-child(4), td:nth-child(4) { display: none; }
+      .optimizer-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <nav class="topnav"><div class="wrap nav-inner">
-    <a href="#hero">Hero</a><a href="#pipeline">Pipeline</a><a href="#gate-a">Gate A</a><a href="#architecture">Architecture</a>
-    <a href="#agents">Agents</a><a href="#basket">Collateral</a><a href="#stress">Stress</a><a href="#security">Security</a><a href="#specs">Specs</a>
-  </div></nav>
-
-  <main class="wrap">
-    <section id="hero" class="hero">
-      <div class="hero-top">
-        <span class="badge">MIT Licensed</span>
-        <div class="live-pill"><span id="liveDot" class="dot offline"></span><strong id="liveState">Offline</strong> • <span id="lastUpdatedAgo">Last updated: --</span></div>
+  <main class="container">
+    <header class="header">
+      <div class="header-top">
+        <div>
+          <h1 class="title">MICROSTABLE</h1>
+          <p class="subtitle">AUTONOMOUS PROTOCOL</p>
+        </div>
+        <div class="header-badges">
+          <span class="badge"><span id="liveDot" class="live-dot"></span><strong id="liveText">OFFLINE</strong></span>
+          <span class="badge devnet">DEVNET</span>
+          <span class="badge" id="rpcHealth">RPC: BOOTING</span>
+        </div>
       </div>
-      <h1>µStable (Microstable)</h1>
-      <p class="subtitle">Self-Evolving Multi-Collateral Stablecoin Protocol</p>
-      <p class="section-sub">Autonomous AI Agent Governance • Gradient-Based Optimization • Multi-Collateral Basket</p>
-      <div class="hero-meta">
-        <a class="btn" href="https://github.com/kjaylee/microstable" target="_blank" rel="noreferrer">GitHub Repository</a>
-        <span class="badge" id="heroGateBadge">Gate A: --</span>
-        <span class="badge" id="heroScenarioBadge">Scenarios: --</span>
+      <div class="statusline">
+        <span>Last update: <strong id="lastUpdateAge">--</strong></span>
+        <span>Last keeper activity: <strong id="keeperActivity">--</strong></span>
+        <span>Program: <code id="programShort">--</code></span>
       </div>
+    </header>
+
+    <section class="grid2">
+      <article class="panel">
+        <h2>Protocol Health</h2>
+        <div class="cr-value" id="crValue">--%</div>
+        <div class="risk-badge" id="riskBadge">RISK: --</div>
+        <div class="bar"><div class="bar-fill" id="crBar"></div></div>
+
+        <div class="kv">
+          <span class="k">MSTB Supply</span>
+          <strong id="mstbSupply">--</strong>
+          <span class="k">Protocol Total Supply (state)</span>
+          <strong id="stateSupply">--</strong>
+          <span class="k">Emergency Shutdown</span>
+          <strong id="emergencyFlag">--</strong>
+          <span class="k">Circuit Breaker Active</span>
+          <strong id="breakerFlag">--</strong>
+        </div>
+
+        <div style="margin-top:12px;font-size:12px;color:var(--muted);">Collateral Weights</div>
+        <div id="weightsBox"></div>
+      </article>
+
+      <article class="panel">
+        <h2>AI Optimizer</h2>
+        <div class="optimizer-grid">
+          <span class="label">CR Target</span><strong id="paramCr">--</strong>
+          <span class="label">Mint Fee</span><strong id="paramMintFee">--</strong>
+          <span class="label">Redeem Fee</span><strong id="paramRedeemFee">--</strong>
+          <span class="label">Weights</span><strong id="paramWeights">--</strong>
+          <span class="label">Optimizer Status</span><strong id="optimizerStatus">--</strong>
+        </div>
+
+        <canvas id="historyChart" width="760" height="180"></canvas>
+        <div class="legend">
+          <span><i style="background:#00f0ff"></i>CR</span>
+          <span><i style="background:#00ff88"></i>Mint Fee</span>
+          <span><i style="background:#ffaa00"></i>Redeem Fee</span>
+          <span><i style="background:#ff3366"></i>USDC</span>
+          <span><i style="background:#9b6bff"></i>USDT</span>
+          <span><i style="background:#36d0ff"></i>DAI</span>
+          <span><i style="background:#7f95ad"></i>Reserve</span>
+        </div>
+      </article>
     </section>
 
-    <section id="pipeline">
-      <h2 class="section-title">Pipeline Status Dashboard</h2>
-      <p class="section-sub">Live source: <code>https://raw.githubusercontent.com/kjaylee/microstable/main/docs/data.json</code></p>
-      <div id="pipelineGrid" class="pipeline grid-2"></div>
+    <section class="full-panel">
+      <h2>Agent Arena</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Name</th>
+            <th>Tier</th>
+            <th>Role</th>
+            <th>Score</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="agentRows">
+          <tr><td colspan="6" class="muted">Loading agents...</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:10px;font-size:12px;"><a class="tx-link" href="https://github.com/kjaylee/microstable#readme" target="_blank" rel="noreferrer">Register Your Agent →</a></div>
     </section>
 
-    <section id="gate-a">
-      <h2 class="section-title">Gate A Results (Live Metrics)</h2>
-      <p class="section-sub">Auto-refresh every 30 seconds. Falls back to cached/default data when offline.</p>
-      <div class="kpis">
-        <div class="card"><h3>Global peg MAE</h3><div class="big"><span id="kpiPeg">0.000000</span></div><div class="small" id="kpiPegTarget">Target &lt; 0.0015</div></div>
-        <div class="card"><h3>CR violation rate</h3><div class="big"><span id="kpiCr">0.000</span>%</div><div class="small" id="kpiCrTarget">Target &lt; 1%</div></div>
-        <div class="card"><h3>Breaker false positive</h3><div class="big"><span id="kpiFp">0.000</span>%</div><div class="small" id="kpiFpTarget">Target &lt; 5%</div></div>
+    <section class="full-panel">
+      <h2>Live Transaction Feed</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Signature</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="txRows">
+          <tr><td colspan="4" class="muted">Loading transactions...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="full-panel">
+      <h2>Oracle Prices</h2>
+      <div id="oracleStrip" class="oracle-strip"></div>
+    </section>
+
+    <footer class="footer">
+      <div>
+        <a href="https://github.com/kjaylee/microstable" target="_blank" rel="noreferrer">GitHub</a>
+        · <a href="https://github.com/kjaylee/microstable/blob/main/docs/whitepaper.md" target="_blank" rel="noreferrer">Whitepaper</a>
+        · <a href="https://www.npmjs.com/package/microstable" target="_blank" rel="noreferrer">npm package</a>
       </div>
-      <div id="scenarioGrid" class="scenario-grid" style="margin-top:12px"></div>
-      <details style="margin-top:12px"><summary>Show detailed scenario table</summary><table id="scenarioTable"></table></details>
-    </section>
-
-    <section id="architecture">
-      <h2 class="section-title">Protocol Architecture</h2>
-      <pre class="diagram">[Collateral Basket] → [Loss Function] → [Adam Optimizer] → [Weight Update]
-        ↑                                                         ↓
-  [Oracle Feeds] ←── [Circuit Breakers] ←── [Invariant Checks]
-        ↑                    ↑
-  [Watchdog Agent]    [Auditor Agent]
-        ↓
-  [Keeper Agent] → [Rebalance TX] → [Solana Program]</pre>
-    </section>
-
-    <section id="agents"><h2 class="section-title">Agent Dashboard</h2><div id="agentsGrid" class="grid-4"></div></section>
-
-    <section id="basket"><h2 class="section-title">Collateral Basket</h2><div class="card"><div id="basketBars" class="bar-wrap"></div></div></section>
-
-    <section id="stress">
-      <h2 class="section-title">Stress Test Results</h2>
-      <p class="section-sub" id="stressMeta">Status: --</p>
-      <div id="stressList"></div>
-    </section>
-
-    <section id="security">
-      <h2 class="section-title">Security Audit / Red Team</h2>
-      <p class="section-sub" id="redMeta">Status: --</p>
-      <div id="redList"></div>
-    </section>
-
-    <section id="specs"><h2 class="section-title">Technical Specs</h2><div id="specCards" class="grid-2"></div></section>
+      <div>Powered by Solana • Mission Control online</div>
+    </footer>
   </main>
 
-  <div id="toastWrap" class="toast-wrap"></div>
-
-  <footer>
-    MIT License • <a href="https://github.com/kjaylee/microstable" target="_blank" rel="noreferrer">github.com/kjaylee/microstable</a><br/>Built with autonomous AI agents
-  </footer>
-
   <script>
-    const DATA_URL = 'https://raw.githubusercontent.com/kjaylee/microstable/main/docs/data.json';
-    const LOCAL_URL = './data.json';
-    const CACHE_KEY = 'microstable-live-data-v2';
-    const REFRESH_MS = 30000;
-
-    const DEFAULT_DATA = {
-      lastUpdated: null,
-      pipeline: {
-        m0:{status:'complete',label:'Agent Governance'},m1:{status:'complete',label:'Algorithm Verification'},
-        'm1.5':{status:'complete',label:'Circuit Breaker Fix'},m2:{status:'complete',label:'Test Cases (55)'},
-        m3:{status:'complete',label:'Python Simulator',gateA:{pegMAE:0.000331,crViolation:0,breakerFP:0}},
-        m4:{status:'complete',label:'Scenario Verification',scenarios:6},m5:{status:'complete',label:'Solana Anchor',tests:'7/7'},
-        m6:{status:'local_validated',label:'Deployment',programId:'BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3'},
-        m7:{status:'complete',label:'Agent Interfaces',agents:4}
+    const CFG = {
+      RPC_URL: "https://api.devnet.solana.com",
+      PROGRAM_ID: "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+      MSTB_MINT: "EZUwC88f1s3k9prgv5DGY6wML8giBqdpRxoA2rLtGA6R",
+      PROTOCOL_STATE: "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+      CIRCUIT_BREAKER: "7xy7xc4nqhywYa72Bb5A2u7g3t6kz96HN2e2z4Yn9WXe",
+      FEEDS: {
+        USDC: "Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX",
+        USDT: "HT2PLQBcG5EiCcNSaMHAjSgd9F98ecpATbk4Sk5oYuM",
+        DAI: "FmfrxJ7YH8yVxoYpJ9ZDMeb8gUceYXYaSrQiBJ1uSZjN"
       },
-      gateA:{thresholds:{pegMAE:0.0015,crViolation:1,breakerFP:5},global:{pegMAE:0.000331,crViolation:0,breakerFP:0},scenarios:[]},
-      collateral:{basket:[{symbol:'USDC',weight:0.4},{symbol:'USDT',weight:0.3},{symbol:'DAI',weight:0.2},{symbol:'USDS',weight:0.1}]},
-      agents:[{name:'Optimizer Keeper',icon:'🔧',role:'Gradient descent, weight rebalancing',feeShare:30},{name:'Watchdog',icon:'👁️',role:'Price monitoring, CB detection',feeShare:10},{name:'Auditor',icon:'📋',role:'Invariant validation, compliance',feeShare:5},{name:'Treasury',icon:'🏦',role:'Protocol reserve',feeShare:55}],
-      stressTest:{status:'running',scenarios:[],lastUpdate:null},redTeam:{status:'running',findings:[],lastUpdate:null},
-      stats:{simulatorLines:1437,testCases:55,monteCarloRuns:600,scenarios:6,anchorTests:7,agentCount:4}
+      TICK_MS: 30000,
+      HISTORY_KEY: "microstable:param-history:v1",
+      SCORE_KEY: "microstable:score-history:v1"
     };
 
-    let currentData = null;
-    let online = false;
+    const ROLE_MAP = ["Optimizer", "Monitor", "Auditor", "Liquidator"];
+    const AGENT_STATUS = ["Active", "Cooldown", "Slashed", "Deregistered"];
+
+    const state = {
+      lastSuccessAt: 0,
+      lastKeeperActivity: 0,
+      polling: false,
+      history: loadHistory(),
+      prevScores: loadJson(CFG.SCORE_KEY, {}),
+      seenSigs: new Set(),
+      firstTxPaint: true,
+      lastProtocol: null,
+      lastError: ""
+    };
 
     const $ = (id) => document.getElementById(id);
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    function statusChip(status){
-      const s = String(status || '').toLowerCase();
-      if (s.includes('complete') || s.includes('pass') || s.includes('validated') || s === 'active') return ['chip chip-pass','✅ ' + prettyStatus(s)];
-      if (s.includes('fail')) return ['chip chip-fail','❌ ' + prettyStatus(s)];
-      return ['chip chip-pending','⏳ ' + prettyStatus(s)];
+    function shortKey(v) {
+      if (!v || v.length < 12) return v || "--";
+      return `${v.slice(0, 6)}...${v.slice(-6)}`;
     }
 
-    function prettyStatus(s){return s.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());}
-
-    function ago(iso){
-      if (!iso) return 'Last updated: unknown';
-      const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-      if (sec < 60) return `Last updated: ${sec}s ago`;
-      if (sec < 3600) return `Last updated: ${Math.floor(sec/60)}m ago`;
-      return `Last updated: ${Math.floor(sec/3600)}h ago`;
+    function loadJson(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        return JSON.parse(raw);
+      } catch {
+        return fallback;
+      }
     }
 
-    function setLive(isLive, note=''){
-      online = !!isLive;
-      $('liveDot').className = `dot ${online ? 'live' : 'offline'}`;
-      $('liveState').textContent = online ? 'Live' : 'Offline';
-      $('lastUpdatedAgo').textContent = (note ? note + ' • ' : '') + ago(currentData?.lastUpdated);
+    function saveJson(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
     }
 
-    function toast(msg){
-      const wrap = $('toastWrap');
-      const el = document.createElement('div');
-      el.className = 'toast';
-      el.textContent = msg;
-      wrap.appendChild(el);
-      setTimeout(() => el.remove(), 3400);
+    function loadHistory() {
+      const arr = loadJson(CFG.HISTORY_KEY, []);
+      return Array.isArray(arr) ? arr : [];
     }
 
-    function animateNumber(el, next, decimals=0){
-      const prev = Number(el.dataset.v ?? next);
-      const start = performance.now();
-      const dur = 650;
-      el.dataset.v = String(next);
+    function fmtAgoMs(ms) {
+      if (!ms) return "--";
+      const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+      if (sec < 60) return `${sec}s`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ${sec % 60}s`;
+      const h = Math.floor(min / 60);
+      return `${h}h ${min % 60}m`;
+    }
+
+    function fmtAgoUnix(ts) {
+      if (!ts) return "--";
+      const sec = Math.max(0, Math.floor(Date.now() / 1000) - Number(ts));
+      if (sec < 60) return `${sec}s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ago`;
+      const h = Math.floor(min / 60);
+      return `${h}h ${min % 60}m ago`;
+    }
+
+    function fmtClock(ts) {
+      if (!ts) return "--";
+      return new Date(Number(ts) * 1000).toLocaleTimeString("en-GB", { hour12: false });
+    }
+
+    function fmtToken(raw, decimals = 6, maxFrac = 2) {
+      if (raw == null) return "--";
+      const n = Number(raw) / Math.pow(10, decimals);
+      if (!Number.isFinite(n)) return "--";
+      return n.toLocaleString(undefined, { maximumFractionDigits: maxFrac });
+    }
+
+    function ppmToPct(ppm) {
+      return Number(ppm) / 10000;
+    }
+
+    function animateNumber(el, next, opts = {}) {
+      const decimals = opts.decimals ?? 2;
+      const suffix = opts.suffix ?? "";
+      const duration = opts.duration ?? 500;
+      const prev = Number(el.dataset.v || next);
+      const target = Number(next);
+      el.dataset.v = String(target);
+      const t0 = performance.now();
       const tick = (t) => {
-        const p = Math.min(1, (t - start)/dur);
-        const eased = prev + (next - prev) * (1 - Math.pow(1-p,3));
-        el.textContent = eased.toFixed(decimals);
+        const p = Math.min(1, (t - t0) / duration);
+        const e = 1 - Math.pow(1 - p, 3);
+        const now = prev + (target - prev) * e;
+        el.textContent = `${now.toFixed(decimals)}${suffix}`;
         if (p < 1) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
     }
 
-    function renderPipeline(data){
-      const order = ['m0','m1','m1.5','m2','m3','m4','m5','m6','m7'];
-      const grid = $('pipelineGrid'); grid.innerHTML = '';
-      for (const key of order){
-        const m = data.pipeline?.[key]; if(!m) continue;
-        const [chipCls, chipTxt] = statusChip(m.status);
-        let evidence = m.detail || '';
-        if (key === 'm3' && m.gateA) evidence = `Gate A: peg ${m.gateA.pegMAE.toFixed(6)}, CR ${m.gateA.crViolation.toFixed(3)}%, FP ${m.gateA.breakerFP.toFixed(3)}%`;
-        if (key === 'm5' && m.tests) evidence = `Anchor tests: ${m.tests}`;
-        if (key === 'm6' && m.programId) evidence = `Program ID: ${m.programId}`;
-        if (key === 'm7' && m.agents) evidence = `Agents ready: ${m.agents}`;
-        const el = document.createElement('div'); el.className = 'item';
-        el.innerHTML = `<div><div class="milestone">${key.toUpperCase()} ${m.label || ''}</div><div class="evidence">${evidence}</div></div><span class="${chipCls}">${chipTxt}</span>`;
-        grid.appendChild(el);
+    async function rpc(method, params, timeout = 14000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      const payload = { jsonrpc: "2.0", id: Math.floor(Math.random() * 1e9), method, params };
+      try {
+        const res = await fetch(CFG.RPC_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+          cache: "no-store"
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || "RPC error");
+        return data.result;
+      } finally {
+        clearTimeout(timer);
       }
     }
 
-    function renderGate(data){
-      const g = data.gateA || {};
-      const t = g.thresholds || {pegMAE:0.0015,crViolation:1,breakerFP:5};
-      const gg = g.global || {};
-      animateNumber($('kpiPeg'), Number(gg.pegMAE || 0), 6);
-      animateNumber($('kpiCr'), Number(gg.crViolation || 0), 3);
-      animateNumber($('kpiFp'), Number(gg.breakerFP || 0), 3);
-      $('kpiPegTarget').textContent = `Target < ${t.pegMAE}`;
-      $('kpiCrTarget').textContent = `Target < ${t.crViolation}%`;
-      $('kpiFpTarget').textContent = `Target < ${t.breakerFP}%`;
-
-      const scenarios = Array.isArray(g.scenarios) ? g.scenarios : [];
-      $('heroScenarioBadge').textContent = `Scenarios: ${scenarios.length || '--'}`;
-      $('heroGateBadge').textContent = (gg.pegMAE ?? 99) < t.pegMAE && (gg.crViolation ?? 99) < t.crViolation && (gg.breakerFP ?? 99) < t.breakerFP ? 'Gate A: PASS' : 'Gate A: CHECK';
-
-      const sg = $('scenarioGrid'); sg.innerHTML = '';
-      const table = $('scenarioTable'); table.innerHTML = '<tr><th>Scenario</th><th>peg MAE</th><th>CR violation rate</th><th>Breaker FP rate</th></tr>';
-      scenarios.forEach(s => {
-        const peg = Number(s.pegMAE || 0), cr = Number(s.crViolation || 0), fp = Number(s.breakerFP || 0);
-        const pass = peg < t.pegMAE && cr < t.crViolation && fp < t.breakerFP;
-        const card = document.createElement('div'); card.className = 'card';
-        card.innerHTML = `<h3 style="display:flex;justify-content:space-between;align-items:center"><span>${s.name}</span><span class="chip ${pass?'chip-pass':'chip-fail'}">${pass?'PASS':'FAIL'}</span></h3>
-          <div class="metric-row"><span>peg MAE</span><span class="${peg<t.pegMAE?'status-pass':'status-fail'}">${peg.toFixed(6)}</span></div>
-          <div class="metric-row"><span>CR violation rate</span><span class="${cr<t.crViolation?'status-pass':'status-fail'}">${cr.toFixed(4)}%</span></div>
-          <div class="metric-row"><span>Breaker FP rate</span><span class="${fp<t.breakerFP?'status-pass':'status-fail'}">${fp.toFixed(4)}%</span></div>`;
-        sg.appendChild(card);
-        const tr = document.createElement('tr'); tr.innerHTML = `<td>${s.name}</td><td>${peg.toFixed(6)}</td><td>${cr.toFixed(4)}%</td><td>${fp.toFixed(4)}%</td>`; table.appendChild(tr);
-      });
+    function base64ToBytes(b64) {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
     }
 
-    function renderAgents(data){
-      const list = Array.isArray(data.agents) ? data.agents : [];
-      const el = $('agentsGrid'); el.innerHTML = '';
-      list.forEach(a => {
-        const card = document.createElement('div'); card.className='card agent';
-        card.innerHTML = `<div class="role">${a.icon || '•'} ${a.name}</div><div>${a.role || ''}</div><div class="small" style="margin-top:8px">Fee share: ${Number(a.feeShare || 0)}%</div>`;
-        el.appendChild(card);
-      });
+    function readU32LE(dv, o) { return dv.getUint32(o, true); }
+    function readI32LE(dv, o) { return dv.getInt32(o, true); }
+    function readU64LE(dv, o) {
+      const lo = BigInt(dv.getUint32(o, true));
+      const hi = BigInt(dv.getUint32(o + 4, true));
+      return (hi << 32n) | lo;
+    }
+    function readI64LE(dv, o) {
+      const u = readU64LE(dv, o);
+      const max = 1n << 63n;
+      return u >= max ? u - (1n << 64n) : u;
     }
 
-    function renderBasket(data){
-      const basket = data.collateral?.basket || [];
-      const box = $('basketBars'); box.innerHTML = '';
-      basket.forEach(b => {
-        const pct = Math.round((Number(b.weight || 0) * 1000)) / 10;
-        const row = document.createElement('div');
-        row.innerHTML = `<div class="bar-label"><span>${b.symbol}</span><span>${pct}%</span></div><div class="bar"><div class="fill" style="width:${pct}%"></div></div>`;
+    const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    function bytesToBase58(bytes) {
+      if (!bytes || bytes.length === 0) return "";
+      let digits = [0];
+      for (let i = 0; i < bytes.length; i++) {
+        let carry = bytes[i];
+        for (let j = 0; j < digits.length; j++) {
+          carry += digits[j] << 8;
+          digits[j] = carry % 58;
+          carry = (carry / 58) | 0;
+        }
+        while (carry > 0) {
+          digits.push(carry % 58);
+          carry = (carry / 58) | 0;
+        }
+      }
+      let leadingZeroes = 0;
+      while (leadingZeroes < bytes.length && bytes[leadingZeroes] === 0) leadingZeroes++;
+      let out = "";
+      for (let i = 0; i < leadingZeroes; i++) out += "1";
+      for (let i = digits.length - 1; i >= 0; i--) out += BASE58_ALPHABET[digits[i]];
+      return out;
+    }
+
+    function readPubkey(bytes, o) {
+      return bytesToBase58(bytes.slice(o, o + 32));
+    }
+
+    function parseProtocolState(bytes) {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 338) throw new Error("ProtocolState too short");
+      let o = 8;
+      const weights = [];
+      for (let i = 0; i < 4; i++) { weights.push(readU64LE(dv, o)); o += 8; }
+      const fee_rate = readU64LE(dv, o); o += 8;
+      const mint_fee_rate = readU64LE(dv, o); o += 8;
+      const redeem_fee_rate = readU64LE(dv, o); o += 8;
+      const cr_target = readU64LE(dv, o); o += 8;
+      const total_supply = readU64LE(dv, o); o += 8;
+      const last_update_slot = readU64LE(dv, o); o += 8;
+      const keeper_set = [];
+      for (let i = 0; i < 3; i++) { keeper_set.push(readPubkey(bytes, o)); o += 32; }
+      const emergency_shutdown = !!bytes[o]; o += 1;
+      const pending_rebalance_commit = bytes.slice(o, o + 32); o += 32;
+      const pending_rebalance_slot = readU64LE(dv, o); o += 8;
+      const pending_rebalance_expiry = readU64LE(dv, o); o += 8;
+      const pending_keeper_set = [];
+      for (let i = 0; i < 3; i++) { pending_keeper_set.push(readPubkey(bytes, o)); o += 32; }
+      const pending_keeper_activation_slot = readU64LE(dv, o); o += 8;
+      const bump = bytes[o];
+
+      return {
+        weights, fee_rate, mint_fee_rate, redeem_fee_rate, cr_target, total_supply,
+        last_update_slot, keeper_set, emergency_shutdown, pending_rebalance_commit,
+        pending_rebalance_slot, pending_rebalance_expiry, pending_keeper_set,
+        pending_keeper_activation_slot, bump
+      };
+    }
+
+    function parseCircuitBreaker(bytes) {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 203) throw new Error("CircuitBreaker too short");
+      let o = 8;
+      const status = Array.from(bytes.slice(o, o + 4)); o += 4;
+      const activation_tick = [];
+      const trigger_count = [];
+      const cooldown_until = [];
+      const last_trigger_tick = [];
+      const recovery_tick = [];
+      for (let i = 0; i < 4; i++) { activation_tick.push(readU64LE(dv, o)); o += 8; }
+      for (let i = 0; i < 4; i++) { trigger_count.push(readU64LE(dv, o)); o += 8; }
+      for (let i = 0; i < 4; i++) { cooldown_until.push(readU64LE(dv, o)); o += 8; }
+      for (let i = 0; i < 4; i++) { last_trigger_tick.push(readU64LE(dv, o)); o += 8; }
+      const recent_trigger_count = Array.from(bytes.slice(o, o + 4)); o += 4;
+      for (let i = 0; i < 4; i++) { recovery_tick.push(readU64LE(dv, o)); o += 8; }
+      const cb1_collateral_index = bytes[o]; o += 1;
+      const mint_rate_limit = readU64LE(dv, o); o += 8;
+      const optimizer_enabled = !!bytes[o]; o += 1;
+      const learning_rate_scale = readU64LE(dv, o); o += 8;
+      const max_activation_duration = readU64LE(dv, o); o += 8;
+      const bump = bytes[o];
+
+      return {
+        status, activation_tick, trigger_count, cooldown_until, last_trigger_tick,
+        recent_trigger_count, recovery_tick, cb1_collateral_index, mint_rate_limit,
+        optimizer_enabled, learning_rate_scale, max_activation_duration, bump
+      };
+    }
+
+    function parseAgentRecord(bytes) {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 116) throw new Error("AgentRecord too short");
+      let o = 8;
+      const agent = readPubkey(bytes, o); o += 32;
+      const stake = readU64LE(dv, o); o += 8;
+      const reputation = readU64LE(dv, o); o += 8;
+      const role = bytes[o]; o += 1;
+      const tier = bytes[o]; o += 1;
+      const status = bytes[o]; o += 1;
+      const proposals_submitted = readU64LE(dv, o); o += 8;
+      const proposals_accepted = readU64LE(dv, o); o += 8;
+      const registered_at = readI64LE(dv, o); o += 8;
+      const registered_slot = readU64LE(dv, o); o += 8;
+      const last_active_at = readI64LE(dv, o); o += 8;
+      const agent_score = readU64LE(dv, o); o += 8;
+      const last_slashed_slot = readU64LE(dv, o); o += 8;
+      const bump = bytes[o];
+
+      return {
+        agent, stake, reputation, role, tier, status, proposals_submitted,
+        proposals_accepted, registered_at, registered_slot, last_active_at,
+        agent_score, last_slashed_slot, bump
+      };
+    }
+
+    function parseCollateralVault(bytes) {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 194) throw new Error("CollateralVault too short");
+      let o = 8;
+      const index = bytes[o]; o += 1;
+      const mint = readPubkey(bytes, o); o += 32;
+      const vault = readPubkey(bytes, o); o += 32;
+      const oracle = readPubkey(bytes, o); o += 32;
+      const risk_score = readU64LE(dv, o); o += 8;
+      const weight_cap = readU64LE(dv, o); o += 8;
+      const base_weight_cap = readU64LE(dv, o); o += 8;
+      const price = readU64LE(dv, o); o += 8;
+      const confidence = readU64LE(dv, o); o += 8;
+      const last_oracle_slot = readU64LE(dv, o); o += 8;
+      const total_deposits = readU64LE(dv, o); o += 8;
+      const bump = bytes[o]; o += 1;
+      const pyth_price_feed = readPubkey(bytes, o);
+      return {
+        index, mint, vault, oracle, risk_score, weight_cap, base_weight_cap,
+        price, confidence, last_oracle_slot, total_deposits, bump, pyth_price_feed
+      };
+    }
+
+    function pow10n(exp) {
+      let out = 1n;
+      for (let i = 0; i < exp; i++) out *= 10n;
+      return out;
+    }
+
+    function scaleToSixUnsigned(v, exponent) {
+      const shift = exponent + 6;
+      if (shift >= 0) return v * pow10n(shift);
+      const factor = pow10n(-shift);
+      return (v + factor - 1n) / factor;
+    }
+
+    function parsePythPriceUpdate(bytes) {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 8 + 32 + 1 + 32 + 8 + 8 + 4 + 8 + 8 + 8 + 8 + 8) {
+        throw new Error("Pyth account too short");
+      }
+
+      let o = 8;
+      const write_authority = readPubkey(bytes, o); o += 32;
+      const verTag = bytes[o]; o += 1;
+      let verification = "Unknown";
+      if (verTag === 0) {
+        verification = `Partial(${bytes[o]})`;
+        o += 1;
+      } else if (verTag === 1) {
+        verification = "Full";
+      }
+
+      const feed_id = bytes.slice(o, o + 32); o += 32;
+      const priceRaw = readI64LE(dv, o); o += 8;
+      const confRaw = readU64LE(dv, o); o += 8;
+      const exponent = readI32LE(dv, o); o += 4;
+      const publish_time = Number(readI64LE(dv, o)); o += 8;
+      const prev_publish_time = Number(readI64LE(dv, o)); o += 8;
+      const ema_price = readI64LE(dv, o); o += 8;
+      const ema_conf = readU64LE(dv, o); o += 8;
+      const posted_slot = readU64LE(dv, o); o += 8;
+
+      if (priceRaw <= 0n) throw new Error("Non-positive price");
+      const priceScaled = scaleToSixUnsigned(priceRaw, exponent);
+      const confScaled = scaleToSixUnsigned(confRaw, exponent);
+
+      return {
+        write_authority,
+        verification,
+        feed_id_hex: Array.from(feed_id).map((x) => x.toString(16).padStart(2, "0")).join(""),
+        price: Number(priceScaled) / 1e6,
+        conf: Number(confScaled) / 1e6,
+        exponent,
+        publish_time,
+        prev_publish_time,
+        ema_price,
+        ema_conf,
+        posted_slot: Number(posted_slot)
+      };
+    }
+
+    function classifyTx(logs = []) {
+      const raw = logs.join(" ").toLowerCase();
+      const n = raw.replace(/[^a-z]/g, "");
+      if (n.includes("instructionrebalance") || n.includes("instructioncommitrebalance")) return "rebalance";
+      if (n.includes("instructionupdateoracle") || n.includes("instructionupdateoraclepyth") || n.includes("instructionsetpythfeed")) return "oracle";
+      if (
+        n.includes("instructionregisteragent") ||
+        n.includes("instructionupdateagentscore") ||
+        n.includes("instructionpromoteagent") ||
+        n.includes("instructiondemoteagent") ||
+        n.includes("instructionslashagent")
+      ) return "agent";
+      return "oracle";
+    }
+
+    function tierLabel(tier) {
+      if (tier >= 3) return "⭐⭐⭐ (Tier 3)";
+      if (tier === 2) return "⭐⭐ (Tier 2)";
+      if (tier === 1) return "⭐ (Tier 1)";
+      return "Tier 0";
+    }
+
+    function statusLabel(s) {
+      return AGENT_STATUS[s] || `Unknown(${s})`;
+    }
+
+    function roleLabel(r) {
+      return ROLE_MAP[r] || `Role ${r}`;
+    }
+
+    function setLive(ok) {
+      $("liveText").textContent = ok ? "LIVE" : "OFFLINE";
+      $("liveDot").classList.toggle("live", ok);
+      $("rpcHealth").textContent = ok ? "RPC: OK" : "RPC: DEGRADED";
+      $("rpcHealth").className = `badge ${ok ? "ok" : "bad"}`;
+    }
+
+    function updateHeaderTick() {
+      $("lastUpdateAge").textContent = fmtAgoMs(state.lastSuccessAt);
+      $("keeperActivity").textContent = fmtAgoUnix(state.lastKeeperActivity);
+    }
+
+    function computeRisk(crPct, protocol, circuit) {
+      const activeCount = (circuit?.status || []).filter((s) => s > 0).length;
+      if (protocol?.emergency_shutdown) return ["CRITICAL", "risk-critical"];
+      if (crPct < 120 || activeCount >= 2) return ["CRITICAL", "risk-critical"];
+      if (crPct < 130 || activeCount === 1) return ["HIGH", "risk-high"];
+      if (crPct < 150) return ["ELEVATED", "risk-elevated"];
+      return ["NORMAL", "risk-normal"];
+    }
+
+    function updateHealth(protocol, circuit, supplyRawBigInt, vaults) {
+      if (!protocol) return;
+
+      const supply = supplyRawBigInt > 0n ? supplyRawBigInt : protocol.total_supply;
+      let collateralValue = 0n;
+      for (const v of vaults) {
+        collateralValue += (v.total_deposits * v.price) / 1000000n;
+      }
+
+      const crPct = supply > 0n ? Number((collateralValue * 10000n) / supply) / 100 : 200;
+      animateNumber($("crValue"), crPct, { decimals: 2, suffix: "%" });
+
+      const fillPct = Math.max(0, Math.min(100, (crPct / 200) * 100));
+      const bar = $("crBar");
+      bar.style.width = `${fillPct.toFixed(1)}%`;
+      bar.style.background = crPct > 150 ? "var(--green)" : crPct >= 120 ? "var(--amber)" : "var(--red)";
+
+      const [riskText, riskClass] = computeRisk(crPct, protocol, circuit);
+      const rb = $("riskBadge");
+      rb.className = `risk-badge ${riskClass}`;
+      rb.textContent = `RISK: ${riskText}`;
+
+      $("mstbSupply").textContent = fmtToken(supplyRawBigInt, 6, 2);
+      $("stateSupply").textContent = fmtToken(protocol.total_supply, 6, 2);
+      $("emergencyFlag").textContent = protocol.emergency_shutdown ? "YES" : "NO";
+      $("emergencyFlag").className = protocol.emergency_shutdown ? "bad" : "ok";
+
+      const activeCount = (circuit?.status || []).filter((s) => s > 0).length;
+      $("breakerFlag").textContent = `${activeCount} active`;
+      $("breakerFlag").className = activeCount > 0 ? "warn" : "ok";
+
+      const labels = ["USDC", "USDT", "DAI", "RESERVE"];
+      const box = $("weightsBox");
+      box.innerHTML = "";
+      (protocol.weights || []).slice(0, 4).forEach((w, i) => {
+        const pct = ppmToPct(w);
+        const row = document.createElement("div");
+        row.className = "weight-row";
+        row.innerHTML = `
+          <div class="weight-head"><span>${labels[i]}</span><span>${pct.toFixed(2)}%</span></div>
+          <div class="bar"><div class="bar-fill weight-fill" style="width:${Math.max(0, Math.min(100, pct)).toFixed(2)}%"></div></div>
+        `;
         box.appendChild(row);
       });
     }
 
-    function renderStress(data){
-      const s = data.stressTest || {};
-      const [cls, txt] = statusChip(s.status);
-      $('stressMeta').innerHTML = `Status: <span class="${cls}">${txt}</span> ${s.status === 'running' ? '<span class="spinner" aria-hidden="true"></span>' : ''}`;
-      const box = $('stressList'); box.innerHTML = '';
-      const arr = Array.isArray(s.scenarios) ? s.scenarios : [];
-      if (!arr.length){ box.innerHTML = '<div class="placeholder"><span>No stress scenarios yet</span><span class="chip chip-pending">PENDING</span></div>'; return; }
-      arr.forEach(x => {
-        const pass = String(x.result || '').toUpperCase() === 'PASS';
-        const item = document.createElement('div'); item.className = 'placeholder';
-        item.innerHTML = `<span>${x.icon || ''} ${x.name}</span><span class="chip ${pass?'chip-pass':'chip-fail'}">${x.result || 'N/A'}</span>`;
-        box.appendChild(item);
-      });
+    function updateOptimizer(protocol) {
+      if (!protocol) return;
+      const cr = ppmToPct(protocol.cr_target);
+      const mintFee = ppmToPct(protocol.mint_fee_rate);
+      const redeemFee = ppmToPct(protocol.redeem_fee_rate);
+
+      $("paramCr").textContent = `${cr.toFixed(2)}%`;
+      $("paramMintFee").textContent = `${mintFee.toFixed(4)}%`;
+      $("paramRedeemFee").textContent = `${redeemFee.toFixed(4)}%`;
+      $("paramWeights").textContent = protocol.weights.map((w) => `${ppmToPct(w).toFixed(1)}%`).join(" / ");
+
+      const snapshot = {
+        t: Date.now(),
+        cr_target: Number(protocol.cr_target),
+        mint_fee_rate: Number(protocol.mint_fee_rate),
+        redeem_fee_rate: Number(protocol.redeem_fee_rate),
+        weights: protocol.weights.map((x) => Number(x))
+      };
+
+      const last = state.history[state.history.length - 1];
+      const changed = !last ||
+        last.cr_target !== snapshot.cr_target ||
+        last.mint_fee_rate !== snapshot.mint_fee_rate ||
+        last.redeem_fee_rate !== snapshot.redeem_fee_rate ||
+        JSON.stringify(last.weights) !== JSON.stringify(snapshot.weights);
+
+      if (changed) {
+        state.history.push(snapshot);
+        if (state.history.length > 200) state.history = state.history.slice(-200);
+        saveJson(CFG.HISTORY_KEY, state.history);
+      }
+
+      let optimizerStatus = "Converging";
+      if (state.history.length >= 2) {
+        const a = state.history[state.history.length - 1];
+        const b = state.history[state.history.length - 2];
+        const delta =
+          Math.abs(a.cr_target - b.cr_target) +
+          Math.abs(a.mint_fee_rate - b.mint_fee_rate) +
+          Math.abs(a.redeem_fee_rate - b.redeem_fee_rate) +
+          a.weights.reduce((acc, v, i) => acc + Math.abs(v - (b.weights?.[i] || 0)), 0);
+        optimizerStatus = delta < 2500 ? "Stable" : "Converging";
+      }
+      $("optimizerStatus").textContent = optimizerStatus;
+      $("optimizerStatus").className = optimizerStatus === "Stable" ? "ok" : "warn";
+
+      drawHistoryChart();
     }
 
-    function renderRed(data){
-      const r = data.redTeam || {};
-      const [cls, txt] = statusChip(r.status);
-      $('redMeta').innerHTML = `Status: <span class="${cls}">${txt}</span> ${r.status === 'running' ? '<span class="spinner" aria-hidden="true"></span>' : ''}`;
-      const box = $('redList'); box.innerHTML = '';
-      const arr = Array.isArray(r.findings) ? r.findings : [];
-      if (!arr.length){ box.innerHTML = '<div class="placeholder"><span>Audit in progress...</span><span class="spinner"></span></div>'; return; }
-      arr.forEach(f => {
-        const sev = String(f.severity || '').toUpperCase();
-        const fail = sev === 'CRITICAL' || sev === 'HIGH';
-        const item = document.createElement('div'); item.className = 'placeholder';
-        item.innerHTML = `<span>[${sev}] ${f.title || ''}</span><span class="chip ${fail?'chip-fail':'chip-pending'}">${sev}</span>`;
-        box.appendChild(item);
-      });
+    function drawHistoryChart() {
+      const canvas = $("historyChart");
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(300, Math.floor(rect.width));
+      const h = Math.max(150, Math.floor(rect.height));
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      for (let i = 0; i <= 4; i++) {
+        const y = (h - 20) * (i / 4) + 10;
+        ctx.beginPath();
+        ctx.moveTo(8, y);
+        ctx.lineTo(w - 8, y);
+        ctx.stroke();
+      }
+
+      const data = state.history.slice(-100);
+      if (data.length < 2) {
+        ctx.fillStyle = "#7f95ad";
+        ctx.font = "12px monospace";
+        ctx.fillText("Waiting for parameter history...", 12, h / 2);
+        return;
+      }
+
+      const series = {
+        cr: data.map((d) => d.cr_target),
+        mf: data.map((d) => d.mint_fee_rate),
+        rf: data.map((d) => d.redeem_fee_rate),
+        w0: data.map((d) => d.weights[0] || 0),
+        w1: data.map((d) => d.weights[1] || 0),
+        w2: data.map((d) => d.weights[2] || 0),
+        w3: data.map((d) => d.weights[3] || 0)
+      };
+
+      const colors = {
+        cr: "#00f0ff",
+        mf: "#00ff88",
+        rf: "#ffaa00",
+        w0: "#ff3366",
+        w1: "#9b6bff",
+        w2: "#36d0ff",
+        w3: "#7f95ad"
+      };
+
+      function drawLine(values, color) {
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const span = Math.max(1, max - min);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        values.forEach((v, i) => {
+          const x = 10 + (i / (values.length - 1)) * (w - 20);
+          const n = (v - min) / span;
+          const y = 10 + (1 - n) * (h - 20);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      Object.keys(series).forEach((key) => drawLine(series[key], colors[key]));
     }
 
-    function renderSpecs(data){
-      const st = data.stats || {};
-      const cards = [
-        `Simulator: <strong>${st.simulatorLines || 1437} lines</strong> pure Python, zero dependencies`,
-        `On-chain: <strong>Solana/Anchor</strong>, fixed-point <strong>u64</strong> arithmetic`,
-        `Test coverage: <strong>${st.testCases || 55} test cases</strong> + <strong>100-run Monte Carlo × ${st.scenarios || 6} scenarios</strong>`,
-        `Verification: finite-diff gradients, 1000-input fuzzing, CB state machine exhaustive`
-      ];
-      $('specCards').innerHTML = cards.map(c => `<div class="card">${c}</div>`).join('');
+    function updateAgents(records, protocol) {
+      const body = $("agentRows");
+      if (!records.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">No agent records found on-chain.</td></tr>';
+        return;
+      }
+
+      const keeperMap = new Map();
+      (protocol?.keeper_set || []).forEach((k, i) => keeperMap.set(k, `keeper${i + 1}`));
+
+      const rows = records.map((r) => {
+        const score = Number(r.agent_score || r.reputation || 0n);
+        const prev = Number(state.prevScores[r.agent] || score);
+        let scoreClass = "";
+        if (score > prev) scoreClass = "score-up";
+        if (score < prev) scoreClass = "score-down";
+        state.prevScores[r.agent] = score;
+
+        return {
+          agent: r.agent,
+          name: keeperMap.get(r.agent) || `${roleLabel(r.role)}-${shortKey(r.agent)}`,
+          tier: r.tier,
+          role: roleLabel(r.role),
+          status: statusLabel(r.status),
+          score,
+          scoreClass
+        };
+      }).sort((a, b) => b.score - a.score);
+
+      saveJson(CFG.SCORE_KEY, state.prevScores);
+
+      body.innerHTML = rows.map((r, idx) => `
+        <tr>
+          <td>#${idx + 1}</td>
+          <td><strong>${r.name}</strong><br/><span class="muted">${shortKey(r.agent)}</span></td>
+          <td class="tier">${tierLabel(r.tier)}</td>
+          <td>${r.role}</td>
+          <td><span class="score-cell ${r.scoreClass}">${r.score.toLocaleString()}</span></td>
+          <td>${r.status}</td>
+        </tr>
+      `).join("");
     }
 
-    function renderAll(data){
-      renderPipeline(data); renderGate(data); renderAgents(data); renderBasket(data); renderStress(data); renderRed(data); renderSpecs(data);
-      $('lastUpdatedAgo').textContent = ago(data.lastUpdated);
-    }
-
-    async function fetchWithTimeout(url, timeoutMs=9000){
-      const ctrl = new AbortController(); const id = setTimeout(() => ctrl.abort(), timeoutMs);
-      try { const res = await fetch(url, { cache:'no-store', signal:ctrl.signal }); if (!res.ok) throw new Error('HTTP '+res.status); return await res.json(); }
-      finally { clearTimeout(id); }
-    }
-
-    async function fetchLiveData(){ return fetchWithTimeout(DATA_URL + '?t=' + Date.now()); }
-
-    async function refreshData(){
-      try {
-        const data = await fetchLiveData();
-        const changed = currentData && currentData.lastUpdated && data.lastUpdated && currentData.lastUpdated !== data.lastUpdated;
-        const recovered = !online;
-        currentData = data;
-        localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-        renderAll(currentData);
-        setLive(true, 'raw');
-        if (changed) toast('New live results received');
-        if (recovered) toast('Live connection restored');
-      } catch (e) {
-        let fallback = null;
-        try { fallback = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch {}
-        if (!fallback) {
-          try { fallback = await fetchWithTimeout(LOCAL_URL + '?t=' + Date.now(), 5000); } catch {}
+    async function enrichTxTypes(sigs) {
+      const jobs = sigs.map(async (s) => {
+        try {
+          const tx = await rpc("getTransaction", [s.signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }], 10000);
+          const logs = tx?.meta?.logMessages || [];
+          return { sig: s.signature, type: classifyTx(logs) };
+        } catch {
+          return { sig: s.signature, type: "oracle" };
         }
-        if (!fallback) fallback = currentData || DEFAULT_DATA;
-        currentData = fallback;
-        renderAll(currentData);
-        setLive(false, 'cached');
+      });
+      const out = await Promise.all(jobs);
+      const map = new Map();
+      out.forEach((x) => map.set(x.sig, x.type));
+      return map;
+    }
+
+    function updateTxFeed(signatures, typeMap) {
+      const body = $("txRows");
+      if (!signatures.length) {
+        body.innerHTML = '<tr><td colspan="4" class="muted">No recent transactions.</td></tr>';
+        return;
+      }
+
+      const rows = signatures.map((s) => {
+        const sig = s.signature;
+        const isNew = !state.seenSigs.has(sig) && !state.firstTxPaint;
+        state.seenSigs.add(sig);
+        return {
+          sig,
+          blockTime: s.blockTime || 0,
+          status: s.err ? "❌" : "✅",
+          type: typeMap.get(sig) || "oracle",
+          isNew
+        };
+      });
+
+      state.firstTxPaint = false;
+
+      body.innerHTML = rows.map((r) => `
+        <tr class="${r.isNew ? "tx-new" : ""}">
+          <td>${r.blockTime ? fmtClock(r.blockTime) : "--"}</td>
+          <td>${r.type}</td>
+          <td><a class="tx-link" target="_blank" rel="noreferrer" href="https://explorer.solana.com/tx/${r.sig}?cluster=devnet">${shortKey(r.sig)}</a></td>
+          <td>${r.status}</td>
+        </tr>
+      `).join("");
+    }
+
+    function updateOracles(oracleData) {
+      const strip = $("oracleStrip");
+      const cards = [];
+      for (const [sym, value] of Object.entries(oracleData)) {
+        if (!value || value.error) {
+          cards.push(`
+            <article class="oracle-card">
+              <div class="sym">${sym}/USD</div>
+              <div class="price bad">--</div>
+              <div class="meta">Price unavailable<br/>${value?.error || "RPC timeout"}</div>
+            </article>
+          `);
+          continue;
+        }
+
+        const confClass = value.conf <= 0.005 ? "ok" : value.conf <= 0.02 ? "warn" : "bad";
+        cards.push(`
+          <article class="oracle-card">
+            <div class="sym">${sym}/USD</div>
+            <div class="price">$${value.price.toFixed(6)}</div>
+            <div class="meta">
+              Confidence: <span class="${confClass}">±$${value.conf.toFixed(6)}</span><br/>
+              Updated: ${fmtClock(value.publish_time)} (${fmtAgoUnix(value.publish_time)})
+            </div>
+          </article>
+        `);
+      }
+      strip.innerHTML = cards.join("");
+    }
+
+    async function fetchAll() {
+      const [
+        protocolRes,
+        circuitRes,
+        supplyRes,
+        sigRes,
+        agentsRes,
+        vaultsRes,
+        usdcPythRes,
+        usdtPythRes,
+        daiPythRes
+      ] = await Promise.all([
+        rpc("getAccountInfo", [CFG.PROTOCOL_STATE, { encoding: "base64" }]),
+        rpc("getAccountInfo", [CFG.CIRCUIT_BREAKER, { encoding: "base64" }]),
+        rpc("getTokenSupply", [CFG.MSTB_MINT]),
+        rpc("getSignaturesForAddress", [CFG.PROGRAM_ID, { limit: 10 }]),
+        rpc("getProgramAccounts", [CFG.PROGRAM_ID, { encoding: "base64", filters: [{ dataSize: 168 }] }]),
+        rpc("getProgramAccounts", [CFG.PROGRAM_ID, { encoding: "base64", filters: [{ dataSize: 200 }] }]),
+        rpc("getAccountInfo", [CFG.FEEDS.USDC, { encoding: "base64" }]),
+        rpc("getAccountInfo", [CFG.FEEDS.USDT, { encoding: "base64" }]),
+        rpc("getAccountInfo", [CFG.FEEDS.DAI, { encoding: "base64" }])
+      ]);
+
+      const protocolBytes = base64ToBytes(protocolRes?.value?.data?.[0] || "");
+      const circuitBytes = base64ToBytes(circuitRes?.value?.data?.[0] || "");
+
+      const protocol = parseProtocolState(protocolBytes);
+      const circuit = parseCircuitBreaker(circuitBytes);
+
+      const supplyRaw = BigInt(supplyRes?.value?.amount || "0");
+
+      const agents = (agentsRes || []).map((x) => {
+        const b64 = x?.account?.data?.[0];
+        if (!b64) return null;
+        try { return parseAgentRecord(base64ToBytes(b64)); } catch { return null; }
+      }).filter(Boolean);
+
+      const vaults = (vaultsRes || []).map((x) => {
+        const b64 = x?.account?.data?.[0];
+        if (!b64) return null;
+        try { return parseCollateralVault(base64ToBytes(b64)); } catch { return null; }
+      }).filter(Boolean).sort((a, b) => a.index - b.index);
+
+      const signatures = sigRes || [];
+      const typeMap = await enrichTxTypes(signatures);
+
+      function parsePythEntry(res) {
+        try {
+          const b64 = res?.value?.data?.[0];
+          if (!b64) return { error: "missing account data" };
+          return parsePythPriceUpdate(base64ToBytes(b64));
+        } catch (e) {
+          return { error: e.message || "parse failure" };
+        }
+      }
+
+      const oracles = {
+        USDC: parsePythEntry(usdcPythRes),
+        USDT: parsePythEntry(usdtPythRes),
+        DAI: parsePythEntry(daiPythRes)
+      };
+
+      return { protocol, circuit, supplyRaw, agents, vaults, signatures, typeMap, oracles };
+    }
+
+    async function poll() {
+      if (state.polling) return;
+      state.polling = true;
+      try {
+        const data = await fetchAll();
+
+        updateHealth(data.protocol, data.circuit, data.supplyRaw, data.vaults);
+        updateOptimizer(data.protocol);
+        updateAgents(data.agents, data.protocol);
+        updateTxFeed(data.signatures, data.typeMap);
+        updateOracles(data.oracles);
+
+        const latestTx = data.signatures[0];
+        if (latestTx?.blockTime) state.lastKeeperActivity = Number(latestTx.blockTime) * 1000;
+
+        state.lastSuccessAt = Date.now();
+        state.lastProtocol = data.protocol;
+        state.lastError = "";
+        $("programShort").textContent = shortKey(CFG.PROGRAM_ID);
+
+        setLive(true);
+        updateHeaderTick();
+      } catch (e) {
+        state.lastError = e.message || String(e);
+        setLive(false);
+        $("rpcHealth").textContent = `RPC: ${shortKey(state.lastError)}`;
+      } finally {
+        state.polling = false;
       }
     }
 
-    function startAgeTicker(){
-      setInterval(() => { $('lastUpdatedAgo').textContent = (online ? '' : 'cached • ') + ago(currentData?.lastUpdated); }, 1000);
+    function boot() {
+      $("programShort").textContent = shortKey(CFG.PROGRAM_ID);
+      updateHeaderTick();
+      drawHistoryChart();
+
+      poll();
+      setInterval(poll, CFG.TICK_MS);
+      setInterval(updateHeaderTick, 1000);
+
+      window.addEventListener("resize", () => {
+        clearTimeout(window.__chartResizeTimer);
+        window.__chartResizeTimer = setTimeout(drawHistoryChart, 120);
+      });
     }
 
-    (async function boot(){
-      let seed = DEFAULT_DATA;
-      try { const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); if (c) seed = c; } catch {}
-      currentData = seed; renderAll(seed); setLive(false, 'boot');
-      await refreshData();
-      setInterval(refreshData, REFRESH_MS);
-      startAgeTicker();
-    })();
+    boot();
   </script>
 </body>
 </html>
