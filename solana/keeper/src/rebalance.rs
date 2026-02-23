@@ -328,6 +328,19 @@ pub fn run_rebalance_cycle(
         }
     }
 
+    // Check batch window has room for reveal delay before committing
+    if !cfg.execute_rebalance_immediately
+        && !batch_window_has_room(current_slot, cfg.commit_reveal_delay_slots)
+    {
+        info!(
+            current_slot,
+            position_in_window = current_slot % BATCH_WINDOW_SLOTS,
+            delay = cfg.commit_reveal_delay_slots,
+            "skipping commit: not enough slots remaining in batch window for deferred reveal"
+        );
+        return Ok(outcome);
+    }
+
     let batch_slot = select_batch_slot(current_slot);
     let reveal_salt = build_reveal_salt();
     let commit_hash = compute_rebalance_commit(
@@ -369,10 +382,27 @@ pub fn run_rebalance_cycle(
         "rebalance commit sent"
     );
 
+    // After commit TX lands, re-read on-chain pending slot to sync with
+    // actual execution slot (fixes slot-drift between keeper and validator)
+    // Re-read on-chain state to get actual pending_rebalance_slot
+    let actual_batch_slot = match utils::fetch_account::<wire::ProtocolState>(rpc, &derived.protocol_state, "ProtocolState") {
+        Ok(state) if state.pending_rebalance_slot > 0 => {
+            if state.pending_rebalance_slot != batch_slot {
+                info!(
+                    keeper_batch_slot = batch_slot,
+                    onchain_pending_slot = state.pending_rebalance_slot,
+                    "syncing batch_slot to on-chain pending_rebalance_slot (slot drift corrected)"
+                );
+            }
+            state.pending_rebalance_slot
+        }
+        _ => batch_slot,
+    };
+
     memory.pending_reveal = Some(PendingReveal {
         commit_hash,
         target_weights,
-        batch_slot,
+        batch_slot: actual_batch_slot,
         reveal_salt,
         pending_params,
     });
@@ -868,14 +898,27 @@ fn select_batch_slot(current_slot: u64) -> u64 {
     current_slot
 }
 
+/// Check if we have enough slots left in the current batch window for the
+/// reveal delay. Prevents commits that would be unreachable due to window
+/// boundary crossing.
+fn batch_window_has_room(current_slot: u64, reveal_delay_slots: u64) -> bool {
+    let position_in_window = current_slot % BATCH_WINDOW_SLOTS;
+    let remaining = BATCH_WINDOW_SLOTS.saturating_sub(position_in_window);
+    // Need at least delay + 1 slot margin for TX landing drift
+    remaining > reveal_delay_slots.saturating_add(1)
+}
+
 fn deferred_reveal_ready(
     current_slot: u64,
     batch_slot: u64,
     protocol_pending_slot: u64,
     reveal_delay_slots: u64,
 ) -> bool {
-    batch_slot == protocol_pending_slot
-        && current_slot >= batch_slot.saturating_add(reveal_delay_slots)
+    // Tolerate ±2 slot drift between keeper-observed slot and on-chain commit slot
+    let slot_drift = batch_slot.abs_diff(protocol_pending_slot);
+    slot_drift <= 2
+        && current_slot >= protocol_pending_slot.saturating_add(reveal_delay_slots)
+        && current_slot / BATCH_WINDOW_SLOTS == protocol_pending_slot / BATCH_WINDOW_SLOTS
 }
 
 fn wait_until_slot(rpc: &RpcClient, target_slot: u64, max_wait_secs: u64) -> Result<u64> {
@@ -1280,5 +1323,68 @@ mod tests {
             commit_slot,
             delay,
         ));
+    }
+
+    #[test]
+    fn tc_ow_13_deferred_reveal_tolerates_slot_drift() {
+        let keeper_slot = 1_000;
+        let onchain_slot = 1_001; // TX landed 1 slot later
+        let delay = 5;
+
+        // With drift tolerance of ±2, this should still work
+        assert!(deferred_reveal_ready(
+            onchain_slot + delay,
+            keeper_slot,
+            onchain_slot,
+            delay,
+        ));
+
+        // Drift of 3 should fail
+        assert!(!deferred_reveal_ready(
+            1_003 + delay,
+            1_000,
+            1_003,
+            delay,
+        ));
+    }
+
+    #[test]
+    fn tc_ow_14_deferred_reveal_respects_batch_window() {
+        let commit_slot = 64; // window 2 (64/32 = 2)
+        let delay = 5;
+
+        // Reveal in same window: OK
+        assert!(deferred_reveal_ready(
+            commit_slot + delay, // slot 69, window 2
+            commit_slot,
+            commit_slot,
+            delay,
+        ));
+
+        // Reveal in next window: FAIL
+        assert!(!deferred_reveal_ready(
+            96, // window 3
+            commit_slot,
+            commit_slot,
+            delay,
+        ));
+    }
+
+    #[test]
+    fn tc_ow_15_batch_window_has_room_prevents_dead_zone_commits() {
+        // Position 25 in window, delay 5 → remaining 7 > 6 → OK
+        assert!(batch_window_has_room(25, 5));
+
+        // Position 27 in window, delay 5 → remaining 5 ≤ 6 → NOT OK
+        assert!(!batch_window_has_room(27, 5));
+
+        // Position 31 in window, delay 1 → remaining 1 ≤ 2 → NOT OK
+        assert!(!batch_window_has_room(31, 1));
+
+        // Position 0, delay 30 → remaining 32 > 31 → OK
+        assert!(batch_window_has_room(0, 30));
+
+        // Position 0, delay 31 → remaining 32 = 32 → NOT OK
+        assert!(!batch_window_has_room(0, 31));
     }
 }
