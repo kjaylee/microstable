@@ -452,6 +452,73 @@
       background: linear-gradient(180deg, rgba(0, 240, 255, 0.04), rgba(8, 12, 20, 0.82));
     }
 
+    .faucet-box {
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 12px;
+      padding: 10px 11px;
+      margin-bottom: 12px;
+      background: linear-gradient(180deg, rgba(0, 240, 255, 0.06), rgba(0, 0, 0, 0.2));
+    }
+
+    .faucet-head {
+      color: var(--cyan);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .faucet-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      gap: 8px;
+    }
+
+    .faucet-btn {
+      border: 1px solid rgba(0, 255, 136, 0.35);
+      background: rgba(0, 255, 136, 0.09);
+      color: var(--green);
+      border-radius: 9px;
+      font-family: inherit;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .faucet-btn:hover:not(:disabled) {
+      box-shadow: 0 0 14px rgba(0, 255, 136, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .faucet-btn:disabled {
+      color: var(--muted);
+      border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.04);
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .faucet-status {
+      margin-top: 9px;
+      font-size: 12px;
+      line-height: 1.4;
+      min-height: 17px;
+    }
+
+    .faucet-bals {
+      margin-top: 7px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .faucet-bals strong {
+      color: var(--txt);
+      font-weight: 600;
+    }
+
     .mint-grid {
       display: grid;
       grid-template-columns: minmax(260px, 1.2fr) 1fr;
@@ -641,6 +708,7 @@
       .optimizer-grid { grid-template-columns: 1fr; }
       .mint-grid { grid-template-columns: 1fr; }
       .wallet-box { width: 100%; justify-content: flex-start; }
+      .faucet-actions { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -717,6 +785,24 @@
 
     <section class="full-panel mint-panel">
       <h2>Mint Console</h2>
+      <div class="faucet-box">
+        <div class="faucet-head">🚰 Devnet Faucet</div>
+        <div class="faucet-actions">
+          <button id="faucetUsdcBtn" class="faucet-btn" type="button" disabled title="On-chain faucet instruction needed">Get 1000 USDC</button>
+          <button id="faucetUsdtBtn" class="faucet-btn" type="button" disabled title="On-chain faucet instruction needed">Get 1000 USDT</button>
+          <button id="faucetDaiBtn" class="faucet-btn" type="button" disabled title="On-chain faucet instruction needed">Get 1000 DAI</button>
+        </div>
+        <div class="faucet-status muted" id="faucetStatus">Checking faucet capability...</div>
+        <div class="faucet-bals">
+          Your balances:
+          <strong>USDC: <span id="faucetBalUSDC">--</span></strong>
+          &nbsp; <strong>USDT: <span id="faucetBalUSDT">--</span></strong>
+          &nbsp; <strong>DAI: <span id="faucetBalDAI">--</span></strong>
+          <br/>
+          <strong>MSTB: <span id="faucetBalMSTB">--</span></strong>
+        </div>
+      </div>
+
       <div class="mint-grid">
         <div class="mint-controls">
           <label for="mintCollateral">Collateral</label>
@@ -799,6 +885,8 @@
       <div>
         <a href="https://github.com/kjaylee/microstable" target="_blank" rel="noreferrer">GitHub</a>
         · <a href="https://github.com/kjaylee/microstable/blob/main/docs/whitepaper.md" target="_blank" rel="noreferrer">Whitepaper</a>
+        · <a href="https://github.com/kjaylee/microstable/blob/main/docs/audit-report.md" target="_blank" rel="noreferrer">🛡️ Audit Report</a>
+        · <a href="https://github.com/kjaylee/microstable/blob/main/SECURITY.md" target="_blank" rel="noreferrer">🐛 Bug Bounty</a>
         · <a href="https://www.npmjs.com/package/microstable" target="_blank" rel="noreferrer">npm package</a>
       </div>
       <div>Powered by Solana • Mission Control online</div>
