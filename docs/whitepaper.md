@@ -1,6 +1,6 @@
 # microstable: A Self-Evolving, Agent-Native Multi-Collateral Stablecoin Protocol
 
-**Version**: v0.3 (Implementation Sync)  
+**Version**: v0.4 (Doc/Code Consistency Fix)  
 **Status**: Implementation-aligned whitepaper (Educational / Hobby Project)  
 **Runtime Architecture**: Solana on-chain program + off-chain Rust keeper daemon  
 **Program ID (Devnet)**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
@@ -13,9 +13,19 @@
 
 Stablecoins remain essential digital settlement primitives, but they still fail in predictable ways: concentrated collateral exposure, delayed governance reactions, oracle fragility, and static policy parameters that do not adapt to regime shifts. **microstable** proposes a bounded, inspectable alternative: a multi-collateral stablecoin protocol that continuously re-optimizes selected parameters while preserving hard safety invariants.
 
-Version v0.3 syncs the whitepaper with the implemented codebase. It includes an **Open Agent Economy (OAE)** with on-chain Agent Registry and lifecycle controls (`solana/programs/microstable/src/lib.rs`), competitive tournament evaluation (`solana/keeper/src/tournament.rs`), and keeper wiring (`solana/keeper/src/agent_loop.rs`). It also includes an **Agent Intelligence Gate (AIG)** with an off-chain challenge runner (`solana/keeper/src/aig.rs`) wired into the keeper loop. The release reflects Solana devnet deployment, Pyth integration, SPL-token E2E flow validation, and continuous red/purple/crimson adversarial campaigns.
+Version v0.4 syncs the whitepaper with the implemented codebase and resolves the final tracked doc/code inconsistencies. It includes an **Open Agent Economy (OAE)** with on-chain Agent Registry and lifecycle controls (`solana/programs/microstable/src/lib.rs`), competitive tournament evaluation (`solana/keeper/src/tournament.rs`), and keeper wiring (`solana/keeper/src/agent_loop.rs`). It also includes an **Agent Intelligence Gate (AIG)** with an off-chain challenge runner (`solana/keeper/src/aig.rs`) wired into the keeper loop. The release reflects Solana devnet deployment, Pyth integration, SPL-token E2E flow validation, and continuous red/purple/crimson adversarial campaigns.
 
 The central claim remains unchanged: optimization should be a servant of solvency. microstable keeps settlement deterministic on-chain, pushes heavy optimization off-chain, and enforces strict circuit breakers, bounded deltas, and rollback-safe state transitions.
+
+## Version History
+
+- **v0.4 (Doc/Code Consistency Fix)**
+  - Clarified tournament scoring as **Phase 1: Loss-Ranked Tournament** and moved copycat/stake-weighted controls to **Phase 2 Enhancement**.
+  - Replaced AIG epoch narration ("100 epochs / 30 epochs") with implemented challenge-set semantics and promotion thresholds.
+  - Kept canonical 6-term loss equation and added implementation surrogate notes (fee-skew peg term, centered concentration term, `target_cr`-based CR shortfall, Adam + safety projection).
+  - Reflected previously resolved implementation items: runtime risk-manager wiring, AIG/Tournament tx submission, and keeper-based tournament participant sourcing.
+- **v0.3 (Implementation Sync)**
+  - First full on-chain/off-chain implementation-aligned release.
 
 ## 2. Introduction
 
@@ -66,7 +76,7 @@ microstable keeps basket diversification but adds agent-native optimization and 
 
 ### 3.3 Agent-native protocol context
 
-Agent-native protocols need deterministic interfaces (for automation) plus anti-sybil economics (for adversarial environments). v0.3 therefore expands from “adaptive stablecoin” to “adaptive stablecoin with accountable machine participants.”
+Agent-native protocols need deterministic interfaces (for automation) plus anti-sybil economics (for adversarial environments). v0.4 preserves this expansion from “adaptive stablecoin” to “adaptive stablecoin with accountable machine participants.”
 
 ## 4. System Design
 
@@ -92,7 +102,7 @@ Updates are clipped by per-epoch movement caps (e.g., bounded weight and fee del
 
 ### 4.3 Loss function
 
-A representative objective:
+A representative canonical objective:
 
 $$
 \mathcal{L}_t =
@@ -106,11 +116,31 @@ $$
 
 Interpretation: preserve peg, avoid under-collateralization, reduce concentration and turnover, and penalize low-confidence oracle regimes.
 
-**Implementation reference:** `solana/keeper/src/optimizer.rs` (`LossFunction::compute`, `LossTerms`, `LossGradients`).
+#### Implementation Notes (v0.4)
+
+The keeper implementation uses surrogate refinements with the same optimization direction:
+
+- Peg term (fee-skew coupled):
+  $$
+  L_{price}^{impl}=\lambda_p\left((p_t-1)+(f_{mint}-f_{redeem})\right)^2
+  $$
+- CR shortfall term (snapshot target CR):
+  $$
+  L_{cr}^{impl}=\lambda_{cr}\max(0,\text{targetCR}_t-CR_t)^2
+  $$
+- Concentration term (centered form):
+  $$
+  L_{conc}^{impl}=\lambda_{conc}\sum_i\left(w_{i,t}-\frac{1}{N}\right)^2
+  $$
+- Optimizer: Adam (first/second-moment momentum) with gradient clipping, bounded deltas, and safety-set projection.
+
+The canonical form and implementation form are directionally consistent; the implementation adds surrogate refinements for numerical stability and practical convergence.
+
+**Implementation reference:** `solana/keeper/src/optimizer.rs` (`LossFunction::compute`, `LossTerms`, `LossGradients`, `AdamOptimizer`, `project_to_safety_set`).
 
 ### 4.4 Optimization and projection
 
-microstable applies gradient/Adam-like updates only after:
+microstable applies Adam updates (with momentum buffers) only after:
 
 - gradient clipping,
 - bounded delta checks,
@@ -134,7 +164,7 @@ Execution constraints (slippage and turnover slicing) are distinct from numerica
 
 ## 5. Architecture
 
-v0.3 formalizes a **two-layer production architecture**:
+v0.4 formalizes a **two-layer production architecture**:
 
 ### 5.1 On-chain (Solana program)
 
@@ -160,7 +190,7 @@ The Python simulator remains preserved under `simulation/` as an **archived refe
 
 ## 6. Security Analysis
 
-Security analysis in v0.3 is informed by multi-round adversarial campaigns rather than purely hypothetical threat narratives.
+Security analysis in v0.4 is informed by multi-round adversarial campaigns rather than purely hypothetical threat narratives.
 
 ### 6.1 Attack classes observed in practice
 
@@ -215,7 +245,25 @@ ACP v1 is exposed through the MCP server (`mcp-server/`) as a JSON-RPC style int
 
 ### 7.4 Optimization tournaments
 
-OAE introduces competitive proposal selection (commit/reveal compatible) with score adjustments and anti-gaming controls (copycat penalties, minimum stake, stake-weighted reputation).
+#### Phase 1 (Implemented): Loss-Ranked Tournament
+
+Current keeper implementation ranks proposals by total loss (lowest loss wins; ties break by earlier submission time).
+
+Score adjustment logic in `solana/keeper/src/tournament.rs`:
+
+- **Winner**: `+50,000`
+- **Non-winner**:
+  - `loss < baseline_loss` → `+10,000`
+  - `baseline_loss <= loss <= 2 × baseline_loss` → `0`
+  - `2 × baseline_loss < loss <= 5 × baseline_loss` → `-10,000`
+  - `loss > 5 × baseline_loss` (or non-finite loss) → `-25,000`
+
+#### Phase 2 Enhancement (Planned)
+
+The following anti-gaming extensions remain roadmap items (not active in Phase 1 scoring):
+
+- copycat-distance penalty,
+- stake-weighted reputation scoring.
 
 **Implementation reference:** `solana/keeper/src/tournament.rs` (proposal scoring) + `solana/programs/microstable/src/lib.rs` (`commit_rebalance`, `rebalance`).
 
@@ -225,10 +273,21 @@ AIG adds progressive trust before full protocol influence.
 
 ### 8.1 Tiered progression
 
-- **Tier 0**: challenge exam on historical stress scenarios.
-- **Tier 1**: sandbox trial (100 epochs).
-- **Tier 2**: probation with restricted authority (minimum 30 epochs).
-- **Tier 3**: full participation with ongoing demotion checks.
+AIG progression is currently implemented as a **challenge-based evaluation** with configurable epoch counts per challenge type:
+
+| Transition | Challenge mix (implemented) | Epochs per challenge | Total epochs (current defaults) |
+|---|---|---:|---:|
+| Tier 0 → Tier 1 | 3 × PegStability | 12 | 36 |
+| Tier 1 → Tier 2 | 3 × StressTest + 2 × Optimization | 16 / 14 | 76 |
+| Tier 2 → Tier 3 | 5 × Adversarial + 3 × Optimization | 20 / 16 | 148 |
+
+Promotion thresholds (score out of 1,000,000):
+
+- **Tier 1**: ≥ 600,000
+- **Tier 2**: ≥ 750,000
+- **Tier 3**: ≥ 850,000
+
+No persistent probation-epoch ledger is currently maintained; progression is challenge-set based. A persistent probation ledger is a Phase 2 enhancement candidate.
 
 **Implementation reference:** `solana/keeper/src/aig.rs` (challenge runner), `solana/keeper/src/agent_loop.rs` (scheduler), `solana/programs/microstable/src/lib.rs` (`AgentRecord.tier`).
 
@@ -430,7 +489,7 @@ Agent integrations are intended to be machine-friendly while keeping protocol in
 
 ## 15. Comparison
 
-| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.3 |
+| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.4 |
 |---|---|---|---|---|
 | Collateral model | Over-collateralized | Fractional/hybrid | Basket aggregation | Basket + adaptive CR |
 | Parameter updates | Governance epochs | Controller/policy dependent | Mostly static/rule-based | Bounded gradient updates |
@@ -457,7 +516,7 @@ Priority future work:
 
 ## 17. Conclusion
 
-microstable v0.3 is not a claim of finality; it is a claim of method.
+microstable v0.4 is not a claim of finality; it is a claim of method.
 
 - keep mechanism compact,
 - keep adaptation bounded,

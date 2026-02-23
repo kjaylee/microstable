@@ -3,7 +3,7 @@
 ## Scope
 Final audit for **Item ⑨ (Doc/Code Consistency)** after Items ①-⑧ completion.
 
-- Whitepaper reviewed: `docs/whitepaper.md` (EN v0.3), `docs/whitepaper-ko.md` (KO v0.3)
+- Whitepaper reviewed: `docs/whitepaper.md` (EN v0.4), `docs/whitepaper-ko.md` (KO v0.4)
 - Code reviewed:
   - `solana/programs/microstable/src/lib.rs`
   - `solana/keeper/src/main.rs`
@@ -42,7 +42,7 @@ All originally tracked whitepaper implementation gaps are now **✅ CLOSED**.
 | ⑥ OAE operational evolution | ✅ DONE | `a74d55c` |
 | ⑦ Dynamic limits/auto-recovery | ✅ DONE | `8ec28b9` |
 | ⑧ Full self-evolution automation | ✅ DONE | Auto-satisfied by ⑤ + ⑥ + ⑦ |
-| ⑨ Doc/code consistency | ✅ CLOSING NOW | This final audit document |
+| ⑨ Doc/code consistency | ✅ CLOSED | v0.4 whitepaper/doc sync + this audit addendum |
 
 ---
 
@@ -54,54 +54,45 @@ All originally tracked whitepaper implementation gaps are now **✅ CLOSED**.
 |---|---|---|
 | Two-layer production architecture (on-chain settlement + off-chain optimization) | `programs/microstable/src/lib.rs`, `keeper/src/main.rs` | ✅ Aligned |
 | θ includes CR/fees/weights and is bounded | `optimizer::ParamVector`, `rebalance.rs`, `update_protocol_params` | ✅ Aligned |
-| 6-term loss + Adam-style update + safety projection | `optimizer.rs` (`LossFunction`, `AdamOptimizer`, projection/validation) | ✅ Aligned (with formula refinements; see inconsistencies) |
+| 6-term loss + Adam-style update + safety projection | `optimizer.rs` (`LossFunction`, `AdamOptimizer`, projection/validation) | ✅ Aligned |
 | CB-1..CB-4 and emergency controls | `lib.rs` circuit-breaker state machine + shutdown/resume | ✅ Aligned |
 | OAE: permissionless registration + lifecycle | `lib.rs` (`register_agent`, `deregister_agent`, `slash_agent`, `claim_stake`, score/tier ops) | ✅ Aligned |
-| AIG tier model and scoring thresholds | `aig.rs` thresholds/challenges + on-chain tier thresholds in `lib.rs` | ✅ Aligned (operational details differ; see inconsistencies) |
+| AIG tier model and scoring thresholds | `aig.rs` thresholds/challenges + on-chain tier thresholds in `lib.rs` | ✅ Aligned |
 | Keeper schedules AIG + tournament cycles | `main.rs` + `agent_loop.rs` | ✅ Aligned |
-| Dynamic risk manager in runtime control loop | `risk_manager.rs` exists | ⚠️ Partial (module exists; runtime invocation not wired in `main.rs`) |
-| Tournament score evolution linked to on-chain agent scores | `tournament.rs` + on-chain score instructions exist | ⚠️ Partial (keeper does not submit score/tier txs yet) |
+| Dynamic risk manager in runtime control loop | `risk_manager.rs` + `main.rs::run_cycle()` | ✅ Aligned (runtime invocation wired via `run_risk_manager_cycle`) |
+| Tournament score evolution linked to on-chain agent scores | `tournament.rs` + `agent_loop.rs` tx actions + on-chain score instructions | ✅ Aligned (keeper submits score/tier tx actions when tx runtime is available) |
 
 ---
 
-## D. Remaining Doc/Code Inconsistencies (for v0.4 clarification)
+## D. v0.4 Resolution Update
 
-These do **not** reopen G1-G6, but should be explicitly reconciled in the next whitepaper revision.
+Previously flagged operational gaps are now resolved in implementation:
 
-1. **Risk Manager runtime wiring gap**  
-   - Whitepaper §5.2 describes risk manager as active runtime component.  
-   - `risk_manager.rs` is implemented, but `run_cycle()` in `keeper/src/main.rs` does not call `run_risk_manager_cycle`.
+1. **Risk manager runtime wiring** ✅  
+   - `run_cycle()` in `solana/keeper/src/main.rs` now invokes `risk_manager::run_risk_manager_cycle`.
 
-2. **Tournament anti-gaming detail mismatch**  
-   - Whitepaper §7.4 mentions copycat penalties + stake-weighted reputation.  
-   - `keeper/src/tournament.rs` currently uses loss-based winner selection + fixed score adjustments; no explicit copycat-distance penalty or stake-weighted scoring function in tournament evaluation logic.
+2. **AIG/Tournament on-chain TX submission** ✅  
+   - `solana/keeper/src/agent_loop.rs` now builds and submits `update_agent_score` / `promote_agent` / `demote_agent` instructions in live tx mode.
 
-3. **AIG progression detail mismatch (epoch semantics)**  
-   - Whitepaper §8.1 states Tier-1 sandbox 100 epochs / Tier-2 probation ≥30 epochs.  
-   - `keeper/src/aig.rs` challenge epoch counts are currently 12/14/16/20 depending on challenge set, with no persistent probation-epoch ledger in on-chain state.
+3. **Tournament participant sourcing** ✅  
+   - Tournament participants are sourced from keeper keypairs in tx runtime mode (with synthetic fallback only for non-tx local/demo mode).
 
-4. **AIG/OAE live operational closure gap**  
-   - Whitepaper implies runtime admission/demotion feedback loop is applied operationally.  
-   - `agent_loop.rs` runs AIG/tournament cycles and logs results, but does not currently submit on-chain `ix_update_agent_score` / `ix_promote_agent` / `ix_demote_agent` transactions.
+Previously tracked documentation mismatches are resolved in whitepaper v0.4:
 
-5. **Tournament participant source mismatch**  
-   - Whitepaper narrative implies competition among registered OAE agents.  
-   - Current `agent_loop.rs` tournament cycle uses synthetic `Pubkey::new_unique()` participants and demo proposals, not registry-driven participant loading.
+- Tournament anti-gaming semantics now document **Phase 1 implemented scoring** and **Phase 2 planned enhancements**.
+- AIG epoch semantics now document challenge-based progression (12/14/16/20 epoch sets) and tier thresholds (600k/750k/850k).
+- Loss section now keeps canonical equation and adds implementation surrogate notes (fee-skew peg, centered concentration, `target_cr` shortfall, Adam + safety projection).
 
-6. **Loss formula representation mismatch (documentation precision)**  
-   - Whitepaper equation is canonical.  
-   - Implemented surrogate in `optimizer.rs` includes: fee-skew-coupled peg term and centered concentration term (`Σ(w_i-1/N)^2`), and CR shortfall computed against `target_cr` in snapshot logic.  
-   - Functionally consistent with objective direction, but formula should be documented as implementation form in v0.4.
+**Result:** No remaining tracked doc/code inconsistencies in the v0.4 closure scope.
 
 ---
 
-## E. Recommended Whitepaper v0.4 Changelog (Doc-only)
+## E. Whitepaper v0.4 Changelog Delivery Status
 
-1. Clarify **implemented vs planned** status for risk-manager runtime wiring.  
-2. Clarify tournament scoring model currently implemented (and mark copycat/stake-weight scoring as next step if still desired).  
-3. Clarify AIG currently implemented as off-chain challenge runner + scheduler, with on-chain tier ops available but not yet auto-applied by keeper loop.  
-4. Publish exact implemented optimizer surrogate equation (or annotate current equation as canonical abstraction).  
-5. Clarify that current keeper tournament cycle is bootstrap/demo logic unless registry-driven ingestion is added.
+1. Tournament scoring model clarification — ✅ Delivered  
+2. AIG challenge/epoch semantics clarification — ✅ Delivered  
+3. Loss canonical vs implementation notes — ✅ Delivered  
+4. Resolved operational items reflected (risk manager wiring, tx submission, participant sourcing) — ✅ Delivered
 
 ---
 
@@ -109,4 +100,4 @@ These do **not** reopen G1-G6, but should be explicitly reconciled in the next w
 
 - **G1-G6:** all closed and implemented with commit-traceable evidence.  
 - **Items ①-⑧:** complete.  
-- **Item ⑨ (Doc/Code Consistency):** **✅ CLOSED** via this full cross-audit and discrepancy register.
+- **Item ⑨ (Doc/Code Consistency):** **✅ CLOSED** with the v0.4 whitepaper/doc sync and this audit addendum.

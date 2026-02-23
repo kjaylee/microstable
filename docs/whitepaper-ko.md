@@ -1,6 +1,6 @@
 # microstable: 자기진화형( Self-Evolving ) 에이전트 네이티브( Agent-Native ) 다중 담보 스테이블코인 프로토콜
 
-**버전(Version)**: v0.3 (Implementation Sync)  
+**버전(Version)**: v0.4 (Doc/Code Consistency Fix)  
 **상태(Status)**: 구현 정합 백서(Implementation-aligned, Educational / Hobby Project)  
 **런타임 아키텍처(Runtime Architecture)**: Solana 온체인 프로그램 + Rust 오프체인 키퍼 데몬(Keeper Daemon)  
 **프로그램 ID (Devnet)**: `BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3`
@@ -13,9 +13,19 @@
 
 스테이블코인(Stablecoin)은 핵심 결제 인프라가 되었지만, 여전히 담보 집중(Collateral Concentration), 거버넌스 지연(Governance Latency), 오라클 취약성(Oracle Fragility), 정적 파라미터(Static Parameter) 문제를 반복한다. **microstable**은 이를 위해 “작고 검증 가능한 구조 + 경계가 있는 적응”을 제안한다.
 
-v0.3은 백서와 구현을 동기화한다. **Open Agent Economy (OAE)**는 온체인 Agent Registry 및 라이프사이클 제어(`solana/programs/microstable/src/lib.rs`), 토너먼트 평가(`solana/keeper/src/tournament.rs`), keeper 스케줄링(`solana/keeper/src/agent_loop.rs`)으로 구현되었다. **Agent Intelligence Gate (AIG)**는 오프체인 챌린지 러너(`solana/keeper/src/aig.rs`)와 keeper 루프 연동으로 제공된다. 또한 Solana devnet 배포, Pyth 연동, SPL Token E2E 검증, Purple/Red/Crimson 보안 순환 결과를 반영한다.
+v0.4는 백서와 구현을 동기화하고 마지막으로 남아 있던 doc/code 불일치를 해소한다. **Open Agent Economy (OAE)**는 온체인 Agent Registry 및 라이프사이클 제어(`solana/programs/microstable/src/lib.rs`), 토너먼트 평가(`solana/keeper/src/tournament.rs`), keeper 스케줄링(`solana/keeper/src/agent_loop.rs`)으로 구현되었다. **Agent Intelligence Gate (AIG)**는 오프체인 챌린지 러너(`solana/keeper/src/aig.rs`)와 keeper 루프 연동으로 제공된다. 또한 Solana devnet 배포, Pyth 연동, SPL Token E2E 검증, Purple/Red/Crimson 보안 순환 결과를 반영한다.
 
 핵심 원칙은 동일하다. 최적화(Optimization)는 지급여력(Solvency)의 대체재가 아니라 보조 수단이어야 한다.
+
+## Version History
+
+- **v0.4 (Doc/Code Consistency Fix)**
+  - 토너먼트 점수 체계를 **Phase 1: Loss-Ranked Tournament**로 명시하고 copycat/stake-weighted 항목을 **Phase 2 Enhancement**로 분리.
+  - AIG의 "100 epochs / 30 epochs" 서술을 구현된 챌린지 기반 구조 및 승급 임계값으로 교체.
+  - Canonical 6항 손실식은 유지하되 구현 surrogate(수수료 결합 peg 항, centered concentration 항, `target_cr` 기반 CR shortfall, Adam+안전투영) 메모를 추가.
+  - 기존 audit에서 이미 해결된 항목(리스크 매니저 런타임 wiring, AIG/토너먼트 TX 제출, 키퍼 기반 토너먼트 참여자 소싱)을 반영.
+- **v0.3 (Implementation Sync)**
+  - 온체인/오프체인 구현 정합 릴리스의 첫 버전.
 
 ## 2. 서론(Introduction)
 
@@ -86,6 +96,8 @@ $$
 
 ### 4.3 손실함수(Loss Function)
 
+Canonical(이론) 목적함수는 다음과 같다.
+
 $$
 \mathcal{L}_t=
 \lambda_p(p_t-1)^2
@@ -98,11 +110,31 @@ $$
 
 해석: 페그 유지, 과소담보 억제, 집중도·턴오버 감소, 오라클 저신뢰 구간 보수화.
 
-**구현 참조:** `solana/keeper/src/optimizer.rs` (`LossFunction::compute`, `LossTerms`, `LossGradients`).
+#### Implementation Notes (v0.4)
+
+keeper 구현은 동일한 최적화 방향을 유지하면서 다음 surrogate refinements를 사용한다.
+
+- Peg 항(수수료 skew 결합):
+  $$
+  L_{price}^{impl}=\lambda_p\left((p_t-1)+(f_{mint}-f_{redeem})\right)^2
+  $$
+- CR shortfall 항(snapshot target CR 기준):
+  $$
+  L_{cr}^{impl}=\lambda_{cr}\max(0,\text{targetCR}_t-CR_t)^2
+  $$
+- Concentration 항(centered form):
+  $$
+  L_{conc}^{impl}=\lambda_{conc}\sum_i\left(w_{i,t}-\frac{1}{N}\right)^2
+  $$
+- Optimizer: Adam(1차/2차 모멘트) + gradient clipping + bounded delta + safety-set projection.
+
+즉, canonical form과 구현 surrogate는 최적화 방향은 동일하며, 구현체는 수치 안정성과 실용적 수렴을 위해 refinement를 포함한다.
+
+**구현 참조:** `solana/keeper/src/optimizer.rs` (`LossFunction::compute`, `LossTerms`, `LossGradients`, `AdamOptimizer`, `project_to_safety_set`).
 
 ### 4.4 최적화와 안전 투영
 
-Gradient/Adam 업데이트는 다음을 모두 통과해야 반영된다.
+Adam 업데이트(모멘트 버퍼 포함)는 다음을 모두 통과해야 반영된다.
 
 - gradient clipping,
 - bounded delta,
@@ -126,7 +158,7 @@ Gradient/Adam 업데이트는 다음을 모두 통과해야 반영된다.
 
 ## 5. 아키텍처(Architecture)
 
-v0.3은 **2계층 구조(Two-Layer Architecture)**를 명시한다.
+v0.4는 **2계층 구조(Two-Layer Architecture)**를 명시한다.
 
 ### 5.1 온체인(Solana)
 
@@ -152,7 +184,7 @@ v0.3은 **2계층 구조(Two-Layer Architecture)**를 명시한다.
 
 ## 6. 보안 분석(Security Analysis)
 
-v0.3 보안 분석은 가정 기반이 아니라 다회차 Purple/Red/Crimson 실측 결과를 반영한다.
+v0.4 보안 분석은 가정 기반이 아니라 다회차 Purple/Red/Crimson 실측 결과를 반영한다.
 
 ### 6.1 실전에서 관측된 공격군
 
@@ -200,7 +232,25 @@ ACP v1은 MCP 서버(`mcp-server/`)를 통해 JSON-RPC 형태로 노출되며 �
 
 ### 7.4 최적화 토너먼트(Optimization Tournament)
 
-Commit-Reveal 호환 구조, copycat penalty, 최소 stake, stake-weighted reputation을 통해 경쟁형 제안 선택과 score 조정을 수행한다.
+#### Phase 1 (구현됨): Loss-Ranked Tournament
+
+현재 keeper 구현은 제안의 총 loss를 기준으로 순위를 매긴다(가장 낮은 loss가 승자, 동률이면 더 먼저 제출한 제안 우선).
+
+`solana/keeper/src/tournament.rs` 점수 조정 로직:
+
+- **승자**: `+50,000`
+- **비승자**:
+  - `loss < baseline_loss` → `+10,000`
+  - `baseline_loss <= loss <= 2 × baseline_loss` → `0`
+  - `2 × baseline_loss < loss <= 5 × baseline_loss` → `-10,000`
+  - `loss > 5 × baseline_loss` (또는 non-finite loss) → `-25,000`
+
+#### Phase 2 Enhancement (계획)
+
+다음 anti-gaming 확장은 로드맵 항목이며 현재 Phase 1 점수식에는 포함되지 않는다.
+
+- copycat-distance penalty,
+- stake-weighted reputation scoring.
 
 **구현 참조:** `solana/keeper/src/tournament.rs` (proposal scoring) + `solana/programs/microstable/src/lib.rs` (`commit_rebalance`, `rebalance`).
 
@@ -210,10 +260,21 @@ AIG는 “등록 가능”과 “운영 신뢰”를 분리해 단계적으로 �
 
 ### 8.1 Tier 0→3
 
-- **Tier 0**: 역사 시나리오 시험,
-- **Tier 1**: 100 epoch 샌드박스,
-- **Tier 2**: 제한 권한 probation(최소 30 epoch),
-- **Tier 3**: 정식 참여 + 상시 감시.
+현재 AIG 승급은 고정 "epoch 누적"이 아니라, **챌린지 세트 기반 평가**로 구현되어 있으며 챌린지 타입별 epoch 수는 설정 가능하다.
+
+| 전이(Transition) | 구현된 챌린지 구성 | 챌린지별 epoch | 현재 기본 총 epoch |
+|---|---|---:|---:|
+| Tier 0 → Tier 1 | 3 × PegStability | 12 | 36 |
+| Tier 1 → Tier 2 | 3 × StressTest + 2 × Optimization | 16 / 14 | 76 |
+| Tier 2 → Tier 3 | 5 × Adversarial + 3 × Optimization | 20 / 16 | 148 |
+
+승급 임계값(score, 1,000,000 만점):
+
+- **Tier 1**: ≥ 600,000
+- **Tier 2**: ≥ 750,000
+- **Tier 3**: ≥ 850,000
+
+현재는 persistent probation-epoch ledger를 유지하지 않으며, 승급 판단은 챌린지 결과 집계 기반이다. persistent probation ledger는 Phase 2 확장 후보이다.
 
 **구현 참조:** `solana/keeper/src/aig.rs` (challenge runner), `solana/keeper/src/agent_loop.rs` (scheduler), `solana/programs/microstable/src/lib.rs` (`AgentRecord.tier`).
 
@@ -398,7 +459,7 @@ Worst peg MAE: **0.001171** (`multi_depeg`).
 
 ## 15. 비교(Comparison)
 
-| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.3 |
+| Dimension | DAI-like | FRAX-like (historical hybrid) | mStable-style basket | microstable v0.4 |
 |---|---|---|---|---|
 | 담보 모델(Collateral model) | Over-collateralized | Fractional/hybrid | Basket aggregation | Basket + adaptive CR |
 | 파라미터 갱신(Parameter updates) | Governance epochs | Controller dependent | Mostly static | Bounded gradient updates |
@@ -425,7 +486,7 @@ Worst peg MAE: **0.001171** (`multi_depeg`).
 
 ## 17. 결론(Conclusion)
 
-microstable v0.3의 핵심은 “완성 선언”이 아니라 “방법론 선언”이다.
+microstable v0.4의 핵심은 “완성 선언”이 아니라 “방법론 선언”이다.
 
 - 메커니즘은 작게,
 - 적응은 경계 안에서,
