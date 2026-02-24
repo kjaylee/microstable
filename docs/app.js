@@ -1469,6 +1469,10 @@
         statusEl.className = "faucet-status ok";
         statusEl.textContent = connected ? "Faucet is ready." : "Connect wallet to request faucet tokens.";
         setFaucetButtonsDisabled(!connected, "Connect wallet first");
+        // Restore token labels when faucet instruction is available
+        $("faucetUsdcBtn").textContent = "Get 1000 USDC";
+        $("faucetUsdtBtn").textContent = "Get 1000 USDT";
+        $("faucetDaiBtn").textContent = "Get 1000 DAI";
         return;
       }
 
@@ -1488,6 +1492,10 @@
         statusEl.textContent = "Token faucet unavailable. Buttons request 1 SOL devnet gas airdrop.";
       }
       setFaucetButtonsDisabled(false, "Request 1 SOL devnet airdrop for fees");
+      // Update button labels to reflect actual SOL airdrop behavior
+      ["faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
+        $(id).textContent = "Get 1 SOL (gas)";
+      });
     }
 
     async function refreshFaucetMintAuthorities(opts = {}) {
