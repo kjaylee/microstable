@@ -30,6 +30,12 @@
       2: { symbol: "DAI" },
       3: { symbol: "USDS" }
     };
+    const AGENT_ROLE_MIN_STAKE_SOL = {
+      0: 10,
+      1: 5,
+      2: 20,
+      3: 2
+    };
 
     const FAUCET_CONFIG = {
       instructionAvailable: false,
@@ -54,6 +60,7 @@
       weightRowsReady: false,
       lastProtocol: null,
       lastVaults: [],
+      lastAgents: [],
       collateralMints: {},
       lastError: "",
       connection: null,
@@ -66,12 +73,15 @@
         balanceBusy: false
       },
       mintBusy: false,
-      mintDiscriminator: null,
+      redeemBusy: false,
+      registerBusy: false,
+      instructionDiscriminators: {},
       faucet: {
         mintAuthorities: {},
         lastMintsKey: "",
         checked: false,
-        checking: false
+        checking: false,
+        airdropBusy: false
       },
       rpcCursor: 0,
       rpcBootstrapDone: false
@@ -582,6 +592,8 @@
       const n = raw.replace(/[^a-z]/g, "");
       if (n.includes("instructionrebalance") || n.includes("instructioncommitrebalance")) return "rebalance";
       if (n.includes("instructionupdateoracle") || n.includes("instructionupdateoraclepyth") || n.includes("instructionsetpythfeed")) return "oracle";
+      if (n.includes("instructionmint")) return "mint";
+      if (n.includes("instructionredeem")) return "redeem";
       if (
         n.includes("instructionregisteragent") ||
         n.includes("instructionupdateagentscore") ||
@@ -1208,6 +1220,15 @@
       return fixed.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
     }
 
+    function uiAmountToRawFromNumber(value, decimals = 6) {
+      const txt = uiNumberToTrimmedText(value, decimals);
+      return parseUiAmountToRaw(txt, decimals) || 0n;
+    }
+
+    function walletBalanceRaw(symbol, decimals = 6) {
+      return uiAmountToRawFromNumber(state.wallet.balances?.[symbol] || 0, decimals);
+    }
+
     function resolveCollateralMints(protocol, vaults) {
       const next = {
         0: protocol?.usdc_mint || null,
@@ -1289,33 +1310,64 @@
       });
     }
 
-    async function getMintDiscriminator() {
-      if (state.mintDiscriminator) return state.mintDiscriminator;
-      const fallback = new Uint8Array([51, 57, 225, 47, 182, 146, 137, 166]);
-      if (!window.crypto?.subtle) {
-        state.mintDiscriminator = fallback;
-        return state.mintDiscriminator;
+    async function getInstructionDiscriminator(name, fallback) {
+      if (state.instructionDiscriminators[name]) {
+        return state.instructionDiscriminators[name];
       }
-      const bytes = new TextEncoder().encode("global:mint");
+      const fallbackBytes = new Uint8Array(fallback);
+      if (!window.crypto?.subtle) {
+        state.instructionDiscriminators[name] = fallbackBytes;
+        return fallbackBytes;
+      }
+      const bytes = new TextEncoder().encode(`global:${name}`);
       const hash = await window.crypto.subtle.digest("SHA-256", bytes);
-      state.mintDiscriminator = new Uint8Array(hash).slice(0, 8);
-      return state.mintDiscriminator;
+      const discriminator = new Uint8Array(hash).slice(0, 8);
+      state.instructionDiscriminators[name] = discriminator;
+      return discriminator;
+    }
+
+    function writeU64LE(out, offset, value) {
+      let x = BigInt(value);
+      for (let i = 0; i < 8; i++) {
+        out[offset + i] = Number(x & 0xffn);
+        x >>= 8n;
+      }
+    }
+
+    async function getMintDiscriminator() {
+      return getInstructionDiscriminator("mint", [51, 57, 225, 47, 182, 146, 137, 166]);
+    }
+
+    async function getRedeemDiscriminator() {
+      return getInstructionDiscriminator("redeem", [184, 12, 86, 149, 70, 196, 97, 225]);
+    }
+
+    async function getRegisterAgentDiscriminator() {
+      return getInstructionDiscriminator("register_agent", [135, 157, 66, 195, 2, 113, 175, 30]);
     }
 
     function encodeMintInstructionData(collateralIndex, collateralAmountRaw, maxPriceRaw, discriminator) {
       const out = new Uint8Array(25);
       out.set(discriminator, 0);
       out[8] = collateralIndex & 0xff;
-      let x = collateralAmountRaw;
-      for (let i = 0; i < 8; i++) {
-        out[9 + i] = Number(x & 0xffn);
-        x >>= 8n;
-      }
-      let y = maxPriceRaw;
-      for (let i = 0; i < 8; i++) {
-        out[17 + i] = Number(y & 0xffn);
-        y >>= 8n;
-      }
+      writeU64LE(out, 9, collateralAmountRaw);
+      writeU64LE(out, 17, maxPriceRaw);
+      return out;
+    }
+
+    function encodeRedeemInstructionData(musdAmountRaw, minOutAmountRaw, discriminator) {
+      const out = new Uint8Array(24);
+      out.set(discriminator, 0);
+      writeU64LE(out, 8, musdAmountRaw);
+      writeU64LE(out, 16, minOutAmountRaw);
+      return out;
+    }
+
+    function encodeRegisterAgentInstructionData(roleIndex, stakeLamportsRaw, discriminator) {
+      const out = new Uint8Array(17);
+      out.set(discriminator, 0);
+      out[8] = roleIndex & 0xff;
+      writeU64LE(out, 9, stakeLamportsRaw);
       return out;
     }
 
@@ -1390,6 +1442,7 @@
 
     function renderFaucetStatus() {
       const statusEl = $("faucetStatus");
+      const connected = !!state.wallet.publicKey;
       const mintsReady = !!state.collateralMints[0] && !!state.collateralMints[1] && !!state.collateralMints[2];
       if (!mintsReady) {
         statusEl.className = "faucet-status muted";
@@ -1405,22 +1458,36 @@
       const protocolAuthority = CFG.PROTOCOL_STATE;
       const allProtocol = allAuthKnown && auth0 === protocolAuthority && auth1 === protocolAuthority && auth2 === protocolAuthority;
 
-      if (!FAUCET_CONFIG.instructionAvailable) {
+      if (state.faucet.airdropBusy) {
         statusEl.className = "faucet-status warn";
-        if (allProtocol) {
-          statusEl.textContent = `Coming Soon — ${FAUCET_CONFIG.hint} (${FAUCET_CONFIG.requiredInstruction}).`;
-        } else if (allAuthKnown) {
-          statusEl.textContent = `Coming Soon — ${FAUCET_CONFIG.hint}. Mint authority is ${shortKey(auth0)} / ${shortKey(auth1)} / ${shortKey(auth2)} (not protocol_state).`;
-        } else {
-          statusEl.textContent = `Coming Soon — ${FAUCET_CONFIG.hint}.`;
-        }
-        setFaucetButtonsDisabled(true, FAUCET_CONFIG.hint);
+        statusEl.textContent = "Requesting devnet SOL airdrop...";
+        setFaucetButtonsDisabled(true, "Airdrop in progress");
         return;
       }
 
-      statusEl.className = "faucet-status ok";
-      statusEl.textContent = "Faucet is ready.";
-      setFaucetButtonsDisabled(false, "Request test tokens");
+      if (FAUCET_CONFIG.instructionAvailable) {
+        statusEl.className = "faucet-status ok";
+        statusEl.textContent = connected ? "Faucet is ready." : "Connect wallet to request faucet tokens.";
+        setFaucetButtonsDisabled(!connected, "Connect wallet first");
+        return;
+      }
+
+      if (!connected) {
+        statusEl.className = "faucet-status muted";
+        statusEl.textContent = "Token faucet instruction unavailable. Connect wallet for SOL airdrop fallback.";
+        setFaucetButtonsDisabled(true, "Connect wallet first");
+        return;
+      }
+
+      statusEl.className = "faucet-status warn";
+      if (allProtocol) {
+        statusEl.textContent = `Token faucet unavailable (${FAUCET_CONFIG.requiredInstruction}). Buttons request 1 SOL devnet gas airdrop.`;
+      } else if (allAuthKnown) {
+        statusEl.textContent = `Token faucet unavailable (mint authorities ${shortKey(auth0)} / ${shortKey(auth1)} / ${shortKey(auth2)}). Buttons request 1 SOL devnet gas airdrop.`;
+      } else {
+        statusEl.textContent = "Token faucet unavailable. Buttons request 1 SOL devnet gas airdrop.";
+      }
+      setFaucetButtonsDisabled(false, "Request 1 SOL devnet airdrop for fees");
     }
 
     async function refreshFaucetMintAuthorities(opts = {}) {
@@ -1466,6 +1533,53 @@
       }
     }
 
+    async function requestDevnetAirdrop(label = "") {
+      initSolanaContext();
+      if (!state.wallet.publicKey) {
+        renderFaucetStatus();
+        return;
+      }
+      if (state.faucet.airdropBusy) return;
+
+      state.faucet.airdropBusy = true;
+      renderFaucetStatus();
+      let okMessage = "";
+      try {
+        const sig = await state.connection.requestAirdrop(
+          state.wallet.publicKey,
+          window.solanaWeb3.LAMPORTS_PER_SOL
+        );
+        const latest = await state.connection.getLatestBlockhash("finalized");
+        const confirm = await state.connection.confirmTransaction(
+          {
+            signature: sig,
+            blockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight
+          },
+          "confirmed"
+        );
+        if (confirm?.value?.err) {
+          throw new Error(JSON.stringify(confirm.value.err));
+        }
+
+        okMessage = `${label ? `${label}: ` : ""}1 SOL devnet airdrop confirmed (${shortKey(sig)}).`;
+        const statusEl = $("faucetStatus");
+        statusEl.className = "faucet-status ok";
+        statusEl.textContent = okMessage;
+      } catch (e) {
+        const statusEl = $("faucetStatus");
+        statusEl.className = "faucet-status bad";
+        statusEl.textContent = `Airdrop failed: ${shortKey(e.message || String(e))}`;
+      } finally {
+        state.faucet.airdropBusy = false;
+        if (okMessage) {
+          setTimeout(renderFaucetStatus, 4000);
+        } else {
+          renderFaucetStatus();
+        }
+      }
+    }
+
     function setWalletPublicKey(pubkeyLike) {
       if (!pubkeyLike) {
         state.wallet.publicKey = null;
@@ -1477,7 +1591,10 @@
       renderWalletBalances();
       renderFaucetStatus();
       updateMintEstimate();
+      updateRedeemEstimate();
       updateMintButton();
+      updateRedeemButton();
+      updateAgentRegisterButton();
     }
 
     async function refreshWalletBalances(opts = {}) {
@@ -1517,6 +1634,8 @@
         renderWalletBalances();
         renderFaucetStatus();
         updateMintEstimate();
+        updateRedeemEstimate();
+        updateAgentRegisterButton();
       } catch (e) {
         if (!silent) setMintTxStatus("error", `Balance refresh failed: ${shortKey(e.message || String(e))}`);
       } finally {
@@ -1531,12 +1650,19 @@
       }
       try {
         setMintTxStatus("muted", "Connecting Phantom wallet...");
+        setRedeemTxStatus("muted", "Connecting Phantom wallet...");
+        setAgentRegisterStatus("muted", "Connecting Phantom wallet...");
         const resp = await state.wallet.provider.connect();
         setWalletPublicKey(resp?.publicKey || state.wallet.provider.publicKey);
         await refreshWalletBalances({ silent: true });
         setMintTxStatus("ok", "Wallet connected.");
+        setRedeemTxStatus("ok", "Wallet connected.");
+        setAgentRegisterStatus("ok", "Wallet connected.");
       } catch (e) {
-        setMintTxStatus("error", `Wallet connect failed: ${shortKey(e.message || String(e))}`);
+        const msg = `Wallet connect failed: ${shortKey(e.message || String(e))}`;
+        setMintTxStatus("error", msg);
+        setRedeemTxStatus("error", msg);
+        setAgentRegisterStatus("error", msg);
       }
     }
 
@@ -1547,23 +1673,38 @@
       } catch {}
       setWalletPublicKey(null);
       setMintTxStatus("muted", "Wallet disconnected.");
+      setRedeemTxStatus("muted", "Wallet disconnected.");
+      setAgentRegisterStatus("muted", "Wallet disconnected.");
     }
 
-    function selectedCollateralIndex() {
+    function selectedMintCollateralIndex() {
       return Number($("mintCollateral")?.value || "0");
     }
 
-    function selectedCollateralSymbol() {
-      return COLLATERAL_META[selectedCollateralIndex()]?.symbol || "USDC";
+    function selectedMintCollateralSymbol() {
+      return COLLATERAL_META[selectedMintCollateralIndex()]?.symbol || "USDC";
     }
 
-    function selectedCollateralBalance() {
-      const symbol = selectedCollateralSymbol();
+    function selectedMintCollateralBalance() {
+      const symbol = selectedMintCollateralSymbol();
       return Number(state.wallet.balances?.[symbol] || 0);
     }
 
-    function setMintTxStatus(kind, text, signature = "") {
-      const el = $("mintTxStatus");
+    function selectedRedeemCollateralIndex() {
+      return Number($("redeemCollateral")?.value || "0");
+    }
+
+    function selectedRedeemCollateralSymbol() {
+      return COLLATERAL_META[selectedRedeemCollateralIndex()]?.symbol || "USDC";
+    }
+
+    function vaultByIndex(index) {
+      return (state.lastVaults || []).find((v) => Number(v.index) === Number(index));
+    }
+
+    function setStatusWithSignature(elId, kind, text, signature = "") {
+      const el = $(elId);
+      if (!el) return;
       const cls = kind === "ok" ? "ok" : kind === "warn" ? "warn" : kind === "error" ? "bad" : "muted";
       el.className = `mint-status ${cls}`;
       el.replaceChildren();
@@ -1580,21 +1721,33 @@
       }
     }
 
+    function setMintTxStatus(kind, text, signature = "") {
+      setStatusWithSignature("mintTxStatus", kind, text, signature);
+    }
+
+    function setRedeemTxStatus(kind, text, signature = "") {
+      setStatusWithSignature("redeemTxStatus", kind, text, signature);
+    }
+
+    function setAgentRegisterStatus(kind, text, signature = "") {
+      setStatusWithSignature("agentRegisterStatus", kind, text, signature);
+    }
+
     function updateMintEstimate() {
-      const idx = selectedCollateralIndex();
-      const amountRaw = parseUiAmountToRaw($("mintAmount").value, 6);
-      const vault = (state.lastVaults || []).find((v) => Number(v.index) === idx);
+      const idx = selectedMintCollateralIndex();
+      const amountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", 6);
+      const vault = vaultByIndex(idx);
       const feeRate = Number(state.lastProtocol?.mint_fee_rate || 0);
 
-      $("mintFeeMeta").textContent = `Fee: ${ppmToPct(feeRate).toFixed(4)}%`;
+      if ($("mintFeeMeta")) $("mintFeeMeta").textContent = `Fee: ${ppmToPct(feeRate).toFixed(4)}%`;
       if (vault?.price) {
-        $("mintPriceMeta").textContent = `Oracle price: $${(Number(vault.price) / 1e6).toFixed(6)}`;
+        if ($("mintPriceMeta")) $("mintPriceMeta").textContent = `Oracle price: $${(Number(vault.price) / 1e6).toFixed(6)}`;
       } else {
-        $("mintPriceMeta").textContent = "Oracle price: --";
+        if ($("mintPriceMeta")) $("mintPriceMeta").textContent = "Oracle price: --";
       }
 
       if (amountRaw === null || amountRaw <= 0n || !vault?.price) {
-        $("mintEstimate").textContent = "--";
+        if ($("mintEstimate")) $("mintEstimate").textContent = "--";
         updateMintButton();
         return;
       }
@@ -1602,17 +1755,162 @@
       const gross = (amountRaw * vault.price) / 1000000n;
       const feeScaler = BigInt(Math.max(0, 1_000_000 - feeRate));
       const net = (gross * feeScaler) / 1000000n;
-      $("mintEstimate").textContent = fmtToken(net, 6, 6);
+      if ($("mintEstimate")) $("mintEstimate").textContent = fmtToken(net, 6, 6);
       updateMintButton();
+    }
+
+    function buildRedeemPreview(musdAmountRaw) {
+      const protocol = state.lastProtocol;
+      if (!protocol || musdAmountRaw <= 0n) return null;
+
+      const supplyBefore = protocol.total_supply || 0n;
+      if (supplyBefore <= 0n) {
+        return {
+          feeRate: Number(protocol.redeem_fee_rate || 0),
+          totalOut: 0n,
+          payoutByIndex: { 0: 0n, 1: 0n, 2: 0n, 3: 0n }
+        };
+      }
+
+      const feeRate = Number(protocol.redeem_fee_rate || 0);
+      const redeemFee = (musdAmountRaw * BigInt(Math.max(0, feeRate))) / 1000000n;
+      const netRedeem = musdAmountRaw > redeemFee ? musdAmountRaw - redeemFee : 0n;
+
+      const payoutByIndex = { 0: 0n, 1: 0n, 2: 0n, 3: 0n };
+      let totalOut = 0n;
+      for (const idx of [0, 1, 2, 3]) {
+        const vault = vaultByIndex(idx);
+        const deposits = vault?.total_deposits || 0n;
+        if (deposits <= 0n || netRedeem <= 0n) continue;
+        const payout = (deposits * netRedeem) / supplyBefore;
+        payoutByIndex[idx] = payout;
+        totalOut += payout;
+      }
+
+      return { feeRate, totalOut, payoutByIndex };
+    }
+
+    function updateRedeemEstimate() {
+      if (!$("redeemEstimate")) return;
+      const idx = selectedRedeemCollateralIndex();
+      const musdRaw = parseUiAmountToRaw($("redeemAmount")?.value || "", 6);
+      const preview = musdRaw !== null && musdRaw > 0n ? buildRedeemPreview(musdRaw) : null;
+      const selectedVault = vaultByIndex(idx);
+
+      const feeRate = Number(state.lastProtocol?.redeem_fee_rate || 0);
+      $("redeemFeeMeta").textContent = `Fee: ${ppmToPct(feeRate).toFixed(4)}%`;
+      $("redeemPriceMeta").textContent = selectedVault?.price
+        ? `Oracle price: $${(Number(selectedVault.price) / 1e6).toFixed(6)}`
+        : "Oracle price: --";
+
+      if (!preview) {
+        $("redeemEstimate").textContent = "--";
+        if ($("redeemBasketMeta")) $("redeemBasketMeta").textContent = "Basket payout: --";
+        if ($("redeemOutUSDC")) $("redeemOutUSDC").textContent = "--";
+        if ($("redeemOutUSDT")) $("redeemOutUSDT").textContent = "--";
+        if ($("redeemOutDAI")) $("redeemOutDAI").textContent = "--";
+        updateRedeemButton();
+        return;
+      }
+
+      const selectedOut = preview.payoutByIndex[idx] || 0n;
+      $("redeemEstimate").textContent = fmtToken(selectedOut, 6, 6);
+      if ($("redeemBasketMeta")) {
+        $("redeemBasketMeta").textContent = `Basket payout: ${fmtToken(preview.totalOut, 6, 6)} tokens (all vault legs)`;
+      }
+      if ($("redeemOutUSDC")) $("redeemOutUSDC").textContent = fmtToken(preview.payoutByIndex[0] || 0n, 6, 6);
+      if ($("redeemOutUSDT")) $("redeemOutUSDT").textContent = fmtToken(preview.payoutByIndex[1] || 0n, 6, 6);
+      if ($("redeemOutDAI")) $("redeemOutDAI").textContent = fmtToken(preview.payoutByIndex[2] || 0n, 6, 6);
+      updateRedeemButton();
     }
 
     function updateMintButton() {
       const btn = $("mintSubmitBtn");
-      const amountRaw = parseUiAmountToRaw($("mintAmount").value, 6);
-      const mintKnown = !!state.collateralMints[selectedCollateralIndex()];
-      const ready = !!state.wallet.publicKey && amountRaw !== null && amountRaw > 0n && mintKnown && !state.mintBusy;
+      if (!btn) return;
+      const amountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", 6);
+      const mintKnown = !!state.collateralMints[selectedMintCollateralIndex()];
+      const balanceRaw = walletBalanceRaw(selectedMintCollateralSymbol(), 6);
+      const sufficient = amountRaw !== null && amountRaw <= balanceRaw;
+      const ready = !!state.wallet.publicKey
+        && amountRaw !== null
+        && amountRaw > 0n
+        && mintKnown
+        && sufficient
+        && !state.mintBusy;
       btn.disabled = !ready;
       btn.textContent = state.mintBusy ? "MINTING..." : "MINT";
+    }
+
+    function updateRedeemButton() {
+      const btn = $("redeemSubmitBtn");
+      if (!btn) return;
+      const amountRaw = parseUiAmountToRaw($("redeemAmount")?.value || "", 6);
+      const mintsReady = !!state.collateralMints[0] && !!state.collateralMints[1] && !!state.collateralMints[2] && !!state.collateralMints[3];
+      const mstbRaw = walletBalanceRaw("MSTB", 6);
+      const sufficient = amountRaw !== null && amountRaw <= mstbRaw;
+      const ready = !!state.wallet.publicKey
+        && amountRaw !== null
+        && amountRaw > 0n
+        && mintsReady
+        && sufficient
+        && !state.redeemBusy;
+      btn.disabled = !ready;
+      btn.textContent = state.redeemBusy ? "REDEEMING..." : "REDEEM";
+    }
+
+    function updateAgentStakeHint() {
+      const role = Number($("agentRole")?.value || "0");
+      const recommended = AGENT_ROLE_MIN_STAKE_SOL[role] || 1;
+      const hint = $("agentStakeHint");
+      if (hint) {
+        hint.textContent = `Recommended stake (${ROLE_MAP[role] || "Agent"}): ${recommended} SOL • on-chain min: 1 SOL`;
+      }
+    }
+
+    function updateAgentRegisterButton() {
+      const btn = $("agentRegisterBtn");
+      if (!btn) return;
+      const stakeRaw = parseUiAmountToRaw($("agentStake")?.value || "", 9);
+      const role = Number($("agentRole")?.value || "0");
+      const validRole = Number.isFinite(role) && role >= 0 && role <= 3;
+      const ready = !!state.wallet.publicKey
+        && validRole
+        && stakeRaw !== null
+        && stakeRaw > 0n
+        && !state.registerBusy;
+      btn.disabled = !ready;
+      btn.textContent = state.registerBusy ? "REGISTERING..." : "REGISTER AGENT";
+    }
+
+    function renderAgentRegistryPreview(records) {
+      const body = $("agentRegistryRows");
+      if (!body) return;
+      body.replaceChildren();
+
+      if (!records?.length) {
+        body.appendChild(createPlaceholderRow(5, "No on-chain agent registrations yet."));
+        return;
+      }
+
+      const rows = [...records]
+        .sort((a, b) => Number(b.registered_slot - a.registered_slot))
+        .slice(0, 8);
+
+      rows.forEach((r) => {
+        const tr = document.createElement("tr");
+        const agentCell = document.createElement("td");
+        agentCell.textContent = shortKey(r.agent);
+        const roleCell = document.createElement("td");
+        roleCell.textContent = roleLabel(r.role);
+        const stakeCell = document.createElement("td");
+        stakeCell.textContent = `${(Number(r.stake || 0n) / 1e9).toFixed(3)} SOL`;
+        const statusCell = document.createElement("td");
+        statusCell.textContent = statusLabel(r.status);
+        const scoreCell = document.createElement("td");
+        scoreCell.textContent = Number(r.agent_score || 0n).toLocaleString();
+        tr.append(agentCell, roleCell, stakeCell, statusCell, scoreCell);
+        body.appendChild(tr);
+      });
     }
 
     async function submitMint() {
@@ -1622,18 +1920,26 @@
         return;
       }
 
-      const collateralIndex = selectedCollateralIndex();
+      const collateralIndex = selectedMintCollateralIndex();
       const collateralMintStr = state.collateralMints[collateralIndex];
       if (!collateralMintStr) {
         setMintTxStatus("error", "Collateral mint not resolved yet. Wait for next refresh.");
         return;
       }
 
-      const collateralAmountRaw = parseUiAmountToRaw($("mintAmount").value, 6);
+      const collateralAmountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", 6);
       if (collateralAmountRaw === null || collateralAmountRaw <= 0n) {
         setMintTxStatus("warn", "Enter a valid mint amount.");
         return;
       }
+
+      const balanceRaw = walletBalanceRaw(selectedMintCollateralSymbol(), 6);
+      if (collateralAmountRaw > balanceRaw) {
+        setMintTxStatus("warn", "Insufficient collateral balance.");
+        return;
+      }
+
+      const selectedVault = vaultByIndex(collateralIndex);
 
       state.mintBusy = true;
       updateMintButton();
@@ -1663,8 +1969,8 @@
         if (!userMstbInfo) tx.add(createAtaIdempotentIx(user, userMstbAta, user, state.pubkeys.mstbMint));
 
         const discriminator = await getMintDiscriminator();
-        const price = vault?.price ?? 1000000n;
-        const maxPriceRaw = (price * 101n) / 100n;
+        const oraclePrice = selectedVault?.price || 1000000n;
+        const maxPriceRaw = (oraclePrice * 101n) / 100n;
         const ixData = encodeMintInstructionData(collateralIndex, collateralAmountRaw, maxPriceRaw, discriminator);
 
         tx.add(new w3.TransactionInstruction({
@@ -1685,8 +1991,7 @@
             { pubkey: collateralMint, isSigner: false, isWritable: false },
             { pubkey: state.pubkeys.tokenProgram, isSigner: false, isWritable: false },
             { pubkey: state.pubkeys.associatedTokenProgram, isSigner: false, isWritable: false },
-            { pubkey: state.pubkeys.systemProgram, isSigner: false, isWritable: false },
-            { pubkey: state.pubkeys.rent, isSigner: false, isWritable: false }
+            { pubkey: state.pubkeys.systemProgram, isSigner: false, isWritable: false }
           ],
           data: ixData
         }));
@@ -1729,7 +2034,265 @@
       }
     }
 
-    function bindWalletAndMintUi() {
+    async function submitRedeem() {
+      initSolanaContext();
+      if (!state.wallet.publicKey) {
+        setRedeemTxStatus("warn", "Connect wallet first.");
+        return;
+      }
+
+      const musdAmountRaw = parseUiAmountToRaw($("redeemAmount")?.value || "", 6);
+      if (musdAmountRaw === null || musdAmountRaw <= 0n) {
+        setRedeemTxStatus("warn", "Enter a valid MSTB amount.");
+        return;
+      }
+
+      const mstbRaw = walletBalanceRaw("MSTB", 6);
+      if (musdAmountRaw > mstbRaw) {
+        setRedeemTxStatus("warn", "Insufficient MSTB balance.");
+        return;
+      }
+
+      if (!state.collateralMints[0] || !state.collateralMints[1] || !state.collateralMints[2] || !state.collateralMints[3]) {
+        setRedeemTxStatus("error", "Collateral mints are not fully resolved yet.");
+        return;
+      }
+
+      state.redeemBusy = true;
+      updateRedeemButton();
+      try {
+        const w3 = window.solanaWeb3;
+        const user = state.wallet.publicKey;
+        const te = new TextEncoder();
+
+        const [userPosition] = w3.PublicKey.findProgramAddressSync(
+          [te.encode("user_position"), user.toBytes()],
+          state.pubkeys.programId
+        );
+        const userPositionInfo = await state.connection.getAccountInfo(userPosition, "confirmed");
+        if (!userPositionInfo) {
+          throw new Error("User position not found. Mint first from this wallet.");
+        }
+
+        const usdcMint = new w3.PublicKey(state.collateralMints[0]);
+        const usdtMint = new w3.PublicKey(state.collateralMints[1]);
+        const daiMint = new w3.PublicKey(state.collateralMints[2]);
+        const usdsMint = new w3.PublicKey(state.collateralMints[3]);
+
+        const userUsdcAta = deriveAtaAddress(user, usdcMint);
+        const userUsdtAta = deriveAtaAddress(user, usdtMint);
+        const userDaiAta = deriveAtaAddress(user, daiMint);
+        const userUsdsAta = deriveAtaAddress(user, usdsMint);
+
+        const vaultUsdcAta = deriveAtaAddress(state.pubkeys.protocolState, usdcMint);
+        const vaultUsdtAta = deriveAtaAddress(state.pubkeys.protocolState, usdtMint);
+        const vaultDaiAta = deriveAtaAddress(state.pubkeys.protocolState, daiMint);
+        const vaultUsdsAta = deriveAtaAddress(state.pubkeys.protocolState, usdsMint);
+
+        const userMstbAta = deriveAtaAddress(user, state.pubkeys.mstbMint);
+
+        const ataAddresses = [
+          userUsdcAta,
+          userUsdtAta,
+          userDaiAta,
+          userUsdsAta,
+          vaultUsdcAta,
+          vaultUsdtAta,
+          vaultDaiAta,
+          vaultUsdsAta,
+          userMstbAta
+        ];
+        const infos = await state.connection.getMultipleAccountsInfo(ataAddresses);
+
+        const tx = new w3.Transaction();
+        const maybeCreateAta = (info, ata, owner, mint) => {
+          if (!info) tx.add(createAtaIdempotentIx(user, ata, owner, mint));
+        };
+
+        maybeCreateAta(infos[0], userUsdcAta, user, usdcMint);
+        maybeCreateAta(infos[1], userUsdtAta, user, usdtMint);
+        maybeCreateAta(infos[2], userDaiAta, user, daiMint);
+        maybeCreateAta(infos[3], userUsdsAta, user, usdsMint);
+        maybeCreateAta(infos[4], vaultUsdcAta, state.pubkeys.protocolState, usdcMint);
+        maybeCreateAta(infos[5], vaultUsdtAta, state.pubkeys.protocolState, usdtMint);
+        maybeCreateAta(infos[6], vaultDaiAta, state.pubkeys.protocolState, daiMint);
+        maybeCreateAta(infos[7], vaultUsdsAta, state.pubkeys.protocolState, usdsMint);
+        maybeCreateAta(infos[8], userMstbAta, user, state.pubkeys.mstbMint);
+
+        const preview = buildRedeemPreview(musdAmountRaw);
+        const minOutAmountRaw = preview ? (preview.totalOut * 60n) / 100n : 0n;
+
+        const discriminator = await getRedeemDiscriminator();
+        const ixData = encodeRedeemInstructionData(musdAmountRaw, minOutAmountRaw, discriminator);
+        tx.add(new w3.TransactionInstruction({
+          programId: state.pubkeys.programId,
+          keys: [
+            { pubkey: state.pubkeys.protocolState, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.circuitBreaker, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[0], isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[1], isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[2], isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.vaultPdas[3], isSigner: false, isWritable: true },
+            { pubkey: user, isSigner: true, isWritable: true },
+            { pubkey: userPosition, isSigner: false, isWritable: true },
+            { pubkey: userUsdcAta, isSigner: false, isWritable: true },
+            { pubkey: userUsdtAta, isSigner: false, isWritable: true },
+            { pubkey: userDaiAta, isSigner: false, isWritable: true },
+            { pubkey: userUsdsAta, isSigner: false, isWritable: true },
+            { pubkey: vaultUsdcAta, isSigner: false, isWritable: true },
+            { pubkey: vaultUsdtAta, isSigner: false, isWritable: true },
+            { pubkey: vaultDaiAta, isSigner: false, isWritable: true },
+            { pubkey: vaultUsdsAta, isSigner: false, isWritable: true },
+            { pubkey: usdcMint, isSigner: false, isWritable: false },
+            { pubkey: usdtMint, isSigner: false, isWritable: false },
+            { pubkey: daiMint, isSigner: false, isWritable: false },
+            { pubkey: usdsMint, isSigner: false, isWritable: false },
+            { pubkey: state.pubkeys.mstbMint, isSigner: false, isWritable: true },
+            { pubkey: userMstbAta, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.tokenProgram, isSigner: false, isWritable: false },
+            { pubkey: state.pubkeys.associatedTokenProgram, isSigner: false, isWritable: false }
+          ],
+          data: ixData
+        }));
+
+        const latest = await state.connection.getLatestBlockhash("finalized");
+        tx.recentBlockhash = latest.blockhash;
+        tx.feePayer = user;
+
+        setRedeemTxStatus("warn", "Transaction submitted... awaiting signature.");
+        const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
+          preflightCommitment: "confirmed"
+        });
+        const signature = typeof sendResult === "string" ? sendResult : sendResult?.signature;
+        if (!signature) throw new Error("No signature returned by wallet");
+
+        setRedeemTxStatus("warn", "Redeem pending:", signature);
+        const confirm = await state.connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight
+          },
+          "confirmed"
+        );
+
+        if (confirm?.value?.err) {
+          throw new Error(JSON.stringify(confirm.value.err));
+        }
+
+        setRedeemTxStatus("ok", "Redeem confirmed:", signature);
+        $("redeemAmount").value = "";
+        updateRedeemEstimate();
+        await refreshWalletBalances({ silent: true });
+        await poll();
+      } catch (e) {
+        setRedeemTxStatus("error", `Redeem failed: ${shortKey(e.message || String(e))}`);
+      } finally {
+        state.redeemBusy = false;
+        updateRedeemButton();
+      }
+    }
+
+    async function submitAgentRegistration() {
+      initSolanaContext();
+      if (!state.wallet.publicKey) {
+        setAgentRegisterStatus("warn", "Connect wallet first.");
+        return;
+      }
+
+      const role = Number($("agentRole")?.value || "0");
+      if (!Number.isFinite(role) || role < 0 || role > 3) {
+        setAgentRegisterStatus("warn", "Select a valid agent type.");
+        return;
+      }
+
+      const stakeLamportsRaw = parseUiAmountToRaw($("agentStake")?.value || "", 9);
+      if (stakeLamportsRaw === null || stakeLamportsRaw <= 0n) {
+        setAgentRegisterStatus("warn", "Enter a valid stake amount (SOL).");
+        return;
+      }
+      if (stakeLamportsRaw < 1_000_000_000n) {
+        setAgentRegisterStatus("warn", "Minimum on-chain stake is 1 SOL.");
+        return;
+      }
+
+      state.registerBusy = true;
+      updateAgentRegisterButton();
+      try {
+        const w3 = window.solanaWeb3;
+        const user = state.wallet.publicKey;
+        const te = new TextEncoder();
+
+        const [agentRecordPda] = w3.PublicKey.findProgramAddressSync(
+          [te.encode("agent"), user.toBytes()],
+          state.pubkeys.programId
+        );
+        const [agentEscrowPda] = w3.PublicKey.findProgramAddressSync(
+          [te.encode("v2:agent_escrow"), user.toBytes()],
+          state.pubkeys.programId
+        );
+
+        const existing = await state.connection.getAccountInfo(agentRecordPda, "confirmed");
+        if (existing) {
+          throw new Error("Agent already registered for this wallet");
+        }
+
+        const balanceLamports = await state.connection.getBalance(user, "confirmed");
+        const feeBuffer = 10_000_000n;
+        if (BigInt(balanceLamports) < stakeLamportsRaw + feeBuffer) {
+          throw new Error("Insufficient SOL for stake + transaction fees");
+        }
+
+        const discriminator = await getRegisterAgentDiscriminator();
+        const ixData = encodeRegisterAgentInstructionData(role, stakeLamportsRaw, discriminator);
+
+        const tx = new w3.Transaction().add(new w3.TransactionInstruction({
+          programId: state.pubkeys.programId,
+          keys: [
+            { pubkey: user, isSigner: true, isWritable: true },
+            { pubkey: agentRecordPda, isSigner: false, isWritable: true },
+            { pubkey: agentEscrowPda, isSigner: false, isWritable: true },
+            { pubkey: state.pubkeys.systemProgram, isSigner: false, isWritable: false }
+          ],
+          data: ixData
+        }));
+
+        const latest = await state.connection.getLatestBlockhash("finalized");
+        tx.recentBlockhash = latest.blockhash;
+        tx.feePayer = user;
+
+        setAgentRegisterStatus("warn", "Registration submitted... awaiting signature.");
+        const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
+          preflightCommitment: "confirmed"
+        });
+        const signature = typeof sendResult === "string" ? sendResult : sendResult?.signature;
+        if (!signature) throw new Error("No signature returned by wallet");
+
+        setAgentRegisterStatus("warn", "Registration pending:", signature);
+        const confirm = await state.connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight
+          },
+          "confirmed"
+        );
+
+        if (confirm?.value?.err) {
+          throw new Error(JSON.stringify(confirm.value.err));
+        }
+
+        setAgentRegisterStatus("ok", "Agent registration confirmed:", signature);
+        await poll();
+      } catch (e) {
+        setAgentRegisterStatus("error", `Registration failed: ${shortKey(e.message || String(e))}`);
+      } finally {
+        state.registerBusy = false;
+        updateAgentRegisterButton();
+      }
+    }
+
+    function bindWalletAndActionUi() {
       initSolanaContext();
 
       const provider = walletProvider();
@@ -1738,12 +2301,17 @@
       renderWalletBalances();
       renderFaucetStatus();
       updateMintEstimate();
+      updateRedeemEstimate();
       updateMintButton();
+      updateRedeemButton();
+      updateAgentStakeHint();
+      updateAgentRegisterButton();
 
       $("walletConnectBtn").addEventListener("click", connectWallet);
       $("walletDisconnectBtn").addEventListener("click", disconnectWallet);
+
       $("mintMaxBtn").addEventListener("click", () => {
-        const bal = selectedCollateralBalance();
+        const bal = selectedMintCollateralBalance();
         $("mintAmount").value = uiNumberToTrimmedText(bal);
         updateMintEstimate();
       });
@@ -1751,12 +2319,29 @@
       $("mintCollateral").addEventListener("change", updateMintEstimate);
       $("mintSubmitBtn").addEventListener("click", submitMint);
 
-      ["faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
-        $(id).addEventListener("click", () => {
-          const el = $("faucetStatus");
-          el.className = "faucet-status warn";
-          el.textContent = `Coming Soon — ${FAUCET_CONFIG.hint} (${FAUCET_CONFIG.requiredInstruction}).`;
+      if ($("redeemMaxBtn")) {
+        $("redeemMaxBtn").addEventListener("click", () => {
+          $("redeemAmount").value = uiNumberToTrimmedText(state.wallet.balances?.MSTB || 0);
+          updateRedeemEstimate();
         });
+      }
+      if ($("redeemAmount")) $("redeemAmount").addEventListener("input", updateRedeemEstimate);
+      if ($("redeemCollateral")) $("redeemCollateral").addEventListener("change", updateRedeemEstimate);
+      if ($("redeemSubmitBtn")) $("redeemSubmitBtn").addEventListener("click", submitRedeem);
+
+      if ($("agentRole")) $("agentRole").addEventListener("change", () => {
+        updateAgentStakeHint();
+        updateAgentRegisterButton();
+      });
+      if ($("agentStake")) $("agentStake").addEventListener("input", updateAgentRegisterButton);
+      if ($("agentRegisterBtn")) $("agentRegisterBtn").addEventListener("click", submitAgentRegistration);
+
+      [
+        ["faucetUsdcBtn", "USDC"],
+        ["faucetUsdtBtn", "USDT"],
+        ["faucetDaiBtn", "DAI"]
+      ].forEach(([id, label]) => {
+        $(id).addEventListener("click", () => requestDevnetAirdrop(label));
       });
 
       if (provider) {
@@ -1867,12 +2452,18 @@
         updateHealth(data.protocol, data.circuit, data.supplyRaw, data.vaults);
         updateOptimizer(data.protocol);
         updateAgents(data.agents, data.protocol);
+        renderAgentRegistryPreview(data.agents);
         updateTxFeed(data.signatures, data.typeMap);
         updateOracles(data.oracles);
 
         state.lastVaults = data.vaults;
+        state.lastAgents = data.agents;
+        state.lastProtocol = data.protocol;
         state.collateralMints = resolveCollateralMints(data.protocol, data.vaults);
         updateMintEstimate();
+        updateRedeemEstimate();
+        updateMintButton();
+        updateRedeemButton();
         refreshFaucetMintAuthorities({ silent: true });
 
         if (state.wallet.publicKey) {
@@ -1883,7 +2474,6 @@
         if (latestTx?.blockTime) state.lastKeeperActivity = Number(latestTx.blockTime) * 1000;
 
         state.lastSuccessAt = Date.now();
-        state.lastProtocol = data.protocol;
         state.lastError = "";
         $("programShort").textContent = shortKey(CFG.PROGRAM_ID);
 
@@ -1904,9 +2494,11 @@
       drawHistoryChart();
 
       try {
-        bindWalletAndMintUi();
+        bindWalletAndActionUi();
       } catch (e) {
         setMintTxStatus("error", `Wallet init failed: ${shortKey(e.message || String(e))}`);
+        setRedeemTxStatus("error", `Wallet init failed: ${shortKey(e.message || String(e))}`);
+        setAgentRegisterStatus("error", `Wallet init failed: ${shortKey(e.message || String(e))}`);
       }
 
       poll();

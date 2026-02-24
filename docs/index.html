@@ -676,6 +676,21 @@
       font-size: 11px;
     }
 
+    .agent-note {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .mini-table {
+      margin-top: 10px;
+      max-height: 220px;
+      overflow: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+    }
+
     .footer {
       margin-top: 18px;
       padding-top: 14px;
@@ -840,6 +855,86 @@
       </div>
     </section>
 
+    <section class="full-panel mint-panel" id="redeemConsole">
+      <h2>Redeem Console</h2>
+      <div class="mint-grid">
+        <div class="mint-controls">
+          <label for="redeemCollateral">Collateral</label>
+          <select id="redeemCollateral">
+            <option value="0">USDC</option>
+            <option value="1">USDT</option>
+            <option value="2">DAI</option>
+          </select>
+
+          <label for="redeemAmount">MSTB Amount</label>
+          <div class="mint-amount-row">
+            <input id="redeemAmount" type="text" inputmode="decimal" placeholder="0.00" autocomplete="off" />
+            <button id="redeemMaxBtn" class="mint-max" type="button">MAX</button>
+          </div>
+
+          <div class="mint-estimate">
+            Estimated collateral out: <strong id="redeemEstimate">--</strong>
+            <div class="mint-meta" id="redeemFeeMeta">Fee: --</div>
+            <div class="mint-meta" id="redeemPriceMeta">Oracle price: --</div>
+            <div class="mint-meta" id="redeemBasketMeta">Basket payout: --</div>
+          </div>
+
+          <button id="redeemSubmitBtn" class="mint-submit" type="button" disabled>REDEEM</button>
+          <div id="redeemTxStatus" class="mint-status muted">Connect wallet to redeem.</div>
+        </div>
+
+        <aside class="balance-board">
+          <div class="balance-title">Estimated Basket Out</div>
+          <div class="balance-row"><span class="sym">USDC</span><span class="val" id="redeemOutUSDC">--</span></div>
+          <div class="balance-row"><span class="sym">USDT</span><span class="val" id="redeemOutUSDT">--</span></div>
+          <div class="balance-row"><span class="sym">DAI</span><span class="val" id="redeemOutDAI">--</span></div>
+          <div class="agent-note">Redeem instruction distributes outputs across all vault legs (including USDS). Selector highlights one collateral estimate.</div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="full-panel" id="agentRegistrationPanel">
+      <h2>Agent Registration</h2>
+      <div class="mint-grid">
+        <div class="mint-controls">
+          <label for="agentRole">Agent Type</label>
+          <select id="agentRole">
+            <option value="0">Optimizer</option>
+            <option value="1">Monitor</option>
+            <option value="2">Auditor</option>
+            <option value="3">Liquidator</option>
+          </select>
+
+          <label for="agentStake">Stake Amount (SOL)</label>
+          <input id="agentStake" type="text" inputmode="decimal" placeholder="10" autocomplete="off" />
+          <div class="agent-note" id="agentStakeHint">Recommended stake (Optimizer): 10 SOL • on-chain min: 1 SOL</div>
+
+          <button id="agentRegisterBtn" class="mint-submit" type="button" disabled>REGISTER AGENT</button>
+          <div id="agentRegisterStatus" class="mint-status muted">Connect wallet to register your agent.</div>
+        </div>
+
+        <aside class="balance-board">
+          <div class="balance-title">Latest On-chain Registrations</div>
+          <div class="mini-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Type</th>
+                  <th>Stake</th>
+                  <th>Status</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody id="agentRegistryRows">
+                <tr><td colspan="5" class="muted">Loading registrations...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </aside>
+      </div>
+    </section>
+
     <section class="full-panel">
       <h2>Agent Arena</h2>
       <table>
@@ -857,7 +952,7 @@
           <tr><td colspan="6" class="muted">Loading agents...</td></tr>
         </tbody>
       </table>
-      <div style="margin-top:10px;font-size:12px;"><a class="tx-link" href="https://github.com/kjaylee/microstable#readme" target="_blank" rel="noreferrer">Register Your Agent →</a></div>
+      <div style="margin-top:10px;font-size:12px;"><a class="tx-link" href="#agentRegistrationPanel" id="registerAgentLink">Register Your Agent →</a></div>
     </section>
 
     <section class="full-panel">
