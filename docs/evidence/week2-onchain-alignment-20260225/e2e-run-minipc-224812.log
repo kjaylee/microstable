@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "resultPath": "scripts/logs/week2-onchain-alignment-20260225-224812/result.json",
+  "blockers": [
+    {
+      "step": "mint",
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    }
+  ]
+}

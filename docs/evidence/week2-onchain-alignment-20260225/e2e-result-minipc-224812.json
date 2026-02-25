@@ -1,0 +1,74 @@
+{
+  "startedAt": "2026-02-25T13:48:12.470Z",
+  "rpc": "https://api.devnet.solana.com",
+  "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+  "signer": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+  "authorityAlignment": {
+    "expectedAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+    "beforeAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+    "signer": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+    "changed": false,
+    "signature": null,
+    "error": null,
+    "afterAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+    "ok": true
+  },
+  "mint": {
+    "ok": false,
+    "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details.",
+    "oracle": {
+      "attempted": true,
+      "ok": true,
+      "mode": "manual",
+      "signature": "21Z6TQewkQ6GGUZGzVHvieCSkk7fUBCUCBsCT6ofEZ3Tephn3gThqN922MfKtd98Pbxnc7jUjnY2R3ZVrZB48k9j",
+      "error": null
+    }
+  },
+  "register": {
+    "ok": true,
+    "agent": "CghtpyaFwcbWLJn6VMgTTcM4XxJ8Miob5sXyJVLa2PuS",
+    "role": 1,
+    "stakeLamports": "100000",
+    "selectedSeedLabel": "legacy_global",
+    "signature": "4et7KhRc7tmMvzzoTKrquyDnrwZM5gpDSBA8fmVaTsERzoUNSp4H43s82ReAGyGJqeXsHL9cDet9g32Krm1TcgTJ",
+    "agentRecord": "EVYMR3y2tTGTT3UiVxk4DMzNt9E8vyiDt4CjeLD5uzhu",
+    "agentEscrow": "Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4",
+    "escrowLamports": 1402240
+  },
+  "seedProbes": [
+    {
+      "label": "v2_wallet",
+      "pda": "4gwaemxvFghSGsLayfKCPRb7GMtCqejBkYaHbyMmiSYU",
+      "seedCount": 2,
+      "seedMismatch": true,
+      "acceptedBySeedCheck": false,
+      "errSnippet": "{\"InstructionError\":[0,{\"Custom\":2006}]}\nProgram BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\nProgram 11111111111111111111111111111111 invoke [2]\nProgram 11111111111111111111111111111111 success\nProgram log: AnchorError caused by account: agent_escrow. Error Code: ConstraintSeeds. Error N"
+    },
+    {
+      "label": "legacy_wallet",
+      "pda": "2TnpQippk6XoTaaHdGWT31JUfF3MiR61d8qmPFZPMFea",
+      "seedCount": 2,
+      "seedMismatch": true,
+      "acceptedBySeedCheck": false,
+      "errSnippet": "{\"InstructionError\":[0,{\"Custom\":2006}]}\nProgram BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\nProgram 11111111111111111111111111111111 invoke [2]\nProgram 11111111111111111111111111111111 success\nProgram log: AnchorError caused by account: agent_escrow. Error Code: ConstraintSeeds. Error N"
+    },
+    {
+      "label": "legacy_global",
+      "pda": "Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4",
+      "seedCount": 1,
+      "seedMismatch": false,
+      "acceptedBySeedCheck": true,
+      "errSnippet": "\"\"\nProgram BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\nProgram 11111111111111111111111111111111 invoke [2]\nProgram 11111111111111111111111111111111 success\nProgram 11111111111111111111111111111111 invoke [2]\nProgram 11111111111111111111111111111111 success\nProgram BSdLEPVKq1bxdLGx9HR2XSS"
+    }
+  ],
+  "blockers": [
+    {
+      "step": "mint",
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    }
+  ],
+  "signerPath": "/home/spritz/microstable-keeper/keypairs/keeper1.json",
+  "keeperPath": "/home/spritz/microstable-keeper/keypairs/keeper2.json",
+  "finishedAt": "2026-02-25T13:48:39.859Z",
+  "ok": false
+}
