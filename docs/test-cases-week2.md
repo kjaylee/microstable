@@ -95,7 +95,8 @@
 **Expected**
 - Client derives PDAs:
   - `agent_record`: seeds `["agent", wallet]`
-  - `agent_escrow`: seeds `["v2:agent_escrow", wallet]`
+  - `agent_escrow` primary: seeds `["v2:agent_escrow", wallet]`
+  - compatibility fallback: seeds `["agent_escrow"]` when devnet program returns `ConstraintSeeds` for `agent_escrow`
 - Builds `register_agent` instruction data:
   - discriminator `global:register_agent`
   - args: `role (u8)`, `stake_amount (u64 lamports)`
@@ -119,3 +120,24 @@
 - Manual structure check confirms new IDs used by JS exist in `docs/index.html`:
   - Redeem: `redeemCollateral`, `redeemAmount`, `redeemMaxBtn`, `redeemSubmitBtn`, `redeemTxStatus`
   - Agent registration: `agentRole`, `agentStake`, `agentRegisterBtn`, `agentRegisterStatus`, `agentRegistryRows`
+
+## 6) Executable runbook (used for 2026-02-25 verification)
+1. Static syntax / DOM ID check
+   - `node --check docs/app.js`
+   - `grep` ID presence check against `docs/index.html`
+   - Evidence: `docs/evidence/week2-e2e-20260225/verification.log`
+2. Devnet state check
+   - `curl` JSON-RPC `getAccountInfo` for Program ID
+   - `curl` JSON-RPC `getHealth`
+   - `curl -I https://kjaylee.github.io/microstable/`
+   - Evidence: `program-account.json`, `rpc-health.json`, `dashboard-head.txt`
+3. Browser live dashboard check
+   - Open dashboard and capture full-page screenshots
+   - Evidence: `docs/evidence/week2-e2e-20260225/screenshot-*.jpg`
+4. Tx builder / simulation check (CLI reproducible)
+   - `node scripts/week2-e2e-devnet-check.js docs/evidence/week2-e2e-20260225/e2e-result-v2.json`
+   - Evidence: `e2e-run-v2.log`, `e2e-result-v2.json`
+5. Blocker-focused probes
+   - Mint authority mismatch proof (`MSTB mint authority` vs `protocol_state PDA`)
+   - Register-agent seed mismatch probe (`register-seed-probe.log`)
+   - Devnet faucet 429 proof (`verification.log`)

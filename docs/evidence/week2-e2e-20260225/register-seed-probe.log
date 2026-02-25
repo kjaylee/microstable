@@ -1,0 +1,2 @@
+v2:agent_escrow FAIL Simulation failed.  | Message: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7d6.  | Logs:  | [ |   "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]", |   "Program 11111111111111111111111111111111 invoke [2]",
+agent_escrow FAIL Simulation failed.  | Message: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7d6.  | Logs:  | [ |   "Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]", |   "Program 11111111111111111111111111111111 invoke [2]",

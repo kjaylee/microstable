@@ -1,0 +1,56 @@
+# Week2 E2E Verification Log
+
+## [2026-02-25 21:42:43 KST] Environment
+pwd=/Users/kjaylee/.openclaw/workspace/microstable
+v25.5.0
+11.8.0
+
+## [2026-02-25 21:42:47 KST] Static checks
+$ node --check docs/app.js
+exit=0
+
+$ required IDs in docs/index.html
+PASS id=redeemCollateral
+PASS id=redeemAmount
+PASS id=redeemMaxBtn
+PASS id=redeemSubmitBtn
+PASS id=redeemTxStatus
+PASS id=agentRole
+PASS id=agentStake
+PASS id=agentRegisterBtn
+PASS id=agentRegisterStatus
+PASS id=agentRegistryRows
+PASS id=registerAgentLink
+PASS id=agentRegistrationPanel
+
+## [2026-02-25 21:42:56 KST] Devnet checks
+$ getAccountInfo(program)
+lamports= 1141440
+owner= BPFLoaderUpgradeab1e11111111111111111111111
+executable= True
+rentEpoch= 18446744073709551615
+
+$ getHealth
+{"jsonrpc":"2.0","result":"ok","id":1}
+
+
+$ curl -I dashboard
+HTTP/2 200 
+server: GitHub.com
+content-type: text/html; charset=utf-8
+last-modified: Tue, 24 Feb 2026 12:29:19 GMT
+access-control-allow-origin: *
+etag: "699d999f-7538"
+expires: Wed, 25 Feb 2026 12:52:56 GMT
+cache-control: max-age=600
+x-proxy-cache: MISS
+x-github-request-id: 3FA6:3EC3E0:13185D:14BFA4:699EEE50
+accept-ranges: bytes
+age: 0
+node-check:PASS
+node-check:PASS-after-rpc-fix
+AIRDROP_FAIL 429 Too Many Requests:  {"jsonrpc":"2.0","error":{"code": 429, "message":"You've either reached your airdrop limit today or the airdrop faucet has run dry. Please visit https://faucet.solana.com for alternate sources of test SOL"}, "id": "f382dd98-9926-4127-b213-d526d8aeedd6" } 
+
+MSTB_MINT_AUTHORITY 3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk
+EXPECTED_PROTOCOL_STATE 9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP
+MINT_SUPPLY 0

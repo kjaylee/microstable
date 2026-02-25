@@ -1,0 +1,73 @@
+{
+  "startedAt": "2026-02-25T12:49:36.931Z",
+  "rpc": "https://api.devnet.solana.com",
+  "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+  "steps": [
+    {
+      "name": "program-account",
+      "ts": "2026-02-25T12:49:37.409Z",
+      "exists": true,
+      "executable": true,
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 1141440
+    },
+    {
+      "name": "pre-balances",
+      "ts": "2026-02-25T12:49:37.919Z",
+      "wallet": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+      "sol": 202535400,
+      "usdcRaw": "1000000000000",
+      "mstbRaw": "0",
+      "mstbSupplyRaw": "0",
+      "userPosition": "BRiuUG7eBX1TKPQfCsgS8tyDc8W1vji9HbuKSaNfYzGk"
+    },
+    {
+      "name": "mint-failed",
+      "ts": "2026-02-25T12:49:38.606Z",
+      "ok": false,
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7e0. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError occurred. Error Code: ConstraintMintMintAuthority. Error Number: 2016. Error Message: A mint mint authority constraint was violated.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 45979 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7e0\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    },
+    {
+      "name": "redeem-failed",
+      "ts": "2026-02-25T12:49:38.732Z",
+      "ok": false,
+      "error": "No MSTB balance available for redeem test",
+      "attemptedAmountRaw": "0"
+    },
+    {
+      "name": "register-agent-failed",
+      "ts": "2026-02-25T12:49:52.278Z",
+      "ok": false,
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7d6. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program 11111111111111111111111111111111 invoke [2]\",\n  \"Program 11111111111111111111111111111111 success\",\n  \"Program log: AnchorError caused by account: agent_escrow. Error Code: ConstraintSeeds. Error Number: 2006. Error Message: A seeds constraint was violated.\",\n  \"Program log: Left:\",\n  \"Program log: 8kLcqbcghwsg5KZLuzcNG4Yhev7FvByYhinQtFvcZBS5\",\n  \"Program log: Right:\",\n  \"Program log: Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 17933 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7d6\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    }
+  ],
+  "mint": {
+    "ok": false,
+    "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7e0. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError occurred. Error Code: ConstraintMintMintAuthority. Error Number: 2016. Error Message: A mint mint authority constraint was violated.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 45979 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7e0\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+  },
+  "redeem": {
+    "ok": false,
+    "error": "No MSTB balance available for redeem test",
+    "attemptedAmountRaw": "0"
+  },
+  "register": {
+    "ok": false,
+    "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7d6. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program 11111111111111111111111111111111 invoke [2]\",\n  \"Program 11111111111111111111111111111111 success\",\n  \"Program log: AnchorError caused by account: agent_escrow. Error Code: ConstraintSeeds. Error Number: 2006. Error Message: A seeds constraint was violated.\",\n  \"Program log: Left:\",\n  \"Program log: 8kLcqbcghwsg5KZLuzcNG4Yhev7FvByYhinQtFvcZBS5\",\n  \"Program log: Right:\",\n  \"Program log: Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 17933 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7d6\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+  },
+  "blockers": [
+    {
+      "step": "mint",
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7e0. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError occurred. Error Code: ConstraintMintMintAuthority. Error Number: 2016. Error Message: A mint mint authority constraint was violated.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 45979 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7e0\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    },
+    {
+      "step": "redeem",
+      "error": "No MSTB balance available for redeem test"
+    },
+    {
+      "step": "register_agent",
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7d6. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program 11111111111111111111111111111111 invoke [2]\",\n  \"Program 11111111111111111111111111111111 success\",\n  \"Program log: AnchorError caused by account: agent_escrow. Error Code: ConstraintSeeds. Error Number: 2006. Error Message: A seeds constraint was violated.\",\n  \"Program log: Left:\",\n  \"Program log: 8kLcqbcghwsg5KZLuzcNG4Yhev7FvByYhinQtFvcZBS5\",\n  \"Program log: Right:\",\n  \"Program log: Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 17933 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7d6\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    }
+  ],
+  "finishedAt": "2026-02-25T12:49:52.278Z",
+  "ok": false
+}

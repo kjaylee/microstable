@@ -1,0 +1,38 @@
+
+[program-account] {
+  "exists": true,
+  "executable": true,
+  "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+  "lamports": 1141440
+}
+
+[pre-balances] {
+  "wallet": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+  "sol": 202570400,
+  "usdcRaw": "1000000000000",
+  "mstbRaw": "0",
+  "mstbSupplyRaw": "0",
+  "userPosition": "BRiuUG7eBX1TKPQfCsgS8tyDc8W1vji9HbuKSaNfYzGk"
+}
+
+[mint-failed] {
+  "ok": false,
+  "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x7e0. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError occurred. Error Code: ConstraintMintMintAuthority. Error Number: 2016. Error Message: A mint mint authority constraint was violated.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 45979 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x7e0\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+}
+
+[redeem-failed] {
+  "ok": false,
+  "error": "No MSTB balance available for redeem test",
+  "attemptedAmountRaw": "0"
+}
+
+[register-agent-failed] {
+  "ok": false,
+  "error": "airdrop to ENvqKRCoUaEtvjbj3ArUd741U9HFdqvwgfJM11ZkwRZh failed: Internal error"
+}
+
+[summary] {
+  "ok": false,
+  "blockers": 3
+}
+wrote docs/evidence/week2-e2e-20260225/e2e-result.json
