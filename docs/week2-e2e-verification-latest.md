@@ -171,7 +171,9 @@ Week2 마감 게이트의 필수 검증 범위:
 
 ## 9) Git 상태
 
-- 커밋: `4834c0c` — *Week2: stabilize dashboard RPC, add E2E probes, and publish devnet verification report*
+- 커밋:
+  - `4834c0c` — *Week2: stabilize dashboard RPC, add E2E probes, and publish devnet verification report*
+  - `69bdff7` — *docs: finalize Week2 E2E report with commit/push status*
 - 푸시: `origin/main` 반영 완료
 - 포함 파일: `docs/app.js`, `docs/test-cases-week2.md`, `scripts/week2-e2e-devnet-check.js`, `docs/week2-e2e-verification-latest.md`, `docs/evidence/week2-e2e-20260225/*`
 
