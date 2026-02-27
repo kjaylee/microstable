@@ -24,10 +24,10 @@
     const ROLE_MAP = ["Optimizer", "Monitor", "Auditor", "Liquidator"];
     const AGENT_STATUS = ["Active", "Cooldown", "Slashed", "Deregistered"];
     const COLLATERAL_META = {
-      0: { symbol: "USDC" },
-      1: { symbol: "USDT" },
-      2: { symbol: "DAI" },
-      3: { symbol: "USDS" }
+      0: { symbol: "USDC", decimals: 6 },
+      1: { symbol: "USDT", decimals: 6 },
+      2: { symbol: "DAI", decimals: 18 },
+      3: { symbol: "USDS", decimals: 18 }
     };
     const AGENT_ROLE_MIN_STAKE_SOL = {
       0: 10,
@@ -1844,6 +1844,10 @@
       return COLLATERAL_META[selectedMintCollateralIndex()]?.symbol || "USDC";
     }
 
+    function selectedMintCollateralDecimals() {
+      return COLLATERAL_META[selectedMintCollateralIndex()]?.decimals || 6;
+    }
+
     function selectedMintCollateralBalance() {
       const symbol = selectedMintCollateralSymbol();
       return Number(state.wallet.balances?.[symbol] || 0);
@@ -1894,7 +1898,8 @@
 
     function updateMintEstimate() {
       const idx = selectedMintCollateralIndex();
-      const amountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", 6);
+      const dec = selectedMintCollateralDecimals();
+      const amountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", dec);
       const vault = vaultByIndex(idx);
       const feeRate = Number(state.lastProtocol?.mint_fee_rate || 0);
 
@@ -1986,9 +1991,10 @@
     function updateMintButton() {
       const btn = $("mintSubmitBtn");
       if (!btn) return;
-      const amountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", 6);
+      const dec = selectedMintCollateralDecimals();
+      const amountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", dec);
       const mintKnown = !!state.collateralMints[selectedMintCollateralIndex()];
-      const balanceRaw = walletBalanceRaw(selectedMintCollateralSymbol(), 6);
+      const balanceRaw = walletBalanceRaw(selectedMintCollateralSymbol(), dec);
       const sufficient = amountRaw !== null && amountRaw <= balanceRaw;
       const ready = !!state.wallet.publicKey
         && amountRaw !== null
@@ -2086,13 +2092,14 @@
         return;
       }
 
-      const collateralAmountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", 6);
+      const collateralDecimals = selectedMintCollateralDecimals();
+      const collateralAmountRaw = parseUiAmountToRaw($("mintAmount")?.value || "", collateralDecimals);
       if (collateralAmountRaw === null || collateralAmountRaw <= 0n) {
         setMintTxStatus("warn", "Enter a valid mint amount.");
         return;
       }
 
-      const balanceRaw = walletBalanceRaw(selectedMintCollateralSymbol(), 6);
+      const balanceRaw = walletBalanceRaw(selectedMintCollateralSymbol(), collateralDecimals);
       if (collateralAmountRaw > balanceRaw) {
         setMintTxStatus("warn", "Insufficient collateral balance.");
         return;
@@ -2129,7 +2136,8 @@
 
         const discriminator = await getMintDiscriminator();
         const oraclePrice = selectedVault?.price || 1000000n;
-        const maxPriceRaw = (oraclePrice * 101n) / 100n;
+        // Use 5% slippage to account for oracle haircuts (staleness + confidence penalties)
+        const maxPriceRaw = (oraclePrice * 105n) / 100n;
         const ixData = encodeMintInstructionData(collateralIndex, collateralAmountRaw, maxPriceRaw, discriminator);
 
         tx.add(new w3.TransactionInstruction({
@@ -2239,11 +2247,14 @@
         if (anchorMatch) {
           const code = parseInt(anchorMatch[1], 16);
           const anchorErrors = {
-            6000: "InvalidCollateralIndex", 6001: "InvalidAmount", 6002: "AmountTooLarge",
-            6003: "InvalidSlippageBound", 6004: "EmergencyShutdownActive",
-            6005: "MintPausedByCircuitBreaker", 6006: "OracleDegraded",
-            6007: "OracleStale", 6008: "PriceSlippageExceeded", 6009: "InvariantViolation",
-            6010: "SpotTwapDivergence", 6011: "RateLimitExceeded", 6012: "InsufficientCollateral"
+            6000: "Unauthorized", 6016: "InvalidCollateralIndex", 6017: "InvalidAmount",
+            6018: "MathOverflow", 6021: "InvalidCrTarget", 6023: "OracleStale",
+            6024: "ConfidenceTooHigh", 6033: "InvalidPrice",
+            6034: "InsufficientCollateralRatio", 6035: "MintPausedByCircuitBreaker",
+            6036: "MintRateLimited", 6037: "MintPriceAboveUserLimit (slippage exceeded)",
+            6038: "MintTxFlowLimitExceeded", 6039: "MintSlotFlowLimitExceeded",
+            6043: "DepegMintPaused", 6054: "OracleDegraded",
+            6064: "EmergencyShutdownActive", 6067: "AmountTooLarge"
           };
           displayMsg = `Program error 0x${anchorMatch[1]}: ${anchorErrors[code] || 'Unknown'} — ${msg.substring(0, 100)}`;
         } else if (msg.length > 150) {
