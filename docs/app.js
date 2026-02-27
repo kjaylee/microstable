@@ -41,9 +41,11 @@
     };
 
     const FAUCET_CONFIG = {
-      instructionAvailable: false,
-      requiredInstruction: "devnet_mint_collateral(collateral_index: u8, collateral_amount: u64, max_price: u64)",
-      hint: "On-chain faucet instruction needed"
+      instructionAvailable: true,
+      // DEVNET ONLY — mint authority keypair for test collateral tokens (zero real value)
+      faucetKeypair: [200,216,244,99,87,136,60,121,147,67,211,155,111,98,248,181,119,4,110,112,50,204,105,10,156,77,154,44,6,164,12,32,39,162,172,128,64,158,200,20,181,231,32,205,219,37,123,128,72,159,230,201,207,196,85,88,109,182,30,117,48,196,103,3],
+      faucetAmounts: { 0: 1000_000_000, 1: 1000_000_000, 2: 1000_000_000_000_000_000_000n }, // 1000 USDC (6d), 1000 USDT (6d), 1000 DAI (18d)
+      hint: "Devnet faucet ready"
     };
 
     const state = {
@@ -1456,8 +1458,9 @@
     }
 
     function setFaucetButtonsDisabled(disabled, tooltip) {
-      ["faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
+      ["faucetSolBtn", "faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
         const btn = $(id);
+        if (!btn) return;
         btn.disabled = !!disabled;
         if (tooltip) btn.title = tooltip;
       });
@@ -1474,48 +1477,33 @@
         return;
       }
 
-      const auth0 = state.faucet.mintAuthorities[0] || "--";
-      const auth1 = state.faucet.mintAuthorities[1] || "--";
-      const auth2 = state.faucet.mintAuthorities[2] || "--";
-      const allAuthKnown = auth0 !== "--" && auth1 !== "--" && auth2 !== "--";
-      const protocolAuthority = CFG.PROTOCOL_STATE;
-      const allProtocol = allAuthKnown && auth0 === protocolAuthority && auth1 === protocolAuthority && auth2 === protocolAuthority;
-
       if (state.faucet.airdropBusy) {
         statusEl.className = "faucet-status warn";
-        statusEl.textContent = "Requesting devnet SOL airdrop...";
-        setFaucetButtonsDisabled(true, "Airdrop in progress");
+        statusEl.textContent = "Processing faucet request...";
+        setFaucetButtonsDisabled(true, "Request in progress");
         return;
       }
 
       if (FAUCET_CONFIG.instructionAvailable) {
         statusEl.className = "faucet-status ok";
-        statusEl.textContent = connected ? "Faucet is ready." : "Connect wallet to request faucet tokens.";
-        setFaucetButtonsDisabled(!connected, "Connect wallet first");
-        // Restore token labels when faucet instruction is available
-        $("faucetUsdcBtn").textContent = "Get 1000 USDC";
-        $("faucetUsdtBtn").textContent = "Get 1000 USDT";
-        $("faucetDaiBtn").textContent = "Get 1000 DAI";
+        statusEl.textContent = connected ? "🚰 Devnet faucet ready — get SOL for gas + test tokens to mint MSTB." : "Connect wallet to use devnet faucet.";
+        setFaucetButtonsDisabled(!connected, connected ? "Click to request tokens" : "Connect wallet first");
+        $("faucetUsdcBtn").textContent = "Get 1,000 USDC";
+        $("faucetUsdtBtn").textContent = "Get 1,000 USDT";
+        $("faucetDaiBtn").textContent = "Get 1,000 DAI";
         return;
       }
 
       if (!connected) {
         statusEl.className = "faucet-status muted";
-        statusEl.textContent = "Token faucet instruction unavailable. Connect wallet for SOL airdrop fallback.";
+        statusEl.textContent = "Connect wallet to use devnet faucet.";
         setFaucetButtonsDisabled(true, "Connect wallet first");
         return;
       }
 
       statusEl.className = "faucet-status warn";
-      if (allProtocol) {
-        statusEl.textContent = `Token faucet unavailable (${FAUCET_CONFIG.requiredInstruction}). Buttons request 1 SOL devnet gas airdrop.`;
-      } else if (allAuthKnown) {
-        statusEl.textContent = `Token faucet unavailable (mint authorities ${shortKey(auth0)} / ${shortKey(auth1)} / ${shortKey(auth2)}). Buttons request 1 SOL devnet gas airdrop.`;
-      } else {
-        statusEl.textContent = "Token faucet unavailable. Buttons request 1 SOL devnet gas airdrop.";
-      }
+      statusEl.textContent = "Token faucet unavailable. SOL airdrop only.";
       setFaucetButtonsDisabled(false, "Request 1 SOL devnet airdrop for fees");
-      // Update button labels to reflect actual SOL airdrop behavior
       ["faucetUsdcBtn", "faucetUsdtBtn", "faucetDaiBtn"].forEach((id) => {
         $(id).textContent = "Get 1 SOL (gas)";
       });
@@ -1607,6 +1595,109 @@
           setTimeout(renderFaucetStatus, 4000);
         } else {
           renderFaucetStatus();
+        }
+      }
+    }
+
+    async function requestDevnetTokens(collateralIndex) {
+      initSolanaContext();
+      const w3 = window.solanaWeb3;
+      if (!state.wallet.publicKey) {
+        renderFaucetStatus();
+        return;
+      }
+      if (state.faucet.airdropBusy) return;
+
+      const labels = { 0: "USDC", 1: "USDT", 2: "DAI" };
+      const label = labels[collateralIndex] || "Token";
+      const amounts = { 0: 1000_000_000, 1: 1000_000_000, 2: BigInt("1000000000000000000000") };
+      const displayAmounts = { 0: "1,000 USDC", 1: "1,000 USDT", 2: "1,000 DAI" };
+
+      state.faucet.airdropBusy = true;
+      renderFaucetStatus();
+
+      const statusEl = $("faucetStatus");
+      statusEl.className = "faucet-status warn";
+      statusEl.textContent = `Minting ${displayAmounts[collateralIndex]} to your wallet...`;
+
+      let okMessage = "";
+      try {
+        const faucetKp = w3.Keypair.fromSecretKey(Uint8Array.from(FAUCET_CONFIG.faucetKeypair));
+        const mint = new w3.PublicKey(state.collateralMints[collateralIndex]);
+        const owner = state.wallet.publicKey;
+
+        // Derive ATA
+        const ata = deriveAtaAddress(owner, mint);
+
+        // Build transaction: Create ATA (idempotent) + MintTo
+        const tx = new w3.Transaction();
+
+        // Create ATA if it doesn't exist (idempotent instruction)
+        tx.add(createAtaIdempotentIx(faucetKp.publicKey, ata, owner, mint));
+
+        // SPL Token MintTo instruction (instruction index 7)
+        const amountRaw = amounts[collateralIndex];
+        const amountBuf = new ArrayBuffer(8);
+        const amountView = new DataView(amountBuf);
+        if (typeof amountRaw === "bigint") {
+          amountView.setBigUint64(0, amountRaw, true);
+        } else {
+          amountView.setBigUint64(0, BigInt(amountRaw), true);
+        }
+        const mintToData = new Uint8Array(1 + 8);
+        mintToData[0] = 7; // MintTo instruction index
+        mintToData.set(new Uint8Array(amountBuf), 1);
+
+        tx.add(new w3.TransactionInstruction({
+          programId: state.pubkeys.tokenProgram,
+          keys: [
+            { pubkey: mint, isSigner: false, isWritable: true },
+            { pubkey: ata, isSigner: false, isWritable: true },
+            { pubkey: faucetKp.publicKey, isSigner: true, isWritable: false }
+          ],
+          data: mintToData
+        }));
+
+        // Faucet keypair pays for gas and signs as mint authority
+        const latest = await state.connection.getLatestBlockhash("finalized");
+        tx.recentBlockhash = latest.blockhash;
+        tx.lastValidBlockHeight = latest.lastValidBlockHeight;
+        tx.feePayer = faucetKp.publicKey;
+        tx.sign(faucetKp);
+
+        const sig = await state.connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: "confirmed"
+        });
+
+        const confirm = await state.connection.confirmTransaction(
+          { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+          "confirmed"
+        );
+        if (confirm?.value?.err) {
+          throw new Error(JSON.stringify(confirm.value.err));
+        }
+
+        okMessage = `${displayAmounts[collateralIndex]} minted to your wallet (${shortKey(sig)}).`;
+        statusEl.className = "faucet-status ok";
+        statusEl.textContent = okMessage;
+
+        // Refresh balances after successful mint
+        setTimeout(() => refreshWalletBalances({ silent: true }), 2000);
+      } catch (e) {
+        statusEl.className = "faucet-status bad";
+        const msg = e.message || String(e);
+        if (msg.includes("0x1")) {
+          statusEl.textContent = `Mint failed: insufficient SOL for gas. Request SOL first.`;
+        } else {
+          statusEl.textContent = `Mint failed: ${shortKey(msg)}`;
+        }
+      } finally {
+        state.faucet.airdropBusy = false;
+        if (okMessage) {
+          setTimeout(renderFaucetStatus, 5000);
+        } else {
+          setTimeout(renderFaucetStatus, 8000);
         }
       }
     }
@@ -2262,7 +2353,11 @@
           [te.encode("v2:agent_escrow"), user.toBytes()],
           state.pubkeys.programId
         );
-        const [agentEscrowLegacy] = w3.PublicKey.findProgramAddressSync(
+        const [agentEscrowLegacyWallet] = w3.PublicKey.findProgramAddressSync(
+          [te.encode("agent_escrow"), user.toBytes()],
+          state.pubkeys.programId
+        );
+        const [agentEscrowLegacyGlobal] = w3.PublicKey.findProgramAddressSync(
           [te.encode("agent_escrow")],
           state.pubkeys.programId
         );
@@ -2288,7 +2383,8 @@
 
         const candidates = [
           { label: "v2", pda: agentEscrowV2 },
-          { label: "legacy", pda: agentEscrowLegacy }
+          { label: "legacy-wallet", pda: agentEscrowLegacyWallet },
+          { label: "legacy-global", pda: agentEscrowLegacyGlobal }
         ];
 
         let finalSignature = "";
@@ -2316,7 +2412,7 @@
               "warn",
               i === 0
                 ? "Registration submitted... awaiting signature."
-                : "Retrying registration with legacy escrow PDA..."
+                : `Retrying registration with compatible escrow PDA (${candidate.label})...`
             );
             const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
               preflightCommitment: "confirmed"
@@ -2405,12 +2501,21 @@
       if ($("agentStake")) $("agentStake").addEventListener("input", updateAgentRegisterButton);
       if ($("agentRegisterBtn")) $("agentRegisterBtn").addEventListener("click", submitAgentRegistration);
 
+      if ($("faucetSolBtn")) {
+        $("faucetSolBtn").addEventListener("click", () => requestDevnetAirdrop("SOL"));
+      }
       [
-        ["faucetUsdcBtn", "USDC"],
-        ["faucetUsdtBtn", "USDT"],
-        ["faucetDaiBtn", "DAI"]
-      ].forEach(([id, label]) => {
-        $(id).addEventListener("click", () => requestDevnetAirdrop(label));
+        ["faucetUsdcBtn", 0],
+        ["faucetUsdtBtn", 1],
+        ["faucetDaiBtn", 2]
+      ].forEach(([id, idx]) => {
+        $(id).addEventListener("click", () => {
+          if (FAUCET_CONFIG.instructionAvailable) {
+            requestDevnetTokens(idx);
+          } else {
+            requestDevnetAirdrop(["USDC", "USDT", "DAI"][idx]);
+          }
+        });
       });
 
       if (provider) {
