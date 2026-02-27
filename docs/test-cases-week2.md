@@ -96,7 +96,10 @@
 - Client derives PDAs:
   - `agent_record`: seeds `["agent", wallet]`
   - `agent_escrow` primary: seeds `["v2:agent_escrow", wallet]`
-  - compatibility fallback: seeds `["agent_escrow"]` when devnet program returns `ConstraintSeeds` for `agent_escrow`
+  - compatibility fallback (ordered):
+    1) seeds `["agent_escrow", wallet]`
+    2) seeds `["agent_escrow"]`
+    when devnet program returns `ConstraintSeeds` for `agent_escrow`
 - Builds `register_agent` instruction data:
   - discriminator `global:register_agent`
   - args: `role (u8)`, `stake_amount (u64 lamports)`

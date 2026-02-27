@@ -1,0 +1,235 @@
+{
+  "startedAt": "2026-02-25T13:35:55.451Z",
+  "rpc": "https://api.devnet.solana.com",
+  "programId": "BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3",
+  "steps": [
+    {
+      "name": "program-account",
+      "ts": "2026-02-25T13:35:55.912Z",
+      "exists": true,
+      "executable": true,
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 1141440
+    },
+    {
+      "name": "mint-authority-alignment",
+      "ts": "2026-02-25T13:35:56.155Z",
+      "expectedAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+      "beforeAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+      "signer": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+      "skipAlign": false,
+      "changed": false,
+      "signature": null,
+      "error": null,
+      "afterAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+      "ok": true
+    },
+    {
+      "name": "pre-balances",
+      "ts": "2026-02-25T13:35:56.649Z",
+      "wallet": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+      "sol": 201950400,
+      "usdcRaw": "1000000000000",
+      "mstbRaw": "0",
+      "mstbSupplyRaw": "0",
+      "userPosition": "BRiuUG7eBX1TKPQfCsgS8tyDc8W1vji9HbuKSaNfYzGk"
+    },
+    {
+      "name": "oracle-refresh",
+      "ts": "2026-02-25T13:35:57.943Z",
+      "attempted": true,
+      "ok": false,
+      "signature": null,
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1783. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:2701. Error Code: OracleStale. Error Number: 6019. Error Message: Oracle input is stale.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 29385 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1783\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details.",
+      "manualAttempted": true,
+      "manualOk": true,
+      "manualSignature": "2ZHAHczBS1QLgNRF1Bsst7GsZCsYKb3hrBraKcdCadtnfmwrpUPiNdMn4ZfKdrDk52wW4kq644JVzzTdH1JHrvwP",
+      "manualError": null,
+      "keeper": "2CuNvyo4zFUMhQn6USd8j9MDM8ZrZqJnAFURnTHJ3nZE"
+    },
+    {
+      "name": "mint-fallback-failed",
+      "ts": "2026-02-25T13:36:13.839Z",
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details.",
+      "mode": "manual-oracle-refresh+mint-loop",
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 2,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 3,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 4,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 5,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 6,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 7,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 8,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 9,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 10,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 11,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        },
+        {
+          "attempt": 12,
+          "ok": false,
+          "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 33628 of 400000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 success\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 366372 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+        }
+      ]
+    },
+    {
+      "name": "mint-failed",
+      "ts": "2026-02-25T13:36:13.840Z",
+      "ok": false,
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    },
+    {
+      "name": "redeem-failed",
+      "ts": "2026-02-25T13:36:13.961Z",
+      "ok": false,
+      "error": "No MSTB balance available for redeem test",
+      "attemptedAmountRaw": "0"
+    },
+    {
+      "name": "register-seed-probe",
+      "ts": "2026-02-25T13:36:14.455Z",
+      "selectedSeedLabel": "v2_wallet",
+      "probes": [
+        {
+          "label": "v2_wallet",
+          "pda": "3n3ByE5obwvKimaDLaaPhSNuUyPNrneFq5fBURLmJhaf",
+          "acceptedBySeedCheck": true,
+          "seedMismatch": false,
+          "simulationError": "AccountNotFound"
+        },
+        {
+          "label": "legacy_wallet",
+          "pda": "DL7nZiWTFE1YQ74cpFcvYBKCPiJHhg93iicuJLnQjeeb",
+          "acceptedBySeedCheck": true,
+          "seedMismatch": false,
+          "simulationError": "AccountNotFound"
+        },
+        {
+          "label": "legacy_global",
+          "pda": "Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4",
+          "acceptedBySeedCheck": true,
+          "seedMismatch": false,
+          "simulationError": "AccountNotFound"
+        }
+      ]
+    },
+    {
+      "name": "register-agent-failed",
+      "ts": "2026-02-25T13:36:24.956Z",
+      "ok": false,
+      "error": "Insufficient SOL for register_agent. selectedSeed=v2_wallet required=1050000000 current=0 airdropError=429 Too Many Requests:  {\"jsonrpc\":\"2.0\",\"error\":{\"code\": 429, \"message\":\"You've either reached your airdrop limit today or the airdrop faucet has run dry. Please visit https://faucet.solana.com for alternate sources of test SOL\"}, \"id\": \"344e5816-837a-4288-a388-a3bfc4a01131\" } \r\n"
+    }
+  ],
+  "authorityAlignment": {
+    "expectedAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+    "beforeAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+    "signer": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+    "skipAlign": false,
+    "changed": false,
+    "signature": null,
+    "error": null,
+    "afterAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+    "ok": true
+  },
+  "mint": {
+    "ok": false,
+    "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+  },
+  "redeem": {
+    "ok": false,
+    "error": "No MSTB balance available for redeem test",
+    "attemptedAmountRaw": "0"
+  },
+  "register": {
+    "ok": false,
+    "error": "Insufficient SOL for register_agent. selectedSeed=v2_wallet required=1050000000 current=0 airdropError=429 Too Many Requests:  {\"jsonrpc\":\"2.0\",\"error\":{\"code\": 429, \"message\":\"You've either reached your airdrop limit today or the airdrop faucet has run dry. Please visit https://faucet.solana.com for alternate sources of test SOL\"}, \"id\": \"344e5816-837a-4288-a388-a3bfc4a01131\" } \r\n"
+  },
+  "registerSeedProbes": [
+    {
+      "label": "v2_wallet",
+      "pda": "3n3ByE5obwvKimaDLaaPhSNuUyPNrneFq5fBURLmJhaf",
+      "seedCount": 2,
+      "seedMismatch": false,
+      "simulationError": "AccountNotFound",
+      "logTail": [],
+      "acceptedBySeedCheck": true
+    },
+    {
+      "label": "legacy_wallet",
+      "pda": "DL7nZiWTFE1YQ74cpFcvYBKCPiJHhg93iicuJLnQjeeb",
+      "seedCount": 2,
+      "seedMismatch": false,
+      "simulationError": "AccountNotFound",
+      "logTail": [],
+      "acceptedBySeedCheck": true
+    },
+    {
+      "label": "legacy_global",
+      "pda": "Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4",
+      "seedCount": 1,
+      "seedMismatch": false,
+      "simulationError": "AccountNotFound",
+      "logTail": [],
+      "acceptedBySeedCheck": true
+    }
+  ],
+  "blockers": [
+    {
+      "step": "mint",
+      "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48458 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+    },
+    {
+      "step": "redeem",
+      "error": "No MSTB balance available for redeem test"
+    },
+    {
+      "step": "register_agent",
+      "error": "Insufficient SOL for register_agent. selectedSeed=v2_wallet required=1050000000 current=0 airdropError=429 Too Many Requests:  {\"jsonrpc\":\"2.0\",\"error\":{\"code\": 429, \"message\":\"You've either reached your airdrop limit today or the airdrop faucet has run dry. Please visit https://faucet.solana.com for alternate sources of test SOL\"}, \"id\": \"344e5816-837a-4288-a388-a3bfc4a01131\" } \r\n"
+    }
+  ],
+  "finishedAt": "2026-02-25T13:36:24.957Z",
+  "ok": false
+}

@@ -1,0 +1,51 @@
+
+[program-account] {
+  "exists": true,
+  "executable": true,
+  "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+  "lamports": 1141440
+}
+
+[mint-authority-alignment] {
+  "expectedAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+  "beforeAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+  "signer": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+  "skipAlign": false,
+  "changed": false,
+  "signature": null,
+  "error": null,
+  "afterAuthority": "9NbeDUSPdhC4ZgpefoqT3p48eLEyXknQJEm6v5pLGFQP",
+  "ok": true
+}
+
+[pre-balances] {
+  "wallet": "3fimeXDHiEK9oeJX6XM1rXNoavTCWhzbxNXVmwFzh6Kk",
+  "sol": 202280400,
+  "usdcRaw": "1000000000000",
+  "mstbRaw": "0",
+  "mstbSupplyRaw": "0",
+  "userPosition": "BRiuUG7eBX1TKPQfCsgS8tyDc8W1vji9HbuKSaNfYzGk"
+}
+
+[mint-failed] {
+  "ok": false,
+  "error": "Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1795. \nLogs: \n[\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 invoke [1]\",\n  \"Program log: AnchorError thrown in programs/microstable/src/lib.rs:748. Error Code: OracleDegraded. Error Number: 6037. Error Message: Oracle is degraded.\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 consumed 48437 of 200000 compute units\",\n  \"Program BSdLEPVKq1bxdLGx9HR2XSStdYhFeU3SdFGC2i4i2ps3 failed: custom program error: 0x1795\"\n]. \nCatch the `SendTransactionError` and call `getLogs()` on it for full details."
+}
+
+[redeem-failed] {
+  "ok": false,
+  "error": "No MSTB balance available for redeem test",
+  "attemptedAmountRaw": "0"
+}
+
+[register-agent-failed] {
+  "ok": false,
+  "error": "Insufficient SOL for register_agent. required=1050000000 current=0 airdropError=429 Too Many Requests:  {\"jsonrpc\":\"2.0\",\"error\":{\"code\": 429, \"message\":\"You've either reached your airdrop limit today or the airdrop faucet has run dry. Please visit https://faucet.solana.com for alternate sources of test SOL\"}, \"id\": \"523294c2-1315-40c7-a65d-156ea8f04d73\" } \r\n"
+}
+
+[summary] {
+  "ok": false,
+  "blockers": 3
+}
+wrote docs/evidence/week2-onchain-alignment-20260225/e2e-result.json
+wrote docs/evidence/week2-onchain-alignment-20260225/register-seed-probe.json

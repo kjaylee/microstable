@@ -1,0 +1,29 @@
+[
+  {
+    "label": "v2_wallet",
+    "pda": "D3Hyf8zw5MAyEEMavmjrWZco7yPAqmfJDAZmwnNPPaA3",
+    "seedCount": 2,
+    "seedMismatch": false,
+    "simulationError": "Invalid arguments",
+    "logTail": [],
+    "acceptedBySeedCheck": true
+  },
+  {
+    "label": "legacy_wallet",
+    "pda": "AZTr8K3SGSuZNEhGj8zUjiPsQhi3vEFpm2cHdUVELNdR",
+    "seedCount": 2,
+    "seedMismatch": false,
+    "simulationError": "Invalid arguments",
+    "logTail": [],
+    "acceptedBySeedCheck": true
+  },
+  {
+    "label": "legacy_global",
+    "pda": "Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4",
+    "seedCount": 1,
+    "seedMismatch": false,
+    "simulationError": "Invalid arguments",
+    "logTail": [],
+    "acceptedBySeedCheck": true
+  }
+]

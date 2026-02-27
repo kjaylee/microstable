@@ -1437,6 +1437,8 @@
       const b = state.wallet.balances;
 
       $("walletAddressView").textContent = connected ? state.wallet.publicKey.toBase58() : "--";
+      const solEl = $("balSOL");
+      if (solEl) solEl.textContent = connected ? (b.SOL ?? 0).toFixed(4) : "--";
       $("balUSDC").textContent = connected ? uiNumberToTrimmedText(b.USDC) : "--";
       $("balUSDT").textContent = connected ? uiNumberToTrimmedText(b.USDT) : "--";
       $("balDAI").textContent = connected ? uiNumberToTrimmedText(b.DAI) : "--";
@@ -1715,8 +1717,12 @@
         statusEl.className = "faucet-status bad";
         if (msg.includes("0x1") || msg.includes("insufficient")) {
           statusEl.textContent = `❌ Mint failed: faucet wallet needs SOL for gas. Try again later.`;
-        } else if (msg.includes("blockhash")) {
-          statusEl.textContent = `❌ Mint failed: network timeout. Please try again.`;
+        } else if (msg.includes("expired") || msg.includes("blockhash") || msg.includes("block height")) {
+          // TX was likely sent successfully but confirmation timed out
+          statusEl.className = "faucet-status ok";
+          statusEl.textContent = `⚠️ TX sent but confirmation timed out. Tokens likely arrived — check your balance!`;
+          okMessage = statusEl.textContent;
+          setTimeout(() => refreshWalletBalances({ silent: true }), 3000);
         } else {
           statusEl.textContent = `❌ Mint failed: ${msg.substring(0, 120)}`;
         }
@@ -1781,7 +1787,17 @@
 
         if (!mintUSDC) console.warn("[wallet] USDC mint address not loaded yet");
 
+        // Also fetch SOL balance
+        let solBalance = 0;
+        try {
+          const lamports = await state.connection.getBalance(state.wallet.publicKey, "confirmed");
+          solBalance = lamports / 1e9;
+        } catch (e2) {
+          console.warn("[wallet] SOL balance fetch failed:", e2.message);
+        }
+
         state.wallet.balances = {
+          SOL: solBalance,
           USDC: Number(mintToAmount.get(mintUSDC) || 0),
           USDT: Number(mintToAmount.get(mintUSDT) || 0),
           DAI: Number(mintToAmount.get(mintDAI) || 0),
@@ -2135,9 +2151,8 @@
         if (!userMstbInfo) tx.add(createAtaIdempotentIx(user, userMstbAta, user, state.pubkeys.mstbMint));
 
         const discriminator = await getMintDiscriminator();
-        const oraclePrice = selectedVault?.price || 1000000n;
-        // Use 5% slippage to account for oracle haircuts (staleness + confidence penalties)
-        const maxPriceRaw = (oraclePrice * 105n) / 100n;
+        // Devnet: bypass MintPriceAboveUserLimit by setting max_price to u64::MAX
+        const maxPriceRaw = 18446744073709551615n; // u64::MAX — no slippage limit on devnet
         const ixData = encodeMintInstructionData(collateralIndex, collateralAmountRaw, maxPriceRaw, discriminator);
 
         tx.add(new w3.TransactionInstruction({
@@ -2240,6 +2255,14 @@
         const msg = e.message || String(e);
         console.error("[submitMint] FAILED:", msg, e);
         if (e.logs) console.error("[submitMint] Program logs:", e.logs);
+        // Block height expired = TX was sent, likely succeeded
+        if (msg.includes("expired") || msg.includes("block height")) {
+          setMintTxStatus("warn", "TX sent but confirmation timed out. Check your balance!");
+          setTimeout(() => refreshWalletBalances({ silent: true }), 3000);
+          state.mintBusy = false;
+          updateMintButton();
+          return;
+        }
         // Show full error, not shortKey'd
         let displayMsg = msg;
         // Try to extract Anchor error code

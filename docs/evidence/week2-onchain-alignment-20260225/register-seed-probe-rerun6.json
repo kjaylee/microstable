@@ -1,0 +1,29 @@
+[
+  {
+    "label": "v2_wallet",
+    "pda": "3n3ByE5obwvKimaDLaaPhSNuUyPNrneFq5fBURLmJhaf",
+    "seedCount": 2,
+    "seedMismatch": false,
+    "simulationError": "AccountNotFound",
+    "logTail": [],
+    "acceptedBySeedCheck": true
+  },
+  {
+    "label": "legacy_wallet",
+    "pda": "DL7nZiWTFE1YQ74cpFcvYBKCPiJHhg93iicuJLnQjeeb",
+    "seedCount": 2,
+    "seedMismatch": false,
+    "simulationError": "AccountNotFound",
+    "logTail": [],
+    "acceptedBySeedCheck": true
+  },
+  {
+    "label": "legacy_global",
+    "pda": "Cuc7P1xVCsKDG7KMZ6hoEw13AcGLTwoCEhU3VqKMyrw4",
+    "seedCount": 1,
+    "seedMismatch": false,
+    "simulationError": "AccountNotFound",
+    "logTail": [],
+    "acceptedBySeedCheck": true
+  }
+]

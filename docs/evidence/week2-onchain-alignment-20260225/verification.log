@@ -1,0 +1,20 @@
+# Week2 Onchain Alignment Verification Log
+timestamp=2026-02-25 22:11:33 KST
+
+$ node --check scripts/week2-align-mint-authority.js
+exit=0
+
+$ node --check scripts/week2-e2e-devnet-check.js
+exit=0
+
+$ node --check docs/app.js
+exit=0
+
+$ node --check scripts/week2-e2e-devnet-check.js (after oracle refresh patch)
+exit=0
+
+$ node --check scripts/week2-e2e-devnet-check.js (after manual oracle patch)
+exit=0
+
+$ node --check scripts/week2-e2e-devnet-check.js (after mint fallback patch)
+exit=0
