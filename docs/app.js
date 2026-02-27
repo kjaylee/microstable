@@ -2159,11 +2159,37 @@
         tx.recentBlockhash = latest.blockhash;
         tx.feePayer = user;
 
-        setMintTxStatus("warn", "Transaction submitted... awaiting signature.");
-        const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
-          preflightCommitment: "confirmed"
+        setMintTxStatus("warn", "Requesting wallet signature...");
+        console.log("[submitMint] collateral:", collateralIndex, "amount:", collateralAmountRaw.toString(), "maxPrice:", maxPriceRaw.toString());
+        console.log("[submitMint] accounts:", {
+          protocolState: state.pubkeys.protocolState.toBase58(),
+          user: user.toBase58(),
+          userCollateralAta: userCollateralAta.toBase58(),
+          vaultCollateralAta: vaultCollateralAta.toBase58(),
+          userMstbAta: userMstbAta.toBase58(),
+          collateralMint: collateralMint.toBase58()
         });
-        const signature = typeof sendResult === "string" ? sendResult : sendResult?.signature;
+
+        let signature;
+        try {
+          // Try signAndSendTransaction first (Phantom standard)
+          const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
+            preflightCommitment: "confirmed"
+          });
+          signature = typeof sendResult === "string" ? sendResult : sendResult?.signature;
+        } catch (walletErr) {
+          // Fallback: signTransaction + sendRawTransaction (more detailed errors)
+          console.warn("[submitMint] signAndSendTransaction failed, trying signTransaction fallback:", walletErr.message);
+          if (state.wallet.provider.signTransaction) {
+            const signed = await state.wallet.provider.signTransaction(tx);
+            signature = await state.connection.sendRawTransaction(signed.serialize(), {
+              skipPreflight: false,
+              preflightCommitment: "confirmed"
+            });
+          } else {
+            throw walletErr; // re-throw original error
+          }
+        }
         if (!signature) throw new Error("No signature returned by wallet");
 
         setMintTxStatus("warn", "Mint pending:", signature);
@@ -2186,7 +2212,27 @@
         await refreshWalletBalances({ silent: true });
         await poll();
       } catch (e) {
-        setMintTxStatus("error", `Mint failed: ${shortKey(e.message || String(e))}`);
+        const msg = e.message || String(e);
+        console.error("[submitMint] FAILED:", msg, e);
+        if (e.logs) console.error("[submitMint] Program logs:", e.logs);
+        // Show full error, not shortKey'd
+        let displayMsg = msg;
+        // Try to extract Anchor error code
+        const anchorMatch = msg.match(/custom program error:\s*0x([0-9a-fA-F]+)/i);
+        if (anchorMatch) {
+          const code = parseInt(anchorMatch[1], 16);
+          const anchorErrors = {
+            6000: "InvalidCollateralIndex", 6001: "InvalidAmount", 6002: "AmountTooLarge",
+            6003: "InvalidSlippageBound", 6004: "EmergencyShutdownActive",
+            6005: "MintPausedByCircuitBreaker", 6006: "OracleDegraded",
+            6007: "OracleStale", 6008: "PriceSlippageExceeded", 6009: "InvariantViolation",
+            6010: "SpotTwapDivergence", 6011: "RateLimitExceeded", 6012: "InsufficientCollateral"
+          };
+          displayMsg = `Program error 0x${anchorMatch[1]}: ${anchorErrors[code] || 'Unknown'} — ${msg.substring(0, 100)}`;
+        } else if (msg.length > 150) {
+          displayMsg = msg.substring(0, 150) + "...";
+        }
+        setMintTxStatus("error", `Mint failed: ${displayMsg}`);
       } finally {
         state.mintBusy = false;
         updateMintButton();
@@ -2345,7 +2391,9 @@
         await refreshWalletBalances({ silent: true });
         await poll();
       } catch (e) {
-        setRedeemTxStatus("error", `Redeem failed: ${shortKey(e.message || String(e))}`);
+        const rmsg = e.message || String(e);
+        console.error("[submitRedeem] FAILED:", rmsg, e);
+        setRedeemTxStatus("error", `Redeem failed: ${rmsg.substring(0, 150)}`);
       } finally {
         state.redeemBusy = false;
         updateRedeemButton();
