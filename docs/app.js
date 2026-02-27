@@ -1568,7 +1568,7 @@
           state.wallet.publicKey,
           window.solanaWeb3.LAMPORTS_PER_SOL
         );
-        const latest = await state.connection.getLatestBlockhash("finalized");
+        const latest = await state.connection.getLatestBlockhash("confirmed");
         const confirm = await state.connection.confirmTransaction(
           {
             signature: sig,
@@ -1679,7 +1679,7 @@
         }));
 
         // Faucet keypair pays for gas and signs as mint authority
-        const latest = await state.connection.getLatestBlockhash("finalized");
+        const latest = await state.connection.getLatestBlockhash("confirmed");
         tx.recentBlockhash = latest.blockhash;
         tx.lastValidBlockHeight = latest.lastValidBlockHeight;
         tx.feePayer = faucetKp.publicKey;
@@ -2155,11 +2155,10 @@
           data: ixData
         }));
 
-        const latest = await state.connection.getLatestBlockhash("finalized");
+        const latest = await state.connection.getLatestBlockhash("confirmed");
         tx.recentBlockhash = latest.blockhash;
         tx.feePayer = user;
 
-        setMintTxStatus("warn", "Requesting wallet signature...");
         console.log("[submitMint] collateral:", collateralIndex, "amount:", collateralAmountRaw.toString(), "maxPrice:", maxPriceRaw.toString());
         console.log("[submitMint] accounts:", {
           protocolState: state.pubkeys.protocolState.toBase58(),
@@ -2167,19 +2166,37 @@
           userCollateralAta: userCollateralAta.toBase58(),
           vaultCollateralAta: vaultCollateralAta.toBase58(),
           userMstbAta: userMstbAta.toBase58(),
-          collateralMint: collateralMint.toBase58()
+          collateralMint: collateralMint.toBase58(),
+          userPosition: userPosition.toBase58()
         });
 
+        // Pre-flight simulation to catch program errors with full logs
+        setMintTxStatus("warn", "Simulating transaction...");
+        try {
+          const simResult = await state.connection.simulateTransaction(tx, { sigVerify: false });
+          if (simResult?.value?.err) {
+            const simLogs = simResult.value.logs || [];
+            console.error("[submitMint] Simulation failed:", JSON.stringify(simResult.value.err));
+            console.error("[submitMint] Simulation logs:", simLogs);
+            const errDetail = JSON.stringify(simResult.value.err);
+            const lastLogLine = simLogs.filter(l => l.includes("Error") || l.includes("failed") || l.includes("Program log")).pop() || "";
+            throw new Error(`Simulation failed: ${errDetail}. ${lastLogLine}`);
+          }
+          console.log("[submitMint] Simulation OK, CU:", simResult?.value?.unitsConsumed);
+        } catch (simErr) {
+          if (simErr.message?.startsWith("Simulation failed:")) throw simErr;
+          console.warn("[submitMint] Simulation check skipped:", simErr.message);
+        }
+
+        setMintTxStatus("warn", "Requesting wallet signature...");
         let signature;
         try {
-          // Try signAndSendTransaction first (Phantom standard)
           const sendResult = await state.wallet.provider.signAndSendTransaction(tx, {
             preflightCommitment: "confirmed"
           });
           signature = typeof sendResult === "string" ? sendResult : sendResult?.signature;
         } catch (walletErr) {
-          // Fallback: signTransaction + sendRawTransaction (more detailed errors)
-          console.warn("[submitMint] signAndSendTransaction failed, trying signTransaction fallback:", walletErr.message);
+          console.warn("[submitMint] signAndSendTransaction failed:", walletErr.message);
           if (state.wallet.provider.signTransaction) {
             const signed = await state.wallet.provider.signTransaction(tx);
             signature = await state.connection.sendRawTransaction(signed.serialize(), {
@@ -2187,7 +2204,7 @@
               preflightCommitment: "confirmed"
             });
           } else {
-            throw walletErr; // re-throw original error
+            throw walletErr;
           }
         }
         if (!signature) throw new Error("No signature returned by wallet");
@@ -2360,7 +2377,7 @@
           data: ixData
         }));
 
-        const latest = await state.connection.getLatestBlockhash("finalized");
+        const latest = await state.connection.getLatestBlockhash("confirmed");
         tx.recentBlockhash = latest.blockhash;
         tx.feePayer = user;
 
@@ -2488,7 +2505,7 @@
             data: ixData
           }));
 
-          const latest = await state.connection.getLatestBlockhash("finalized");
+          const latest = await state.connection.getLatestBlockhash("confirmed");
           tx.recentBlockhash = latest.blockhash;
           tx.feePayer = user;
 
