@@ -44,7 +44,7 @@
       instructionAvailable: true,
       // DEVNET ONLY — mint authority keypair for test collateral tokens (zero real value)
       faucetKeypair: [200,216,244,99,87,136,60,121,147,67,211,155,111,98,248,181,119,4,110,112,50,204,105,10,156,77,154,44,6,164,12,32,39,162,172,128,64,158,200,20,181,231,32,205,219,37,123,128,72,159,230,201,207,196,85,88,109,182,30,117,48,196,103,3],
-      faucetAmounts: { 0: 1000_000_000, 1: 1000_000_000, 2: 1000_000_000_000_000_000_000n }, // 1000 USDC (6d), 1000 USDT (6d), 1000 DAI (18d)
+      faucetAmounts: { 0: 1000_000_000, 1: 1000_000_000, 2: 10_000_000_000_000_000_000n }, // 1000 USDC (6d), 1000 USDT (6d), 10 DAI (18d, u64-safe)
       hint: "Devnet faucet ready"
     };
 
@@ -1490,7 +1490,7 @@
         setFaucetButtonsDisabled(!connected, connected ? "Click to request tokens" : "Connect wallet first");
         $("faucetUsdcBtn").textContent = "Get 1,000 USDC";
         $("faucetUsdtBtn").textContent = "Get 1,000 USDT";
-        $("faucetDaiBtn").textContent = "Get 1,000 DAI";
+        $("faucetDaiBtn").textContent = "Get 10 DAI";
         return;
       }
 
@@ -1600,7 +1600,15 @@
     }
 
     async function requestDevnetTokens(collateralIndex) {
-      initSolanaContext();
+      const statusEl = $("faucetStatus");
+      try {
+        initSolanaContext();
+      } catch (e) {
+        statusEl.className = "faucet-status bad";
+        statusEl.textContent = "Solana Web3 not loaded. Refresh the page.";
+        console.error("[faucet] initSolanaContext failed:", e);
+        return;
+      }
       const w3 = window.solanaWeb3;
       if (!state.wallet.publicKey) {
         renderFaucetStatus();
@@ -1610,24 +1618,38 @@
 
       const labels = { 0: "USDC", 1: "USDT", 2: "DAI" };
       const label = labels[collateralIndex] || "Token";
-      const amounts = { 0: 1000_000_000, 1: 1000_000_000, 2: BigInt("1000000000000000000000") };
-      const displayAmounts = { 0: "1,000 USDC", 1: "1,000 USDT", 2: "1,000 DAI" };
+      // 1000 USDC (6d), 1000 USDT (6d), 10 DAI (18d — u64-safe)
+      const amounts = { 0: BigInt(1000_000_000), 1: BigInt(1000_000_000), 2: BigInt("10000000000000000000") };
+      const displayAmounts = { 0: "1,000 USDC", 1: "1,000 USDT", 2: "10 DAI" };
+
+      // Pre-check: collateral mint must be known
+      const mintAddr = state.collateralMints[collateralIndex];
+      if (!mintAddr) {
+        statusEl.className = "faucet-status bad";
+        statusEl.textContent = `Collateral mint #${collateralIndex} (${label}) not loaded yet. Wait for protocol data.`;
+        return;
+      }
 
       state.faucet.airdropBusy = true;
       renderFaucetStatus();
 
-      const statusEl = $("faucetStatus");
       statusEl.className = "faucet-status warn";
       statusEl.textContent = `Minting ${displayAmounts[collateralIndex]} to your wallet...`;
 
       let okMessage = "";
       try {
+        console.log("[faucet] Starting mint:", label, "collateralIndex:", collateralIndex, "mint:", mintAddr);
+
         const faucetKp = w3.Keypair.fromSecretKey(Uint8Array.from(FAUCET_CONFIG.faucetKeypair));
-        const mint = new w3.PublicKey(state.collateralMints[collateralIndex]);
+        const mint = new w3.PublicKey(mintAddr);
         const owner = state.wallet.publicKey;
 
-        // Derive ATA
+        console.log("[faucet] faucet pubkey:", faucetKp.publicKey.toBase58());
+        console.log("[faucet] owner:", owner.toBase58());
+
+        // Derive ATA for the user's wallet
         const ata = deriveAtaAddress(owner, mint);
+        console.log("[faucet] ATA:", ata.toBase58());
 
         // Build transaction: Create ATA (idempotent) + MintTo
         const tx = new w3.Transaction();
@@ -1636,17 +1658,15 @@
         tx.add(createAtaIdempotentIx(faucetKp.publicKey, ata, owner, mint));
 
         // SPL Token MintTo instruction (instruction index 7)
-        const amountRaw = amounts[collateralIndex];
-        const amountBuf = new ArrayBuffer(8);
-        const amountView = new DataView(amountBuf);
-        if (typeof amountRaw === "bigint") {
-          amountView.setBigUint64(0, amountRaw, true);
-        } else {
-          amountView.setBigUint64(0, BigInt(amountRaw), true);
-        }
-        const mintToData = new Uint8Array(1 + 8);
+        const amountBigInt = amounts[collateralIndex];
+        const mintToData = new Uint8Array(9);
         mintToData[0] = 7; // MintTo instruction index
-        mintToData.set(new Uint8Array(amountBuf), 1);
+        // Write u64 little-endian manually (more compatible than setBigUint64)
+        let v = amountBigInt;
+        for (let i = 1; i <= 8; i++) {
+          mintToData[i] = Number(v & 0xFFn);
+          v >>= 8n;
+        }
 
         tx.add(new w3.TransactionInstruction({
           programId: state.pubkeys.tokenProgram,
@@ -1665,32 +1685,40 @@
         tx.feePayer = faucetKp.publicKey;
         tx.sign(faucetKp);
 
+        console.log("[faucet] Sending transaction...");
         const sig = await state.connection.sendRawTransaction(tx.serialize(), {
           skipPreflight: false,
           preflightCommitment: "confirmed"
         });
+        console.log("[faucet] TX sent:", sig);
+
+        statusEl.textContent = `TX sent. Confirming ${label}... (${shortKey(sig)})`;
 
         const confirm = await state.connection.confirmTransaction(
           { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
           "confirmed"
         );
         if (confirm?.value?.err) {
-          throw new Error(JSON.stringify(confirm.value.err));
+          throw new Error("TX confirmed with error: " + JSON.stringify(confirm.value.err));
         }
 
-        okMessage = `${displayAmounts[collateralIndex]} minted to your wallet (${shortKey(sig)}).`;
+        okMessage = `✅ ${displayAmounts[collateralIndex]} minted to your wallet! (${shortKey(sig)})`;
         statusEl.className = "faucet-status ok";
         statusEl.textContent = okMessage;
+        console.log("[faucet] SUCCESS:", sig);
 
         // Refresh balances after successful mint
         setTimeout(() => refreshWalletBalances({ silent: true }), 2000);
       } catch (e) {
-        statusEl.className = "faucet-status bad";
         const msg = e.message || String(e);
-        if (msg.includes("0x1")) {
-          statusEl.textContent = `Mint failed: insufficient SOL for gas. Request SOL first.`;
+        console.error("[faucet] FAILED:", msg, e);
+        statusEl.className = "faucet-status bad";
+        if (msg.includes("0x1") || msg.includes("insufficient")) {
+          statusEl.textContent = `❌ Mint failed: faucet wallet needs SOL for gas. Try again later.`;
+        } else if (msg.includes("blockhash")) {
+          statusEl.textContent = `❌ Mint failed: network timeout. Please try again.`;
         } else {
-          statusEl.textContent = `Mint failed: ${shortKey(msg)}`;
+          statusEl.textContent = `❌ Mint failed: ${msg.substring(0, 120)}`;
         }
       } finally {
         state.faucet.airdropBusy = false;
@@ -1727,6 +1755,7 @@
       state.wallet.balanceBusy = true;
       try {
         const owner = state.wallet.publicKey.toBase58();
+        console.log("[wallet] Refreshing balances for:", owner);
         const tokenAccounts = await rpc(
           "getTokenAccountsByOwner",
           [owner, { programId: CFG.TOKEN_PROGRAM }, { encoding: "jsonParsed" }],
@@ -1735,16 +1764,22 @@
 
         const mintToAmount = new Map();
         const values = tokenAccounts?.value || [];
+        console.log("[wallet] Found", values.length, "token accounts");
         for (const item of values) {
           const info = item?.account?.data?.parsed?.info;
           const mint = info?.mint;
           const amount = Number(info?.tokenAmount?.uiAmountString ?? info?.tokenAmount?.uiAmount ?? 0);
-          if (mint) mintToAmount.set(mint, amount);
+          if (mint) {
+            mintToAmount.set(mint, amount);
+            console.log("[wallet]   mint:", mint.substring(0, 8) + "...", "amount:", amount);
+          }
         }
 
         const mintUSDC = state.collateralMints[0];
         const mintUSDT = state.collateralMints[1];
         const mintDAI = state.collateralMints[2];
+
+        if (!mintUSDC) console.warn("[wallet] USDC mint address not loaded yet");
 
         state.wallet.balances = {
           USDC: Number(mintToAmount.get(mintUSDC) || 0),
@@ -1752,6 +1787,7 @@
           DAI: Number(mintToAmount.get(mintDAI) || 0),
           MSTB: Number(mintToAmount.get(CFG.MSTB_MINT) || 0)
         };
+        console.log("[wallet] Balances:", JSON.stringify(state.wallet.balances));
 
         renderWalletBalances();
         renderFaucetStatus();
@@ -1759,6 +1795,7 @@
         updateRedeemEstimate();
         updateAgentRegisterButton();
       } catch (e) {
+        console.error("[wallet] Balance refresh failed:", e);
         if (!silent) setMintTxStatus("error", `Balance refresh failed: ${shortKey(e.message || String(e))}`);
       } finally {
         state.wallet.balanceBusy = false;
