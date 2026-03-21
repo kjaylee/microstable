@@ -165,3 +165,39 @@
 **Today's new vector relevance:** Holdstation DeFAI ($462K, B15 tentative) — Microstable does not use AI-integrated wallet architecture; 2-of-3 keeper quorum is the existing mitigation. B15 PARTIAL rating unchanged.
 
 **Conclusion:** No CRITICAL or HIGH findings. No Discord alert triggered. 4 pre-existing MEDIUM items unchanged from prior cycles.
+
+---
+
+## 2026-03-22 Daily Black Team Check
+
+**New vector added today:** D45 — Blockchain-as-C2 Channel via Malicious Developer Toolchain Extension (Bitdefender/Windsurf IDE, 2026-03-20)
+
+### D45 Assessment vs. Microstable Keeper
+
+| # | Vector | Verdict | Evidence |
+|---|---|---|---|
+| D45 | Blockchain-as-C2 via Malicious IDE Extension | ⚠️ PARTIAL | 2-of-3 keeper quorum limits blast radius from single machine compromise. However: default keeper keypair path is `~/.config/solana/devnet-keypair.json` (flat file on dev workstation). No documented hardware-wallet enforcement policy for keeper operators. No IDE extension allowlist policy. RPC API keys (Helius/QuickNode) stored in `config.toml` / `.env` extractable. |
+
+**Attack path via D45 → Microstable:**
+1. Operator installs typosquatted IDE extension on keeper dev machine
+2. Extension exfiltrates 1 of 3 keeper keypairs + RPC API keys
+3. Attacker can: (a) monitor all keeper oracle writes, (b) DoS oracle via rate-limit exhaustion of stolen API key, (c) attempt social-engineering for 2nd keypair (2-of-3 means 1 is insufficient for treasury drain)
+4. Net: RPC monitoring + partial DoS possible immediately; treasury drain requires 2-of-3 compromise
+
+**D45 → B36 escalation path:** If 2 of 3 keeper operators use IDEs on keeper machines, full keeper quorum compromisable without any on-chain exploit.
+
+**Verdict: ⚠️ MEDIUM** — Quorum hardening prevents immediate treasury drain, but RPC credential exposure + multi-machine escalation risk warrants documented operator security policy.
+
+**Recommendation:**
+- Document explicit rule: keeper signing keys must use hardware wallet paths (`/dev/ledger`) in production config
+- Add `keeper_keypairs` path validation to reject `~/.config/solana/` default in production mode (already has `validate_keypair_path_policy()` — extend to check for non-hardware paths)
+- Issue IDE extension allowlist guidance to all keeper operators
+- Rotate RPC API keys periodically; treat as secrets with same rigor as keypairs
+
+### Full Vector Sweep (today's incremental)
+
+All previously-checked vectors remain unchanged. No new CRITICAL/HIGH findings.
+
+**New vector summary:** 1 added (D45 — MEDIUM, keeper operator workstation security)
+**CRITICAL/HIGH count: 0**
+**No Discord alert triggered (no CRITICAL/HIGH).**
