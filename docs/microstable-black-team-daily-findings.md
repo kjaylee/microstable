@@ -201,3 +201,50 @@ All previously-checked vectors remain unchanged. No new CRITICAL/HIGH findings.
 **New vector summary:** 1 added (D45 — MEDIUM, keeper operator workstation security)
 **CRITICAL/HIGH count: 0**
 **No Discord alert triggered (no CRITICAL/HIGH).**
+
+---
+
+## 2026-03-29 — Daily Black Team Sweep
+
+**Cycle**: 2026-03-29 03:00 KST | **Vectors applied**: 93 named + META-01~24 | **Sweep source**: rekt.news, SlowMist, coinpaprika, web_fetch (Brave quota exhausted → fallback used)
+
+### New/Reinforced Vectors (today's focus)
+
+| Vector | Applied to Microstable | Verdict | Notes |
+|--------|------------------------|---------|-------|
+| A41 Burn-Path Fee-Exempt Flash Loan Amplification (AM/USDT pool BSC 2026-03-12 backfill) | No burn→pool-price mechanism | ✅ NOT APPLICABLE | SPL token vaults hold collateral; no AMM reserve state tied to burn logic |
+| A59 DEX Aggregator Solver Race-to-Minimum (Aave/CoWSwap $50M backfill) | No DEX aggregator integration | ✅ NOT APPLICABLE | Keeper rebalances direct; no user collateral swap interface |
+| A79 libcrux-poly1305 MAC Panic | No Cargo.lock dep | ✅ N/A | Pre-emptive: block dep if ever added |
+| A80 hpke-rs Export-Only Context Panic | No Cargo.lock dep | ✅ N/A | Pre-emptive: ≥0.6.0 if ever added |
+| A81 Quinn QUIC Validator Crash (systemic) | Keeper has 2 RPC endpoints (primary+secondary) | ⚠️ LOW-MEDIUM | Rec: ≥3 RPC fallbacks for mainnet; currently 2 |
+| A82 Solana Blockchain as C2 (IDE extension malware) | Keeper keypairs = plain JSON files on dev machines | ⚠️ MEDIUM | `validate_keypair_path_policy` limits paths but doesn't protect JSON files from IDE-ext malware |
+| A83/A84 libcrux-ml-dsa/sha3 | No dep | ✅ N/A | |
+| META-24 Q1 2026 stats ($137.7M, 6.5% recovery) | 2-of-3 keeper quorum limits key-compromise class blast radius | ✅ PARTIALLY DEFENDED | Single keeper compromise = contained; 2-of-3 compromise = no on-chain defense. Operational security = primary unaudited risk |
+
+### Carry-Forward Open Issues (unchanged)
+
+| ID | Severity | Day | Description |
+|----|----------|-----|-------------|
+| B45 | ⚠️ HIGH | DAY 24 | `audit-attestation.json` absent from `security/`. Unattested code delta since last formal audit. No on-chain consequence but violates attestation hygiene. |
+| A43 | ⚠️ MEDIUM | ongoing | No cumulative drift accumulator in `rebalance()`. Multi-TX oracle drift sequence not rate-limited beyond per-slot caps. |
+| B44 | ⚠️ MEDIUM | ongoing | No `user_collateral_ata.delegate.is_none()` assertion in `mint()`. SPL token delegate persistence (B44 pattern) could drain user funds if delegate is active. |
+| A75 | ⚠️ MEDIUM | ongoing | `update_oracle` (MANUAL_ORACLE_MODE) does not check `|new_price - last_pyth_price| <= MAX_MANUAL_DRIFT_BPS`. Gradual 120-slot ratcheting attack bounded by PRICE_MAX ($1.50) + per-slot/TX caps but no per-write Pyth-anchor guard. Passive defense: mint() rejects `OracleDegraded` if TWAP deviation >2.5%, forcing attacker to ratchet gradually. |
+| A81 | ⚠️ LOW-MEDIUM | NEW | Only 2 RPC endpoints configured (primary + `secondary_rpc_url`). A81 rec: ≥3 for validator-crash resilience on mainnet. |
+
+### New Finding (LOW-MEDIUM)
+
+**A81-GAP: Keeper RPC Endpoint Count Below Recommended Resilience Threshold**
+- **Location**: `keeper/src/config.rs` — `rpc_url` + `secondary_rpc_url` (2 total)
+- **Recommendation**: A81 (Quinn QUIC validator crash) requires ≥3 independent RPC endpoints to tolerate a targeted validator crash. Add a 3rd RPC URL (e.g., QuickNode + Helius + Alchemy) to `KeeperConfig`.
+- **Severity**: LOW-MEDIUM (devnet; MEDIUM on mainnet)
+- **Fix**: add `tertiary_rpc_url: Option<String>` to `KeeperConfig` and rotate through all 3 on connection failure.
+
+### Full Sweep Summary
+
+- **CRITICAL findings today**: 0
+- **HIGH findings today**: 0
+- **New MEDIUM/LOW**: 1 (A81 keeper RPC count)
+- **Carry-forward HIGH**: 1 (B45 audit attestation — DAY 24)
+- **Carry-forward MEDIUM**: 3 (A43, B44, A75)
+- **Discord alert triggered**: NO (no CRITICAL/HIGH findings)
+
