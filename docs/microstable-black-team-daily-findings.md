@@ -248,3 +248,39 @@ All previously-checked vectors remain unchanged. No new CRITICAL/HIGH findings.
 - **Carry-forward MEDIUM**: 3 (A43, B44, A75)
 - **Discord alert triggered**: NO (no CRITICAL/HIGH findings)
 
+
+---
+
+## 2026-03-30 — Daily Black Team Sweep
+
+**Cycle**: 2026-03-30 03:00 KST | **Vectors applied**: 97 named (96 unique) + META-01~25 | **Sweep source**: hacked.slowmist.io, rustsec.org, rekt.news (SearXNG fallback — Brave quota exhausted)
+
+### New/Reinforced Vectors (today's focus)
+
+| Vector | Applied to Microstable | Verdict | Notes |
+|--------|------------------------|---------|-------|
+| A3 reinforcement — BSC Stake Spot-Oracle + Referral Amplification (2026-03-27, $133K) | Microstable oracle: Pyth (not spot DEX pool). No referral/staking reward calculation path. | ✅ DEFENDED | Pyth TWAP+staleness fully inoculates against spot-pool manipulation. No referral system in protocol design. |
+| A87 ZK Trusted Setup Ceremony Skip | No ZK circuits in Microstable | ✅ NOT APPLICABLE | Latent risk: activate review if ZK privacy layer added in future |
+| A88 ERC-3525 SFT `onERC3525Received` Callback Reentrancy | Solana SPL Token (not ERC-3525). No ERC callback mechanism. | ✅ NOT APPLICABLE | SPL Token-2022 TransferHook analogue monitored (no active hook in Cargo.lock programs) |
+| A89 9-Month Accumulation + Supply Cap Donation Bypass | `total_collateral_value()` reads `v.total_deposits` (internal tracker), NOT raw ATA balance | ✅ CONFIRMED SAFE | Direct token donation to vault ATA does NOT inflate `v.total_deposits`. Code review confirmed 2026-03-29. |
+| A90 libcrux-ed25519 All-Zero Key Gen (= A78 duplicate) | No libcrux-ed25519 in Cargo.lock | ✅ N/A | A78/A90 housekeeping: same advisory RUSTSEC-2026-0075; covered under A78 |
+| x402 SDK payment proof bypass (GHSA-qr2g-p6q7-w82m) | Microstable is not a payment facilitator; no x402 SDK dependency | ✅ NOT APPLICABLE | Low ecosystem relevance; no exploitation confirmed |
+
+### Carry-Forward Open Issues (unchanged)
+
+| ID | Severity | Day | Description |
+|----|----------|-----|-------------|
+| B45 | ⚠️ HIGH | **DAY 25** | `audit-attestation.json` absent from `security/`. Unattested code delta (3,281+ lines post last formal audit). No on-chain consequence but violates attestation hygiene. **Recommended action**: commission incremental audit or formal attestation sign-off this sprint. |
+| A43 | ⚠️ MEDIUM | ongoing | No cumulative drift accumulator in `rebalance()`. Multi-TX oracle drift sequence not rate-limited beyond per-slot caps. |
+| B44 | ⚠️ MEDIUM | ongoing | No `user_collateral_ata.delegate.is_none()` assertion in `mint()`. SPL token delegate persistence could drain user funds if delegate is active at time of mint. |
+| A75 | ⚠️ MEDIUM | ongoing | `update_oracle` (MANUAL_ORACLE_MODE) lacks `\|new_price - last_pyth_price\| <= MAX_MANUAL_DRIFT_BPS` guard. Gradual 120-slot ratcheting attack bounded by PRICE_MAX + per-TX caps but no per-write Pyth-anchor check. |
+| A81 | ⚠️ LOW-MEDIUM | DAY 2 | Keeper configured with 2 RPC endpoints (primary + secondary). Recommendation: ≥3 for validator-crash resilience on mainnet. |
+
+### Full Sweep Summary
+
+- **CRITICAL findings today**: 0
+- **HIGH findings today**: 0
+- **New MEDIUM/LOW**: 0
+- **Carry-forward HIGH**: 1 (B45 audit attestation — **DAY 25**)
+- **Carry-forward MEDIUM**: 3 (A43, B44, A75)
+- **Discord alert triggered**: NO (no CRITICAL/HIGH findings)
