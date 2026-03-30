@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-03-31 (KST 03:00)
+
+**Evolution delta**: +2 new vectors; 0 new critical/high findings.  
+**Sources scanned**: rekt.news, SlowMist hacked.slowmist.io, web_fetch/dev.to (BCE burn mechanism analysis), SearXNG fallback.  
+**New confirmed incidents**: PancakeSwap BCE-USDT $679K (2026-03-23) — BCE token `_transfer()` burn mechanism exploited via AMM reserve desync; Moonwell Moonriver governance attack $1.08M at risk (2026-03-26) — failed but novel rapid-quorum pattern.
+
+### New Vector Assessment (A91 + A92)
+
+| Vector | Verdict | Evidence |
+|---|---|---|
+| A91 (BCE Burn Mechanism / Fee-on-Transfer AMM Reserve Manipulation) | ✅ DEFENDED | BCE (PancakeSwap BCE-USDT, 2026-03-23, $679K): token `_transfer()` burns without AMM `sync()` — reserves desync → inflated swap output. Microstable uses only whitelisted SPL Token mints (USDC/USDT/DAI/USDS) via `token::transfer_checked` CPI; no burn-on-transfer, no custom transfer hooks, no AMM pool. Collateral mint validation (line ~1060 in lib.rs) enforces canonical mint addresses; non-standard tokens cannot enter the vault. |
+| A92 (Low-Cost Rapid-Quorum Governance Attack) | ✅ N/A | Moonwell Moonriver (2026-03-26): attacker spent $1,808 to pass governance quorum in 11 min. Microstable has no governance token and no on-chain governance mechanism. 2-of-3 keeper multisig is the sole privileged action path — not a governance token target. |
+
+### Full Microstable Sweep (2026-03-31)
+
+| Vector | Severity | Verdict | Location + Mechanism |
+|---|---|---|---|
+| A91 (BCE burn/fee-on-transfer AMM reserve) | N/A | ✅ DEFENDED | lib.rs mint/redeem: `token::transfer_checked` uses SPL Token program; no custom transfer hook; collateral mint allowlist gates out non-standard tokens. |
+| A92 (governance attack) | N/A | ✅ N/A | lib.rs: no governance token; `initialize()` sets `TRUSTED_INITIALIZER` as sole initializer; all privileged ops require 2-of-3 keeper quorum or `TRUSTED_INITIALIZER`. |
+| B45 (audit-attestation.json absent) | HIGH | ⚠️ OPEN — DAY 31 | lib.rs: 3,281+ lines post-audit; no formal attestation document. Carry-forward. |
+| A43 (no cumulative drift accumulator) | MEDIUM | ⚠️ OPEN | lib.rs rebalance: `WEIGHT_STEP_LIMIT=2%` enforced per-call; no epoch-level tracking. 10 sequential small rebalances could cumulatively drift weights 20%+. Carry-forward. |
+| B44 (no delegate.is_none() guard on user ATA) | MEDIUM | ✅ LOW RISK | lib.rs mint: user must sign via `ctx.accounts.user.to_account_info()` as `TransferChecked` authority. SPL delegate cannot sign for user; no exploit path without user consent. Theoretical only; downgraded to INFO. |
+| A75 (MANUAL_ORACLE_MODE TWAP drift guard) | MEDIUM | ⚠️ OPEN | lib.rs: `MANUAL_ORACLE_MODE_MAX_SLOTS=120` and cooldown/reenable delays present; TWAP deviation check `validate_spot_vs_twap()` applied in mint path but not separately gated in keeper `oracle.rs` for manual mode writes. Carry-forward. |
+
+### Summary (2026-03-31)
+
+| Severity | Count | Vectors |
+|---|---|---|
+| CRITICAL | 0 | — |
+| HIGH | 1 | B45 (attestation gap, carry-forward, DAY 31) |
+| MEDIUM | 2 | A43 (cumulative drift), A75 (manual oracle TWAP) |
+| INFO | 1 | B44 (SPL delegate — theoretical only, no exploit path confirmed) |
+| NEW TODAY | 2 | A91 (BCE burn mechanism), A92 (rapid-quorum governance) |
+
+**No CRITICAL or HIGH new findings today. No Discord alert triggered.**
+
+---
+
 ## 2026-03-20 (KST 03:00)
 
 **Evolution delta**: +0 new vectors; 3 reinforcements applied (D26 Permit2 persistence, A41 AM/USDT burn, A4 Injective chain-level bypass).  
